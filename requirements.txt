@@ -1,0 +1,13 @@
+streamlit
+pandas
+numpy
+scipy
+pytz
+plotly
+requests
+streamlit-autorefresh
+aiohttp
+yfinance
+groq
+supabase
+python-dotenv
