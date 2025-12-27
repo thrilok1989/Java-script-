@@ -11,3 +11,9 @@ yfinance
 groq
 supabase
 python-dotenv
+
+# ML/AI Dependencies
+xgboost==2.0.3
+scikit-learn==1.3.2
+joblib==1.3.2
+ta==0.11.0
