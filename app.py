@@ -1868,7 +1868,7 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════
 
 # Native tabs - work seamlessly on mobile and desktop, no multiple clicks needed
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "🌟 Overall Market Sentiment",
     "🎯 Trade Setup",
     "📊 Active Signals",
@@ -1877,7 +1877,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📉 Advanced Chart Analysis",
     "🎯 NIFTY Option Screener v7.0",
     "🌐 Enhanced Market Data",
-    "🔍 NSE Stock Screener"
+    "🔍 NSE Stock Screener",
+    "📈 NIFTY Futures Analysis"
 ])
 
 
@@ -4959,6 +4960,171 @@ with tab6:
         **Note:** All indicators are converted from Pine Script with high accuracy and optimized for Python/Plotly.
         """)
 
+    # ═══════════════════════════════════════════════════════════════════
+    # MULTI-TIMEFRAME TREND & SUPPORT/RESISTANCE ANALYSIS
+    # ═══════════════════════════════════════════════════════════════════
+
+    st.divider()
+    st.subheader("📊 Multi-Timeframe Trend & Support/Resistance Analysis")
+    st.caption("Analyze trend direction and key S/R levels across multiple timeframes")
+
+    try:
+        from src.multi_timeframe_analysis import MultiTimeframeAnalyzer, create_mtf_summary_table
+
+        # Initialize analyzer
+        mtf_analyzer = MultiTimeframeAnalyzer()
+
+        # Fetch data for different timeframes
+        with st.spinner("Fetching multi-timeframe data..."):
+            try:
+                from advanced_chart_analysis import AdvancedChartAnalysis
+                chart_analyzer = AdvancedChartAnalysis()
+
+                # Fetch data for each timeframe
+                data_15m = chart_analyzer.fetch_intraday_data(symbol_code, period='5d', interval='15m')
+                data_1h = chart_analyzer.fetch_intraday_data(symbol_code, period='5d', interval='1h')
+                data_4h = chart_analyzer.fetch_intraday_data(symbol_code, period='1mo', interval='1h')  # Use 1h data for 4h approximation
+                data_1d = chart_analyzer.fetch_intraday_data(symbol_code, period='6mo', interval='1d')
+
+                # Analyze all timeframes
+                mtf_results = mtf_analyzer.analyze_all_timeframes(
+                    data_1d=data_1d,
+                    data_4h=data_4h,
+                    data_1h=data_1h,
+                    data_15m=data_15m
+                )
+
+                if mtf_results:
+                    # Create summary table
+                    summary_table = create_mtf_summary_table(mtf_results)
+
+                    # Display the table
+                    st.markdown("#### Trend & S/R Summary Table")
+                    st.dataframe(summary_table, use_container_width=True, hide_index=True)
+
+                    # Display detailed analysis for each timeframe
+                    st.markdown("#### Detailed Analysis by Timeframe")
+
+                    # Create tabs for each timeframe
+                    mtf_tabs = st.tabs(["15 Min", "1 Hour", "4 Hour", "1 Day"])
+
+                    timeframe_map = {
+                        0: '15m',
+                        1: '1h',
+                        2: '4h',
+                        3: '1d'
+                    }
+
+                    for idx, (tab_idx, timeframe) in enumerate(timeframe_map.items()):
+                        if timeframe in mtf_results:
+                            result = mtf_results[timeframe]
+
+                            with mtf_tabs[tab_idx]:
+                                # Trend overview
+                                col1, col2, col3 = st.columns(3)
+
+                                with col1:
+                                    trend_color = {
+                                        'UPTREND': '🟢',
+                                        'DOWNTREND': '🔴',
+                                        'SIDEWAYS': '🟡'
+                                    }.get(result.trend_direction, '⚪')
+
+                                    st.metric(
+                                        "Trend Direction",
+                                        f"{trend_color} {result.trend_direction}",
+                                        delta=f"{result.trend_strength:.0f}% strength"
+                                    )
+
+                                with col2:
+                                    rsi_zone = "Overbought" if result.rsi > 70 else "Oversold" if result.rsi < 30 else "Neutral"
+                                    st.metric("RSI", f"{result.rsi:.1f}", delta=rsi_zone)
+
+                                with col3:
+                                    macd_signal = "Bullish" if result.macd > result.macd_signal else "Bearish"
+                                    st.metric("MACD", f"{result.macd:.2f}", delta=macd_signal)
+
+                                # Support and Resistance levels
+                                st.markdown("##### Support & Resistance Levels")
+
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    st.markdown("**Support Levels:**")
+                                    if result.support_1 > 0:
+                                        dist_s1 = result.distance_from_support1_pct
+                                        st.markdown(f"- S1: ₹{result.support_1:,.2f} ({dist_s1:.1f}% below)")
+                                    if result.support_2 > 0:
+                                        st.markdown(f"- S2: ₹{result.support_2:,.2f}")
+                                    if result.support_3 > 0:
+                                        st.markdown(f"- S3: ₹{result.support_3:,.2f}")
+
+                                with col2:
+                                    st.markdown("**Resistance Levels:**")
+                                    if result.resistance_1 > 0:
+                                        dist_r1 = result.distance_from_resistance1_pct
+                                        st.markdown(f"- R1: ₹{result.resistance_1:,.2f} ({dist_r1:.1f}% above)")
+                                    if result.resistance_2 > 0:
+                                        st.markdown(f"- R2: ₹{result.resistance_2:,.2f}")
+                                    if result.resistance_3 > 0:
+                                        st.markdown(f"- R3: ₹{result.resistance_3:,.2f}")
+
+                                # Moving Averages
+                                st.markdown("##### Moving Averages")
+
+                                col1, col2, col3 = st.columns(3)
+
+                                with col1:
+                                    if result.sma_20 > 0:
+                                        above_below = "above" if result.current_price > result.sma_20 else "below"
+                                        st.metric(
+                                            "SMA 20",
+                                            f"₹{result.sma_20:,.2f}",
+                                            delta=f"Price {abs(result.distance_from_sma20_pct):.1f}% {above_below}"
+                                        )
+
+                                with col2:
+                                    if result.sma_50 > 0:
+                                        above_below = "above" if result.current_price > result.sma_50 else "below"
+                                        st.metric("SMA 50", f"₹{result.sma_50:,.2f}", delta=f"{above_below}")
+
+                                with col3:
+                                    if result.sma_200 > 0:
+                                        above_below = "above" if result.current_price > result.sma_200 else "below"
+                                        st.metric("SMA 200", f"₹{result.sma_200:,.2f}", delta=f"{above_below}")
+
+                                # Price Structure
+                                st.markdown("##### Price Structure")
+
+                                structure_text = []
+                                if result.higher_highs and result.higher_lows:
+                                    structure_text.append("🟢 **Strong Uptrend**: Higher Highs + Higher Lows")
+                                elif result.lower_highs and result.lower_lows:
+                                    structure_text.append("🔴 **Strong Downtrend**: Lower Highs + Lower Lows")
+                                elif result.higher_highs:
+                                    structure_text.append("🟢 Higher Highs detected")
+                                elif result.lower_lows:
+                                    structure_text.append("🔴 Lower Lows detected")
+                                else:
+                                    structure_text.append("🟡 **Choppy/Ranging Market**")
+
+                                for text in structure_text:
+                                    st.markdown(text)
+
+                else:
+                    st.warning("No multi-timeframe data available")
+
+            except Exception as e:
+                st.error(f"Error in multi-timeframe analysis: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+    except ImportError as e:
+        st.warning(f"Multi-timeframe analysis module not available: {e}")
+        st.info("Install the module: src/multi_timeframe_analysis.py")
+    except Exception as e:
+        st.error(f"Error loading multi-timeframe analysis: {e}")
+
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 7: NIFTY OPTION SCREENER V7.0
 # ═══════════════════════════════════════════════════════════════════════
@@ -5075,6 +5241,72 @@ with tab9:
         2. Required modules: advanced_chart_analysis.py, bias_analysis.py, src/ml_market_regime.py, NiftyOptionScreener.py
         3. Internet connection required for fetching stock data and Dhan API access
         """)
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 10: NIFTY FUTURES ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab10:
+    st.markdown("# 📈 NIFTY Futures Analysis")
+
+    try:
+        from src.nifty_futures_ui import render_nifty_futures_dashboard
+
+        # Get spot price from nifty_data
+        spot_price = nifty_data.get('spot_price', 25000.0)
+
+        # Get futures data if available
+        futures_data = None
+        try:
+            # Try to get futures data from NSE or other sources
+            # For now, using demo data - replace with actual data source
+            futures_data = None  # Will use demo data in UI
+        except Exception as e:
+            logger.warning(f"Could not fetch futures data: {e}")
+
+        # Get participant data if available
+        participant_data = None
+        try:
+            # Try to get FII/DII data
+            # For now, using demo data - replace with actual data source
+            participant_data = None  # Will use demo data in UI
+        except Exception as e:
+            logger.warning(f"Could not fetch participant data: {e}")
+
+        # Get option chain for correlation
+        option_chain_data = None
+        try:
+            # Try to get from existing option chain data
+            if 'option_chain' in st.session_state:
+                option_chain_data = st.session_state.option_chain
+        except Exception as e:
+            logger.warning(f"Could not get option chain data: {e}")
+
+        # Render the futures dashboard
+        render_nifty_futures_dashboard(
+            spot_price=spot_price,
+            futures_data=futures_data,
+            participant_data=participant_data,
+            option_chain_data=option_chain_data,
+            historical_data=None  # Can add historical data if available
+        )
+
+    except ImportError as e:
+        st.error(f"❌ Error importing NIFTY Futures UI: {e}")
+        st.info("""
+        **NIFTY Futures Analysis Not Available**
+
+        The futures analysis module is installed but may have import errors.
+        Please ensure:
+        1. src/nifty_futures_ui.py exists
+        2. src/nifty_futures_analyzer.py exists
+        3. src/nifty_futures_bias_analysis.py exists
+        4. All dependencies are installed
+        """)
+    except Exception as e:
+        st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
