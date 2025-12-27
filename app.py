@@ -1868,7 +1868,7 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════
 
 # Native tabs - work seamlessly on mobile and desktop, no multiple clicks needed
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🌟 Overall Market Sentiment",
     "🎯 Trade Setup",
     "📊 Active Signals",
@@ -1878,7 +1878,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "🎯 NIFTY Option Screener v7.0",
     "🌐 Enhanced Market Data",
     "🔍 NSE Stock Screener",
-    "📈 NIFTY Futures Analysis"
+    "📈 NIFTY Futures Analysis",
+    "🤖 AI Training & Models"
 ])
 
 
@@ -5310,6 +5311,46 @@ with tab10:
         st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
         import traceback
         st.code(traceback.format_exc())
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 11: AI TRAINING & MODEL MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab11:
+    st.markdown("# 🤖 AI Training & Model Management")
+    st.caption("Train XGBoost models on real trading data | Track predictions & outcomes | Manage model versions")
+
+    try:
+        from src.ai_training_ui import render_ai_training_dashboard
+
+        # Render the AI training dashboard
+        render_ai_training_dashboard()
+
+    except ImportError as e:
+        st.error(f"❌ AI Training module not available: {e}")
+        st.info("""
+        **AI Training System Components:**
+
+        The AI Training system helps you:
+        - 📊 Collect training data from real predictions
+        - 🎯 Train XGBoost models on actual trading outcomes
+        - 💾 Save and load trained models
+        - 📈 Track model performance over time
+        - 🔄 Retrain models with new data
+
+        **Required files:**
+        - `src/ai_training_ui.py` - UI dashboard
+        - `src/training_data_collector.py` - Data collection system
+        - `src/model_trainer_pipeline.py` - Model training pipeline
+        - `src/xgboost_ml_analyzer_enhanced.py` - Enhanced ML analyzer
+
+        All files are present in your repository!
+        """)
+    except Exception as e:
+        st.error(f"❌ Error loading AI Training: {e}")
+        import traceback
+        with st.expander("Show error details"):
+            st.code(traceback.format_exc())
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
