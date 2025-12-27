@@ -5144,6 +5144,9 @@ with tab7:
         st.error(f"❌ Error rendering Nifty Option Screener: {e}")
         st.exception(e)
 
+    # Force clean tab completion to ensure tabs 8 & 9 render
+    st.write("")
+
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 8: ENHANCED MARKET DATA
 # ═══════════════════════════════════════════════════════════════════════
