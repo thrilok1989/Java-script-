@@ -1208,12 +1208,22 @@ class MLMarketRegimeDetector:
             # Bullish OBs = Support
             for block in ob_data.get('bullish_blocks', []):
                 if block.get('active'):
-                    supports.append(block['mid'])
+                    mid_value = block.get('mid')
+                    # Ensure mid_value is a number, not a dict
+                    if isinstance(mid_value, (int, float)):
+                        supports.append(mid_value)
+                    elif isinstance(mid_value, dict) and 'value' in mid_value:
+                        supports.append(mid_value['value'])
 
             # Bearish OBs = Resistance
             for block in ob_data.get('bearish_blocks', []):
                 if block.get('active'):
-                    resistances.append(block['mid'])
+                    mid_value = block.get('mid')
+                    # Ensure mid_value is a number, not a dict
+                    if isinstance(mid_value, (int, float)):
+                        resistances.append(mid_value)
+                    elif isinstance(mid_value, dict) and 'value' in mid_value:
+                        resistances.append(mid_value['value'])
 
         # Sort and filter
         supports = sorted([s for s in supports if s < current_price], reverse=True)[:5]

@@ -3749,66 +3749,89 @@ with tab6:
 
                         # Display Support/Resistance Levels
                         if regime_result.support_resistance:
-                            st.markdown("### 🎯 Support & Resistance Levels")
+                            try:
+                                st.markdown("### 🎯 Support & Resistance Levels")
 
-                            sr_levels = regime_result.support_resistance
-                            col1, col2 = st.columns(2)
+                                sr_levels = regime_result.support_resistance
 
-                            with col1:
-                                st.markdown("#### 📈 Resistance Levels")
-                                resistance_data = []
-                                if sr_levels.get('near_resistance'):
-                                    resistance_data.append({
-                                        'Type': 'Near Resistance',
-                                        'Level': f"₹{sr_levels['near_resistance']:.2f}",
-                                        'Distance': f"{((sr_levels['near_resistance'] - sr_levels['current_price']) / sr_levels['current_price'] * 100):.2f}%"
-                                    })
-                                if sr_levels.get('major_resistance'):
-                                    resistance_data.append({
-                                        'Type': 'Major Resistance',
-                                        'Level': f"₹{sr_levels['major_resistance']:.2f}",
-                                        'Distance': f"{((sr_levels['major_resistance'] - sr_levels['current_price']) / sr_levels['current_price'] * 100):.2f}%"
-                                    })
-                                for i, r in enumerate(sr_levels.get('all_resistances', [])[:3], 1):
-                                    resistance_data.append({
-                                        'Type': f'R{i}',
-                                        'Level': f"₹{r:.2f}",
-                                        'Distance': f"{((r - sr_levels['current_price']) / sr_levels['current_price'] * 100):.2f}%"
-                                    })
-
-                                if resistance_data:
-                                    st.dataframe(pd.DataFrame(resistance_data), use_container_width=True, hide_index=True)
+                                # Validate current_price is a number
+                                current_price = sr_levels.get('current_price')
+                                if not isinstance(current_price, (int, float)) or current_price is None or current_price == 0:
+                                    st.warning("⚠️ Unable to calculate S/R levels - invalid current price")
                                 else:
-                                    st.info("No resistance levels detected")
+                                    col1, col2 = st.columns(2)
 
-                            with col2:
-                                st.markdown("#### 📉 Support Levels")
-                                support_data = []
-                                if sr_levels.get('near_support'):
-                                    support_data.append({
-                                        'Type': 'Near Support',
-                                        'Level': f"₹{sr_levels['near_support']:.2f}",
-                                        'Distance': f"{((sr_levels['current_price'] - sr_levels['near_support']) / sr_levels['current_price'] * 100):.2f}%"
-                                    })
-                                if sr_levels.get('major_support'):
-                                    support_data.append({
-                                        'Type': 'Major Support',
-                                        'Level': f"₹{sr_levels['major_support']:.2f}",
-                                        'Distance': f"{((sr_levels['current_price'] - sr_levels['major_support']) / sr_levels['current_price'] * 100):.2f}%"
-                                    })
-                                for i, s in enumerate(sr_levels.get('all_supports', [])[:3], 1):
-                                    support_data.append({
-                                        'Type': f'S{i}',
-                                        'Level': f"₹{s:.2f}",
-                                        'Distance': f"{((sr_levels['current_price'] - s) / sr_levels['current_price'] * 100):.2f}%"
-                                    })
+                                    with col1:
+                                        st.markdown("#### 📈 Resistance Levels")
+                                        resistance_data = []
 
-                                if support_data:
-                                    st.dataframe(pd.DataFrame(support_data), use_container_width=True, hide_index=True)
-                                else:
-                                    st.info("No support levels detected")
+                                        near_res = sr_levels.get('near_resistance')
+                                        if near_res and isinstance(near_res, (int, float)):
+                                            resistance_data.append({
+                                                'Type': 'Near Resistance',
+                                                'Level': f"₹{near_res:.2f}",
+                                                'Distance': f"{((near_res - current_price) / current_price * 100):.2f}%"
+                                            })
 
-                            st.divider()
+                                        major_res = sr_levels.get('major_resistance')
+                                        if major_res and isinstance(major_res, (int, float)):
+                                            resistance_data.append({
+                                                'Type': 'Major Resistance',
+                                                'Level': f"₹{major_res:.2f}",
+                                                'Distance': f"{((major_res - current_price) / current_price * 100):.2f}%"
+                                            })
+
+                                        for i, r in enumerate(sr_levels.get('all_resistances', [])[:3], 1):
+                                            if isinstance(r, (int, float)):
+                                                resistance_data.append({
+                                                    'Type': f'R{i}',
+                                                    'Level': f"₹{r:.2f}",
+                                                    'Distance': f"{((r - current_price) / current_price * 100):.2f}%"
+                                                })
+
+                                        if resistance_data:
+                                            st.dataframe(pd.DataFrame(resistance_data), use_container_width=True, hide_index=True)
+                                        else:
+                                            st.info("No resistance levels detected")
+
+                                    with col2:
+                                        st.markdown("#### 📉 Support Levels")
+                                        support_data = []
+
+                                        near_sup = sr_levels.get('near_support')
+                                        if near_sup and isinstance(near_sup, (int, float)):
+                                            support_data.append({
+                                                'Type': 'Near Support',
+                                                'Level': f"₹{near_sup:.2f}",
+                                                'Distance': f"{((current_price - near_sup) / current_price * 100):.2f}%"
+                                            })
+
+                                        major_sup = sr_levels.get('major_support')
+                                        if major_sup and isinstance(major_sup, (int, float)):
+                                            support_data.append({
+                                                'Type': 'Major Support',
+                                                'Level': f"₹{major_sup:.2f}",
+                                                'Distance': f"{((current_price - major_sup) / current_price * 100):.2f}%"
+                                            })
+
+                                        for i, s in enumerate(sr_levels.get('all_supports', [])[:3], 1):
+                                            if isinstance(s, (int, float)):
+                                                support_data.append({
+                                                    'Type': f'S{i}',
+                                                    'Level': f"₹{s:.2f}",
+                                                    'Distance': f"{((current_price - s) / current_price * 100):.2f}%"
+                                                })
+
+                                        if support_data:
+                                            st.dataframe(pd.DataFrame(support_data), use_container_width=True, hide_index=True)
+                                        else:
+                                            st.info("No support levels detected")
+
+                                    st.divider()
+
+                            except Exception as e:
+                                st.error(f"⚠️ Error displaying S/R levels: {e}")
+                                logger.error(f"S/R display error: {e}", exc_info=True)
 
                         # Display Entry/Exit Signals
                         if regime_result.entry_exit_signals:
