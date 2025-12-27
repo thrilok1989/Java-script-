@@ -926,6 +926,10 @@ def create_futures_chart(historical_data: pd.DataFrame) -> go.Figure:
 
 def _get_demo_futures_data(spot_price: float) -> Dict:
     """Generate demo futures data"""
+    # Handle None or invalid spot_price
+    if spot_price is None or spot_price == 0:
+        spot_price = 25000.0  # Default NIFTY value
+
     return {
         'current_month': {
             'ltp': spot_price * 1.005,
