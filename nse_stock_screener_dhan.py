@@ -613,8 +613,13 @@ def render_nse_stock_screener_tab():
 
     st.divider()
 
+    # DEBUG: Show button state
+    st.write(f"🔍 DEBUG: Button clicked = {run_button}")
+
     # Run analysis when form is submitted
     if run_button:
+        st.write("✅ INSIDE IF BLOCK - BUTTON WAS CLICKED!")
+        st.write("=" * 80)
         st.balloons()
         st.info("🚀 **Button Clicked! Starting analysis...**")
 
