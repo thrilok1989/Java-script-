@@ -602,10 +602,6 @@ class NSEStockScreener:
 
 def render_nse_stock_screener_tab():
     """Render NSE Stock Screener with REAL Dhan API option chain"""
-    st.write("=" * 80)
-    st.success("🟢 FUNCTION LOADED! render_nse_stock_screener_tab() is running!")
-    st.write("=" * 80)
-
     st.header("🔍 NSE Stock Screener - REAL Option Chain Integration")
 
     st.success("""
@@ -632,31 +628,7 @@ def render_nse_stock_screener_tab():
 
     st.divider()
 
-    # Initialize session state for button
-    if 'screener_running' not in st.session_state:
-        st.session_state.screener_running = False
-    if 'screener_results' not in st.session_state:
-        st.session_state.screener_results = None
-
-    # Debug info
-    st.write(f"🔍 Debug: screener_running = {st.session_state.screener_running}")
-
     col1, col2, col3 = st.columns([2, 1, 1])
-
-    with col1:
-        st.write("🎯 About to render button...")
-        # Button click handler - use callback to immediately set state
-        button_clicked = st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True, key="run_screener_btn")
-        st.write(f"🎯 Button rendered! button_clicked = {button_clicked}")
-
-        if button_clicked:
-            st.write("✅ Button was clicked!")
-            st.session_state.screener_running = True
-            st.session_state.screener_results = None
-            st.balloons()
-            st.rerun()
-        else:
-            st.write("⚪ Button not clicked this render")
 
     with col2:
         num_stocks = st.number_input("Top N stocks", min_value=5, max_value=20, value=10, step=1)
@@ -664,13 +636,16 @@ def render_nse_stock_screener_tab():
     with col3:
         include_indices = st.checkbox("Include Indices", value=True)
 
+    with col1:
+        # Simple direct button - runs analysis immediately when clicked
+        run_button = st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True)
+
     st.divider()
 
-    # Show running status immediately
-    if st.session_state.screener_running:
-        st.write("🎯 DEBUG: Entered analysis block!")
-        st.info("🚀 **Analysis Started!** Processing stocks now...")
-        st.write("🔧 About to initialize screener...")
+    # Run analysis DIRECTLY when button is clicked (no session state, no rerun)
+    if run_button:
+        st.balloons()
+        st.info("🚀 **Button Clicked! Starting analysis...**")
 
         try:
             # Step 1: Initialize screener
@@ -682,8 +657,7 @@ def render_nse_stock_screener_tab():
             with st.spinner("📊 Loading Dhan instrument list..."):
                 if not screener.instrument_mapper.load_instruments():
                     st.error("❌ Failed to load Dhan instruments. Check your internet connection.")
-                    st.session_state.screener_running = False
-                    return
+                    st.stop()
 
             st.success(f"✅ Loaded {len(screener.instrument_mapper.symbol_to_security)} instrument mappings")
 
@@ -712,18 +686,7 @@ def render_nse_stock_screener_tab():
             # Step 5: Process results
             falling_stocks, rising_stocks = screener.get_top_movers(results, n=num_stocks)
 
-            # Save results to session state
-            st.session_state.screener_results = {
-                'results': results,
-                'falling_stocks': falling_stocks,
-                'rising_stocks': rising_stocks,
-                'num_stocks': num_stocks,
-                'timestamp': datetime.now()
-            }
-            st.session_state.screener_running = False
-
             st.success(f"✅ **Analysis Complete!** Analyzed {len(results)} stocks.")
-            st.rerun()
 
         except Exception as e:
             st.error(f"❌ **Error during analysis:** {e}")
@@ -738,18 +701,9 @@ def render_nse_stock_screener_tab():
             2. Check that all dependencies are installed
             3. Verify internet connection for data fetching
             """)
-            st.session_state.screener_running = False
-            return
+            st.stop()
 
-    # Display results if available
-    if st.session_state.screener_results is not None:
-        results_data = st.session_state.screener_results
-        results = results_data['results']
-        falling_stocks = results_data['falling_stocks']
-        rising_stocks = results_data['rising_stocks']
-        num_stocks = results_data['num_stocks']
-
-        st.success(f"✅ Showing results from last analysis ({len(results)} stocks analyzed)")
+        # Display results directly (no session state needed)
 
         col1, col2 = st.columns(2)
 
@@ -839,7 +793,7 @@ def render_nse_stock_screener_tab():
             st.metric("Neutral Stocks", neutral_count)
 
         # Show timestamp of analysis
-        st.caption(f"📅 Analysis completed: {results_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption(f"📅 Analysis completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     st.info("""
     💡 **Column Explanation**:
