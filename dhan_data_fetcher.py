@@ -657,6 +657,17 @@ def get_nifty_futures_data() -> Dict[str, Any]:
             import yfinance as yf
             from datetime import datetime
 
+            # If Dhan spot price is not available, get it from yfinance
+            if spot_price is None:
+                try:
+                    nifty_ticker = yf.Ticker("^NSEI")
+                    nifty_hist = nifty_ticker.history(period="1d", interval="1d")
+                    if not nifty_hist.empty:
+                        spot_price = nifty_hist['Close'].iloc[-1]
+                except Exception as e:
+                    print(f"Could not fetch NIFTY spot from yfinance: {e}")
+                    spot_price = None
+
             # Get current month and next month expiry dates
             current_month, next_month = _get_futures_expiry_months()
 
