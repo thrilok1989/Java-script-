@@ -49,6 +49,21 @@ def render_nifty_futures_dashboard(
     """
     st.markdown("## 📈 NIFTY Futures Analysis")
 
+    # Handle None or invalid spot_price
+    if spot_price is None or spot_price == 0:
+        st.warning("⚠️ **Market Data Unavailable**")
+        st.info("""
+        Unable to load NIFTY Futures Analysis because spot price data is not available.
+
+        **Possible Reasons:**
+        - Market is currently closed
+        - API connection issues
+        - Data refresh in progress
+
+        Please try again during market hours (9:15 AM - 3:30 PM IST, Monday-Friday).
+        """)
+        return
+
     # Initialize analyzers
     futures_analyzer = NiftyFuturesAnalyzer()
     bias_analyzer = NiftyFuturesBiasAnalyzer()
