@@ -634,13 +634,20 @@ def render_nse_stock_screener_tab():
     if 'screener_results' not in st.session_state:
         st.session_state.screener_results = None
 
+    # Debug info
+    st.write(f"🔍 Debug: screener_running = {st.session_state.screener_running}")
+
     col1, col2, col3 = st.columns([2, 1, 1])
 
     with col1:
         # Button click handler - use callback to immediately set state
-        if st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True, key="run_screener_btn"):
+        button_clicked = st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True, key="run_screener_btn")
+
+        if button_clicked:
+            st.write("✅ Button was clicked!")
             st.session_state.screener_running = True
             st.session_state.screener_results = None
+            st.balloons()
             st.rerun()
 
     with col2:
@@ -653,7 +660,9 @@ def render_nse_stock_screener_tab():
 
     # Show running status immediately
     if st.session_state.screener_running:
+        st.write("🎯 DEBUG: Entered analysis block!")
         st.info("🚀 **Analysis Started!** Processing stocks now...")
+        st.write("🔧 About to initialize screener...")
 
         try:
             # Step 1: Initialize screener
