@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import requests
 import time
+import traceback
 from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor
 import io
@@ -630,8 +631,7 @@ def render_nse_stock_screener_tab():
     col1, col2, col3 = st.columns([2, 1, 1])
 
     with col1:
-        if st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True):
-            st.session_state.run_nse_screener = True
+        run_analysis = st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True)
 
     with col2:
         num_stocks = st.number_input("Top N stocks", min_value=5, max_value=20, value=10, step=1)
@@ -641,33 +641,61 @@ def render_nse_stock_screener_tab():
 
     st.divider()
 
-    if st.session_state.get('run_nse_screener', False):
+    # Run analysis when button is clicked OR when session state flag is set
+    should_run = run_analysis or st.session_state.get('run_nse_screener', False)
+
+    if should_run:
+        # Clear the flag
         st.session_state.run_nse_screener = False
 
-        screener = NSEStockScreener()
+        try:
+            st.info("🔧 Initializing screener with analysis modules...")
+            screener = NSEStockScreener()
+            st.success("✅ Screener initialized successfully!")
+        except Exception as e:
+            st.error(f"❌ Failed to initialize screener: {e}")
+            st.code(f"Error details:\n{traceback.format_exc()}")
+            st.info("""
+            **Troubleshooting:**
+            1. Ensure all required modules are available:
+               - advanced_chart_analysis.py
+               - bias_analysis.py
+               - src/ml_market_regime.py
+               - NiftyOptionScreener.py
+            2. Check that all dependencies are installed
+            3. Verify internet connection for data fetching
+            """)
+            return
 
         # Load Dhan instruments
-        with st.spinner("📊 Loading Dhan instrument list..."):
-            if not screener.instrument_mapper.load_instruments():
-                st.error("Failed to load Dhan instruments. Check connection.")
-                return
+        try:
+            with st.spinner("📊 Loading Dhan instrument list..."):
+                if not screener.instrument_mapper.load_instruments():
+                    st.error("❌ Failed to load Dhan instruments. Check your internet connection.")
+                    return
 
-        st.success(f"✅ Loaded {len(screener.instrument_mapper.symbol_to_security)} instrument mappings")
+            st.success(f"✅ Loaded {len(screener.instrument_mapper.symbol_to_security)} instrument mappings")
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-        def update_progress(completed, total):
-            progress = completed / total
-            progress_bar.progress(progress)
-            status_text.text(f"Analyzing with real option chain... {completed}/{total} ({int(progress*100)}%)")
+            def update_progress(completed, total):
+                progress = completed / total
+                progress_bar.progress(progress)
+                status_text.text(f"Analyzing with real option chain... {completed}/{total} ({int(progress*100)}%)")
 
-        stocks_to_analyze = NSE_FNO_STOCKS.copy()
-        if not include_indices:
-            stocks_to_analyze = [s for s in stocks_to_analyze if s not in ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']]
+            stocks_to_analyze = NSE_FNO_STOCKS.copy()
+            if not include_indices:
+                stocks_to_analyze = [s for s in stocks_to_analyze if s not in ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']]
 
-        with st.spinner(f"🔄 Running REAL option chain analysis on {len(stocks_to_analyze)} stocks..."):
-            results = screener.analyze_all_stocks(stocks_to_analyze, progress_callback=update_progress)
+            st.info(f"🔍 Starting analysis of {len(stocks_to_analyze)} stocks...")
+
+            with st.spinner(f"🔄 Running REAL option chain analysis on {len(stocks_to_analyze)} stocks..."):
+                results = screener.analyze_all_stocks(stocks_to_analyze, progress_callback=update_progress)
+        except Exception as e:
+            st.error(f"❌ Error during analysis: {e}")
+            st.code(f"Error details:\n{traceback.format_exc()}")
+            return
 
         progress_bar.empty()
         status_text.empty()
