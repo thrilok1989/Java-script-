@@ -175,13 +175,20 @@ def render_futures_overview(
         )
 
     with col4:
-        oi_change = current_futures.get('oi_change_pct', 0)
-        st.metric(
-            "OI Change",
-            f"{abs(oi_change):.1f}%",
-            delta="Building" if oi_change > 0 else "Unwinding",
-            delta_color="normal" if oi_change > 0 else "inverse"
-        )
+        oi_change = current_futures.get('oi_change_pct')
+        if oi_change is not None:
+            st.metric(
+                "OI Change",
+                f"{abs(oi_change):.1f}%",
+                delta="Building" if oi_change > 0 else "Unwinding",
+                delta_color="normal" if oi_change > 0 else "inverse"
+            )
+        else:
+            st.metric(
+                "OI Change",
+                "N/A",
+                delta="Data unavailable"
+            )
 
     # Basis chart
     st.markdown("#### Basis Trend (Futures - Spot)")
@@ -196,16 +203,22 @@ def render_futures_overview(
         if contract_data:
             ltp = contract_data.get('ltp', 0)
             contract_basis = ltp - spot_price
+            # Handle None values gracefully
+            oi = contract_data.get('oi')
+            oi_change_pct = contract_data.get('oi_change_pct')
+            volume = contract_data.get('volume', 0)
+            volume_change_pct = contract_data.get('volume_change_pct')
+
             contracts_data.append({
                 'Contract': contract_type,
                 'Expiry': contract_data.get('expiry', 'N/A'),
                 'LTP': f"₹{ltp:,.2f}",
                 'Basis': f"₹{contract_basis:+.2f}",
                 'Basis %': f"{(contract_basis/spot_price*100):+.2f}%",
-                'OI': f"{contract_data.get('oi', 0):,}",
-                'OI Chg': f"{contract_data.get('oi_change_pct', 0):+.1f}%",
-                'Volume': f"{contract_data.get('volume', 0):,}",
-                'Vol Chg': f"{contract_data.get('volume_change_pct', 0):+.1f}%"
+                'OI': f"{oi:,}" if oi is not None else "N/A",
+                'OI Chg': f"{oi_change_pct:+.1f}%" if oi_change_pct is not None else "N/A",
+                'Volume': f"{volume:,}",
+                'Vol Chg': f"{volume_change_pct:+.1f}%" if volume_change_pct is not None else "N/A"
             })
 
     if contracts_data:
