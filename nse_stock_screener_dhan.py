@@ -78,65 +78,31 @@ SYMBOL_MAPPING = {
 }
 
 
-class DhanInstrumentMapper:
-    """Fetches and caches Dhan instrument list for security ID mapping"""
+# Security ID mappings (same as NiftyOptionScreener)
+SECURITY_ID_MAP = {
+    # Indices
+    'NIFTY': 13,
+    'BANKNIFTY': 25,
+    'FINNIFTY': 27,
+    'MIDCPNIFTY': 14,
+    # Stocks - using NSE FNO security IDs
+    'RELIANCE': 2885,
+    'TCS': 3456,
+    'HDFCBANK': 1333,
+    'INFY': 1594,
+    'ICICIBANK': 1270,
+    # Add more as needed - for now will skip stocks without known IDs
+}
 
-    def __init__(self):
-        self.instrument_df = None
-        self.symbol_to_security = {}
+def get_security_id(symbol: str) -> Optional[int]:
+    """Get security ID for a symbol"""
+    return SECURITY_ID_MAP.get(symbol.upper())
 
-    def load_instruments(self) -> bool:
-        """Fetch Dhan instrument list CSV and create mappings"""
-        try:
-            # Fetch compact instrument list
-            url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-
-            # Parse CSV
-            self.instrument_df = pd.read_csv(io.StringIO(response.text))
-
-            # Create symbol → security ID mapping for FNO stocks
-            # Filter for derivatives segment (SEM_SEGMENT = 'D')
-            fno_df = self.instrument_df[
-                (self.instrument_df['SEM_SEGMENT'] == 'D') &
-                (self.instrument_df['SEM_EXCH_EXCH_ID'] == 'NSE')
-            ].copy()
-
-            # For each stock, get its underlying security ID
-            for _, row in fno_df.iterrows():
-                symbol = row.get('SM_SYMBOL_NAME', '').upper()
-                security_id = row.get('SEM_SMST_SECURITY_ID', 0)
-
-                if symbol and security_id:
-                    # Store the first (underlying) security ID for each symbol
-                    if symbol not in self.symbol_to_security:
-                        self.symbol_to_security[symbol] = security_id
-
-            # Manual mapping for indices (these might have different names)
-            index_mappings = {
-                'NIFTY': 13,
-                'BANKNIFTY': 25,
-                'FINNIFTY': 27,
-                'MIDCPNIFTY': 14
-            }
-            self.symbol_to_security.update(index_mappings)
-
-            return True
-
-        except Exception as e:
-            print(f"Error loading Dhan instruments: {e}")
-            return False
-
-    def get_security_id(self, symbol: str) -> Optional[int]:
-        """Get security ID for a symbol"""
-        return self.symbol_to_security.get(symbol.upper())
-
-    def get_segment(self, symbol: str) -> str:
-        """Get segment for security (IDX_I for indices, COM for stocks)"""
-        if symbol in ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']:
-            return 'IDX_I'
-        return 'COM'  # Commodity segment for stock F&O
+def get_segment(symbol: str) -> str:
+    """Get segment for security (IDX_I for indices, FUT for stocks)"""
+    if symbol in ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']:
+        return 'IDX_I'
+    return 'FUT'  # Futures segment for stock F&O
 
 
 class NSEStockScreener:
@@ -150,9 +116,8 @@ class NSEStockScreener:
         self.chart_analyzer = AdvancedChartAnalysis()
         self.bias_analyzer = BiasAnalysisPro()
         self.ml_regime_detector = MLMarketRegimeDetector()
-        self.instrument_mapper = DhanInstrumentMapper()
 
-        # Dhan API credentials (from NiftyOptionScreener)
+        # Dhan API credentials (same as NiftyOptionScreener)
         try:
             self.dhan_client_id = st.secrets["DHAN"]["CLIENT_ID"]
             self.dhan_access_token = st.secrets["DHAN"]["ACCESS_TOKEN"]
@@ -160,7 +125,6 @@ class NSEStockScreener:
             self.has_dhan_api = True
         except:
             self.has_dhan_api = False
-            st.warning("⚠️ Dhan API credentials not found. Using fallback analysis.")
 
         self.results = []
 
@@ -298,13 +262,14 @@ class NSEStockScreener:
         Uses ACTUAL functions from NiftyOptionScreener
         """
         try:
-            # Get security ID
-            security_id = self.instrument_mapper.get_security_id(stock)
+            # Get security ID (use simple function)
+            security_id = get_security_id(stock)
             if not security_id:
+                # Skip stocks without known security ID
                 return {'success': False, 'score': 50, 'sentiment': 'NEUTRAL'}
 
             # Get segment
-            segment = self.instrument_mapper.get_segment(stock)
+            segment = get_segment(stock)
 
             # Get expiry
             expiry = self.get_next_expiry()
@@ -659,22 +624,16 @@ def render_nse_stock_screener_tab():
                 screener = NSEStockScreener()
             st.success("✅ Screener initialized successfully!")
 
-            # Step 2: Load Dhan instruments
-            with st.spinner("📊 Loading Dhan instrument list..."):
-                if not screener.instrument_mapper.load_instruments():
-                    st.error("❌ Failed to load Dhan instruments. Check your internet connection.")
-                    st.stop()
-
-            st.success(f"✅ Loaded {len(screener.instrument_mapper.symbol_to_security)} instrument mappings")
-
-            # Step 3: Prepare stock list
+            # Step 2: Prepare stock list (no need to load instruments - using predefined mappings)
             stocks_to_analyze = NSE_FNO_STOCKS.copy()
             if not include_indices:
                 stocks_to_analyze = [s for s in stocks_to_analyze if s not in ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']]
 
-            st.info(f"🔍 **Starting analysis of {len(stocks_to_analyze)} stocks...**")
+            # Filter to only stocks with known security IDs for option chain analysis
+            stocks_with_ids = [s for s in stocks_to_analyze if get_security_id(s) is not None]
+            st.info(f"🔍 **Starting analysis of {len(stocks_with_ids)} stocks** (with option chain data)")
 
-            # Step 4: Run analysis with progress
+            # Step 3: Run analysis with progress
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -684,12 +643,12 @@ def render_nse_stock_screener_tab():
                 status_text.text(f"📊 Analyzing stocks... {completed}/{total} completed ({int(progress*100)}%)")
 
             with st.spinner(f"🔄 Running REAL option chain analysis..."):
-                results = screener.analyze_all_stocks(stocks_to_analyze, progress_callback=update_progress)
+                results = screener.analyze_all_stocks(stocks_with_ids, progress_callback=update_progress)
 
             progress_bar.empty()
             status_text.empty()
 
-            # Step 5: Process results
+            # Step 4: Process results
             falling_stocks, rising_stocks = screener.get_top_movers(results, n=num_stocks)
 
             st.success(f"✅ **Analysis Complete!** Analyzed {len(results)} stocks.")
