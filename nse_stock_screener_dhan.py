@@ -628,21 +628,27 @@ def render_nse_stock_screener_tab():
 
     st.divider()
 
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Use form to ensure button clicks work reliably
+    with st.form("screener_form"):
+        st.write("### 🎛️ Analysis Settings")
 
-    with col2:
-        num_stocks = st.number_input("Top N stocks", min_value=5, max_value=20, value=10, step=1)
+        col1, col2, col3 = st.columns([2, 2, 2])
 
-    with col3:
-        include_indices = st.checkbox("Include Indices", value=True)
+        with col1:
+            num_stocks = st.number_input("Top N stocks", min_value=5, max_value=20, value=10, step=1)
 
-    with col1:
-        # Simple direct button - runs analysis immediately when clicked
-        run_button = st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True)
+        with col2:
+            include_indices = st.checkbox("Include Indices", value=True)
+
+        with col3:
+            st.write("")  # Spacing
+
+        # Form submit button - this WILL work
+        run_button = st.form_submit_button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True)
 
     st.divider()
 
-    # Run analysis DIRECTLY when button is clicked (no session state, no rerun)
+    # Run analysis when form is submitted
     if run_button:
         st.balloons()
         st.info("🚀 **Button Clicked! Starting analysis...**")
