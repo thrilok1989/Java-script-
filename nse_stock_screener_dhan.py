@@ -602,6 +602,10 @@ class NSEStockScreener:
 
 def render_nse_stock_screener_tab():
     """Render NSE Stock Screener with REAL Dhan API option chain"""
+    st.write("=" * 80)
+    st.success("🟢 FUNCTION LOADED! render_nse_stock_screener_tab() is running!")
+    st.write("=" * 80)
+
     st.header("🔍 NSE Stock Screener - REAL Option Chain Integration")
 
     st.success("""
@@ -640,8 +644,10 @@ def render_nse_stock_screener_tab():
     col1, col2, col3 = st.columns([2, 1, 1])
 
     with col1:
+        st.write("🎯 About to render button...")
         # Button click handler - use callback to immediately set state
         button_clicked = st.button("🚀 Run Real Option Chain Analysis", type="primary", use_container_width=True, key="run_screener_btn")
+        st.write(f"🎯 Button rendered! button_clicked = {button_clicked}")
 
         if button_clicked:
             st.write("✅ Button was clicked!")
@@ -649,6 +655,8 @@ def render_nse_stock_screener_tab():
             st.session_state.screener_results = None
             st.balloons()
             st.rerun()
+        else:
+            st.write("⚪ Button not clicked this render")
 
     with col2:
         num_stocks = st.number_input("Top N stocks", min_value=5, max_value=20, value=10, step=1)
