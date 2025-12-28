@@ -624,6 +624,243 @@ def get_sensex_data() -> Dict[str, Any]:
         }
 
 
+def get_nifty_futures_data() -> Dict[str, Any]:
+    """
+    Get NIFTY Futures data (current month and next month contracts)
+
+    Uses multiple data sources:
+    1. Dhan API (preferred) - For real-time futures data
+    2. yfinance (fallback) - When Dhan is unavailable
+
+    Returns:
+        Dict with futures data including:
+        - current_month: Current month futures contract data
+        - next_month: Next month futures contract data
+        - spot_price: NIFTY spot price for reference
+    """
+    try:
+        # First try to get spot price from Dhan
+        nifty_data = get_nifty_data()
+        spot_price = nifty_data.get('spot_price') if nifty_data.get('success') else None
+
+        # Try Dhan API for futures data
+        try:
+            fetcher = DhanDataFetcher()
+
+            # Note: Dhan futures require specific security IDs from instrument master
+            # For now, we'll use yfinance as it's more straightforward for futures
+            # To use Dhan, download instrument master and map security IDs
+            raise Exception("Dhan futures not yet implemented - falling back to yfinance")
+
+        except Exception as dhan_error:
+            # Fall back to yfinance
+            import yfinance as yf
+            from datetime import datetime
+
+            # Get current month and next month expiry dates
+            current_month, next_month = _get_futures_expiry_months()
+
+            # NIFTY futures ticker format: NIFTY{YY}{MMM}FUT.NS
+            # Example: NIFTY25JANFUT.NS for January 2025
+            current_ticker = f"NIFTY{current_month}FUT.NS"
+            next_ticker = f"NIFTY{next_month}FUT.NS"
+
+            result = {
+                'success': False,
+                'current_month': {},
+                'next_month': {},
+                'spot_price': spot_price,
+                'data_source': 'yfinance',
+                'timestamp': get_current_time_ist()
+            }
+
+            # Fetch current month futures
+            try:
+                current_fut = yf.Ticker(current_ticker)
+                current_hist = current_fut.history(period="2d", interval="1d")
+
+                if not current_hist.empty:
+                    latest = current_hist.iloc[-1]
+                    previous = current_hist.iloc[-2] if len(current_hist) > 1 else latest
+
+                    ltp = latest['Close']
+                    change_pct = ((ltp - previous['Close']) / previous['Close'] * 100) if len(current_hist) > 1 else 0
+
+                    # Get expiry date
+                    expiry_date = _parse_futures_expiry(current_month)
+                    days_to_expiry = (expiry_date - get_current_time_ist()).days if expiry_date else 0
+
+                    result['current_month'] = {
+                        'ltp': ltp,
+                        'open': latest['Open'],
+                        'high': latest['High'],
+                        'low': latest['Low'],
+                        'close': latest['Close'],
+                        'volume': int(latest['Volume']) if 'Volume' in latest else 0,
+                        'expiry': expiry_date.strftime('%Y-%m-%d') if expiry_date else 'N/A',
+                        'days_to_expiry': days_to_expiry,
+                        'price_change_pct': change_pct,
+                        'ticker': current_ticker,
+                        # Fields not available from yfinance - set to None
+                        'oi': None,
+                        'oi_change_pct': None,
+                        'volume_change_pct': None,
+                        'spot_change_pct': None,
+                        'price_change_5d_pct': None,
+                        'rsi': None,
+                        'macd': None,
+                        'bb_position': None,
+                        'trend': None,
+                        'buildup_pattern': None
+                    }
+                    result['success'] = True
+
+            except Exception as e:
+                result['current_month'] = {'error': f'Failed to fetch {current_ticker}: {str(e)}'}
+
+            # Fetch next month futures
+            try:
+                next_fut = yf.Ticker(next_ticker)
+                next_hist = next_fut.history(period="2d", interval="1d")
+
+                if not next_hist.empty:
+                    latest = next_hist.iloc[-1]
+                    previous = next_hist.iloc[-2] if len(next_hist) > 1 else latest
+
+                    ltp = latest['Close']
+                    change_pct = ((ltp - previous['Close']) / previous['Close'] * 100) if len(next_hist) > 1 else 0
+
+                    # Get expiry date
+                    expiry_date = _parse_futures_expiry(next_month)
+                    days_to_expiry = (expiry_date - get_current_time_ist()).days if expiry_date else 0
+
+                    result['next_month'] = {
+                        'ltp': ltp,
+                        'open': latest['Open'],
+                        'high': latest['High'],
+                        'low': latest['Low'],
+                        'close': latest['Close'],
+                        'volume': int(latest['Volume']) if 'Volume' in latest else 0,
+                        'expiry': expiry_date.strftime('%Y-%m-%d') if expiry_date else 'N/A',
+                        'days_to_expiry': days_to_expiry,
+                        'price_change_pct': change_pct,
+                        'ticker': next_ticker,
+                        # Fields not available from yfinance - set to None
+                        'oi': None,
+                        'oi_change_pct': None,
+                        'volume_change_pct': None
+                    }
+
+            except Exception as e:
+                result['next_month'] = {'error': f'Failed to fetch {next_ticker}: {str(e)}'}
+
+            return result
+
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'Failed to fetch futures data: {str(e)}',
+            'current_month': {},
+            'next_month': {},
+            'spot_price': None,
+            'timestamp': get_current_time_ist()
+        }
+
+
+def _get_futures_expiry_months() -> tuple:
+    """
+    Get current and next month expiry codes for NIFTY futures
+
+    Returns:
+        Tuple of (current_month_code, next_month_code)
+        Format: "25JAN", "25FEB", etc.
+    """
+    now = get_current_time_ist()
+    current_year = now.year % 100  # Last 2 digits
+    current_month = now.month
+
+    # NIFTY futures expire on last Thursday of the month
+    # After 3rd week, we consider next month as current
+    last_thursday = _get_last_thursday(now.year, now.month)
+
+    if now.date() > last_thursday.date():
+        # Move to next month
+        current_month += 1
+        if current_month > 12:
+            current_month = 1
+            current_year += 1
+
+    next_month = current_month + 1
+    next_year = current_year
+    if next_month > 12:
+        next_month = 1
+        next_year += 1
+
+    month_codes = ['', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                   'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+
+    current_code = f"{current_year:02d}{month_codes[current_month]}"
+    next_code = f"{next_year:02d}{month_codes[next_month]}"
+
+    return (current_code, next_code)
+
+
+def _get_last_thursday(year: int, month: int) -> datetime:
+    """
+    Get last Thursday of a month (NIFTY futures expiry date)
+
+    Args:
+        year: Year
+        month: Month (1-12)
+
+    Returns:
+        datetime of last Thursday
+    """
+    from calendar import monthrange
+
+    # Get last day of month
+    last_day = monthrange(year, month)[1]
+    last_date = datetime(year, month, last_day, tzinfo=IST)
+
+    # Find last Thursday
+    # Thursday is weekday 3 (Monday=0)
+    days_back = (last_date.weekday() - 3) % 7
+    last_thursday = last_date - timedelta(days=days_back)
+
+    return last_thursday
+
+
+def _parse_futures_expiry(month_code: str) -> Optional[datetime]:
+    """
+    Parse futures expiry date from month code
+
+    Args:
+        month_code: Format "25JAN" (year + month)
+
+    Returns:
+        datetime of expiry (last Thursday)
+    """
+    try:
+        year_str = month_code[:2]
+        month_str = month_code[2:]
+
+        year = 2000 + int(year_str)
+
+        month_map = {
+            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+        }
+
+        month = month_map.get(month_str.upper())
+        if not month:
+            return None
+
+        return _get_last_thursday(year, month)
+
+    except Exception:
+        return None
+
+
 # ============================================================================
 # TEST CONNECTION
 # ============================================================================

@@ -5259,14 +5259,32 @@ with tab10:
         # Get spot price from nifty_data
         spot_price = nifty_data.get('spot_price', 25000.0)
 
-        # Get futures data if available
+        # Get futures data using Dhan API + yfinance
         futures_data = None
         try:
-            # Try to get futures data from NSE or other sources
-            # For now, using demo data - replace with actual data source
-            futures_data = None  # Will use demo data in UI
+            from dhan_data_fetcher import get_nifty_futures_data
+
+            futures_result = get_nifty_futures_data()
+
+            if futures_result.get('success'):
+                # Update spot price if available from futures data
+                if futures_result.get('spot_price'):
+                    spot_price = futures_result['spot_price']
+
+                futures_data = {
+                    'current_month': futures_result.get('current_month', {}),
+                    'next_month': futures_result.get('next_month', {}),
+                    'data_source': futures_result.get('data_source', 'unknown')
+                }
+                logger.info(f"Fetched futures data using {futures_result.get('data_source')}")
+            else:
+                error_msg = futures_result.get('error', 'Unknown error')
+                logger.warning(f"Could not fetch futures data: {error_msg}")
+                futures_data = None  # Will use demo data in UI
+
         except Exception as e:
             logger.warning(f"Could not fetch futures data: {e}")
+            futures_data = None  # Will use demo data in UI
 
         # Get participant data if available
         participant_data = None
