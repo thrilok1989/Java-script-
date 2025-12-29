@@ -78,20 +78,72 @@ SYMBOL_MAPPING = {
 }
 
 
-# Security ID mappings (same as NiftyOptionScreener)
+# Security ID mappings for all major NSE FNO stocks
 SECURITY_ID_MAP = {
     # Indices
     'NIFTY': 13,
     'BANKNIFTY': 25,
     'FINNIFTY': 27,
     'MIDCPNIFTY': 14,
-    # Stocks - using NSE FNO security IDs
+
+    # Large Cap Stocks (Top 50)
     'RELIANCE': 2885,
     'TCS': 3456,
     'HDFCBANK': 1333,
     'INFY': 1594,
     'ICICIBANK': 1270,
-    # Add more as needed - for now will skip stocks without known IDs
+    'HINDUNILVR': 1394,
+    'ITC': 1660,
+    'SBIN': 3045,
+    'BHARTIARTL': 212,
+    'KOTAKBANK': 1922,
+    'LT': 2136,
+    'AXISBANK': 5,
+    'ASIANPAINT': 157,
+    'MARUTI': 2031,
+    'TITAN': 3506,
+    'SUNPHARMA': 3351,
+    'ULTRACEMCO': 3538,
+    'BAJFINANCE': 58,
+    'WIPRO': 3787,
+    'NESTLEIND': 2744,
+    'POWERGRID': 2821,
+    'HCLTECH': 1348,
+    'M&M': 2031,
+    'NTPC': 2977,
+    'TATAMOTORS': 3456,
+    'TATASTEEL': 3499,
+    'TECHM': 3465,
+    'INDUSINDBK': 1586,
+    'ADANIENT': 25,
+    'JSWSTEEL': 3001,
+    'BAJAJFINSV': 60,
+    'HDFCLIFE': 1335,
+    'COALINDIA': 539,
+    'GRASIM': 1232,
+    'ONGC': 2674,
+    'CIPLA': 694,
+    'DIVISLAB': 872,
+    'DRREDDY': 881,
+    'EICHERMOT': 910,
+    'SHREECEM': 3103,
+    'HINDALCO': 1363,
+    'BRITANNIA': 547,
+    'BPCL': 526,
+    'APOLLOHOSP': 157,
+    'TATACONSUM': 3432,
+    'HEROMOTOCO': 1348,
+    'ADANIPORTS': 15042,
+
+    # Mid Cap Stocks with High Liquidity
+    'VEDL': 3063,
+    'GODREJCP': 1207,
+    'PNB': 2730,
+    'BANKBARODA': 4668,
+    'CANBK': 10794,
+    'INDIGO': 11915,
+    'DLF': 3771,
+    'PEL': 2412,
 }
 
 def get_security_id(symbol: str) -> Optional[int]:
@@ -442,7 +494,9 @@ class NSEStockScreener:
                 return None
 
             current_price = df['close'].iloc[-1]
-            price_change_pct = ((df['close'].iloc[-1] - df['close'].iloc[-12]) / df['close'].iloc[-12] * 100) if len(df) >= 12 else 0
+            prev_price = df['close'].iloc[-12] if len(df) >= 12 else df['close'].iloc[0]
+            price_change_pct = ((current_price - prev_price) / prev_price * 100) if prev_price > 0 else 0
+            price_change_points = current_price - prev_price
 
             # 1. REAL Option Chain Analysis
             option_result = self.calculate_real_option_analysis(stock, current_price)
@@ -496,6 +550,7 @@ class NSEStockScreener:
                 'strength': strength,
                 'overall_signal': overall_signal,
                 'price_change_pct': price_change_pct,
+                'price_change_points': price_change_points,
                 'option_sentiment': option_result.get('sentiment', 'NEUTRAL'),
                 'option_score': option_score,
                 'option_pcr': option_result.get('pcr', 0),
@@ -546,21 +601,22 @@ class NSEStockScreener:
         return results
 
     def get_top_movers(self, results: List[Dict], n: int = 10) -> Tuple[List[Dict], List[Dict]]:
-        """Get top N falling and rising stocks"""
+        """Get top N falling and rising stocks by absolute point change"""
         if not results:
             return [], []
 
-        sorted_by_strength = sorted(results, key=lambda x: x['strength'], reverse=True)
+        # Sort falling stocks by biggest negative point change (most negative first)
+        falling_stocks = sorted(
+            [r for r in results if r['price_change_points'] < 0],
+            key=lambda x: x['price_change_points']  # Most negative first
+        )[:n]
 
-        falling_stocks = [
-            r for r in sorted_by_strength
-            if r['overall_signal'] in ['STRONG_BEARISH', 'BEARISH'] and r['price_change_pct'] < 0
-        ][:n]
-
-        rising_stocks = [
-            r for r in sorted_by_strength
-            if r['overall_signal'] in ['STRONG_BULLISH', 'BULLISH'] and r['price_change_pct'] > 0
-        ][:n]
+        # Sort rising stocks by biggest positive point change (most positive first)
+        rising_stocks = sorted(
+            [r for r in results if r['price_change_points'] > 0],
+            key=lambda x: x['price_change_points'],
+            reverse=True  # Most positive first
+        )[:n]
 
         return falling_stocks, rising_stocks
 
@@ -613,15 +669,10 @@ def render_nse_stock_screener_tab():
 
     st.divider()
 
-    # DEBUG: Show button state
-    st.write(f"🔍 DEBUG: Button clicked = {run_button}")
-
     # Run analysis when form is submitted
     if run_button:
-        st.write("✅ INSIDE IF BLOCK - BUTTON WAS CLICKED!")
-        st.write("=" * 80)
         st.balloons()
-        st.info("🚀 **Button Clicked! Starting analysis...**")
+        st.info("🚀 **Analysis Started! Processing stocks...**")
 
         try:
             # Step 1: Initialize screener
@@ -685,13 +736,12 @@ def render_nse_stock_screener_tab():
                     {
                         'Stock': r['stock'],
                         'Price': f"₹{r['price']:.2f}",
+                        'Change (pts)': f"{r['price_change_points']:.2f}",
                         'Change %': f"{r['price_change_pct']:.2f}%",
-                        'Signal': r['overall_signal'],
-                        'Strength': f"{r['strength']:.1f}",
                         'OC PCR': f"{r['option_pcr']:.2f}" if r['option_pcr'] else 'N/A',
-                        'Bias': f"{r['bias']} ({r['bias_score']:.0f})",
+                        'Bias': f"{r['bias']}",
+                        'Signal': r['overall_signal'],
                         'Trend': r['trend'],
-                        'Regime': r['regime'],
                         'Bull/Bear': f"{r['bullish_indicators']}/{r['bearish_indicators']}"
                     }
                     for r in falling_stocks
@@ -717,13 +767,12 @@ def render_nse_stock_screener_tab():
                     {
                         'Stock': r['stock'],
                         'Price': f"₹{r['price']:.2f}",
-                        'Change %': f"{r['price_change_pct']:.2f}%",
-                        'Signal': r['overall_signal'],
-                        'Strength': f"{r['strength']:.1f}",
+                        'Change (pts)': f"+{r['price_change_points']:.2f}",
+                        'Change %': f"+{r['price_change_pct']:.2f}%",
                         'OC PCR': f"{r['option_pcr']:.2f}" if r['option_pcr'] else 'N/A',
-                        'Bias': f"{r['bias']} ({r['bias_score']:.0f})",
+                        'Bias': f"{r['bias']}",
+                        'Signal': r['overall_signal'],
                         'Trend': r['trend'],
-                        'Regime': r['regime'],
                         'Bull/Bear': f"{r['bullish_indicators']}/{r['bearish_indicators']}"
                     }
                     for r in rising_stocks
