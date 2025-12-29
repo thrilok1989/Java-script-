@@ -425,14 +425,12 @@ def render_cost_of_carry(
 
     # Calculate cost of carry
     days_to_expiry = current_futures.get('days_to_expiry', 15)
-    risk_free_rate = 0.065  # 6.5% annual
-    dividend_yield = 0.012  # 1.2% annual
+    dividend_yield = 1.2  # 1.2% annual (passed as percentage, not decimal)
 
     coc_result = analyzer.calculate_cost_of_carry(
         spot_price=spot_price,
         futures_price=futures_price,
         days_to_expiry=days_to_expiry,
-        risk_free_rate=risk_free_rate,
         dividend_yield=dividend_yield
     )
 
@@ -485,14 +483,18 @@ def render_cost_of_carry(
     # Cost components breakdown
     st.markdown("#### Cost Components")
 
+    # Display values (risk-free rate is used internally by analyzer)
+    risk_free_rate_display = 6.5  # Display value only
+    dividend_yield_display = dividend_yield  # Already in percentage
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("Risk-Free Rate", f"{risk_free_rate*100:.2f}%")
+        st.metric("Risk-Free Rate", f"{risk_free_rate_display:.2f}%")
     with col2:
-        st.metric("Dividend Yield", f"{dividend_yield*100:.2f}%")
+        st.metric("Dividend Yield", f"{dividend_yield_display:.2f}%")
     with col3:
-        st.metric("Net Carry", f"{(risk_free_rate - dividend_yield)*100:.2f}%")
+        st.metric("Net Carry", f"{(risk_free_rate_display - dividend_yield_display):.2f}%")
 
 
 def render_rollover_analysis(futures_data: Dict, analyzer: NiftyFuturesAnalyzer):
