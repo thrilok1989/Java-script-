@@ -5266,11 +5266,12 @@ with tab10:
 
             futures_result = get_nifty_futures_data()
 
-            if futures_result.get('success'):
-                # Update spot price if available from futures data
-                if futures_result.get('spot_price'):
-                    spot_price = futures_result['spot_price']
+            # Update spot price from futures data if available (even if futures fetch failed)
+            if futures_result.get('spot_price'):
+                spot_price = futures_result['spot_price']
+                logger.info(f"Updated spot price from futures data: ₹{spot_price:,.2f}")
 
+            if futures_result.get('success'):
                 futures_data = {
                     'current_month': futures_result.get('current_month', {}),
                     'next_month': futures_result.get('next_month', {}),
