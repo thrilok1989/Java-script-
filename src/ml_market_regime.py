@@ -1187,19 +1187,35 @@ class MLMarketRegimeDetector:
             price_high = highs.iloc[i]
             price_low = lows.iloc[i]
 
-            if price_high < current_price and price_high not in resistances:
-                resistances.append(price_high)
-            if price_low > current_price and price_low not in supports:
-                supports.append(price_low)
+            # Convert to float and validate
+            try:
+                if isinstance(price_high, (int, float)) and not np.isnan(price_high):
+                    price_high_float = float(price_high)
+                    if price_high_float < current_price and price_high_float not in resistances:
+                        resistances.append(price_high_float)
+            except (ValueError, TypeError):
+                pass
+
+            try:
+                if isinstance(price_low, (int, float)) and not np.isnan(price_low):
+                    price_low_float = float(price_low)
+                    if price_low_float > current_price and price_low_float not in supports:
+                        supports.append(price_low_float)
+            except (ValueError, TypeError):
+                pass
 
         # 2. From option chain (max pain, high OI strikes)
         if option_data and option_data.get('success'):
             max_pain = option_data.get('max_pain', 0)
-            if max_pain > 0:
-                if max_pain < current_price:
-                    supports.append(max_pain)
-                else:
-                    resistances.append(max_pain)
+            try:
+                if isinstance(max_pain, (int, float)) and max_pain > 0:
+                    max_pain_float = float(max_pain)
+                    if max_pain_float < current_price:
+                        supports.append(max_pain_float)
+                    else:
+                        resistances.append(max_pain_float)
+            except (ValueError, TypeError):
+                pass
 
         # 3. From order blocks
         if chart_indicators and 'order_blocks' in chart_indicators:
@@ -1210,24 +1226,37 @@ class MLMarketRegimeDetector:
                 if block.get('active'):
                     mid_value = block.get('mid')
                     # Ensure mid_value is a number, not a dict
-                    if isinstance(mid_value, (int, float)):
-                        supports.append(mid_value)
-                    elif isinstance(mid_value, dict) and 'value' in mid_value:
-                        supports.append(mid_value['value'])
+                    try:
+                        if isinstance(mid_value, (int, float)) and not np.isnan(mid_value):
+                            supports.append(float(mid_value))
+                        elif isinstance(mid_value, dict) and 'value' in mid_value:
+                            val = mid_value['value']
+                            if isinstance(val, (int, float)) and not np.isnan(val):
+                                supports.append(float(val))
+                    except (ValueError, TypeError):
+                        pass
 
             # Bearish OBs = Resistance
             for block in ob_data.get('bearish_blocks', []):
                 if block.get('active'):
                     mid_value = block.get('mid')
                     # Ensure mid_value is a number, not a dict
-                    if isinstance(mid_value, (int, float)):
-                        resistances.append(mid_value)
-                    elif isinstance(mid_value, dict) and 'value' in mid_value:
-                        resistances.append(mid_value['value'])
+                    try:
+                        if isinstance(mid_value, (int, float)) and not np.isnan(mid_value):
+                            resistances.append(float(mid_value))
+                        elif isinstance(mid_value, dict) and 'value' in mid_value:
+                            val = mid_value['value']
+                            if isinstance(val, (int, float)) and not np.isnan(val):
+                                resistances.append(float(val))
+                    except (ValueError, TypeError):
+                        pass
 
-        # Sort and filter
-        supports = sorted([s for s in supports if s < current_price], reverse=True)[:5]
-        resistances = sorted([r for r in resistances if r > current_price])[:5]
+        # Filter to ensure all values are floats and sort
+        supports = [s for s in supports if isinstance(s, (int, float)) and not np.isnan(s) and s < current_price]
+        resistances = [r for r in resistances if isinstance(r, (int, float)) and not np.isnan(r) and r > current_price]
+
+        supports = sorted(supports, reverse=True)[:5]
+        resistances = sorted(resistances)[:5]
 
         # Classify major vs near
         atr = df[high_col] - df[low_col]
