@@ -636,9 +636,17 @@ class MLMarketRegimeDetector:
         # Max Pain vs Spot
         max_pain = option_data.get('max_pain', 0)
         spot = option_data.get('spot', 0)
-        if spot > 0:
-            features['max_pain_distance'] = ((spot - max_pain) / spot) * 100
-        else:
+
+        # Ensure values are numeric
+        try:
+            max_pain = float(max_pain) if isinstance(max_pain, (int, float)) else 0
+            spot = float(spot) if isinstance(spot, (int, float)) else 0
+
+            if spot > 0:
+                features['max_pain_distance'] = ((spot - max_pain) / spot) * 100
+            else:
+                features['max_pain_distance'] = 0
+        except (ValueError, TypeError, ZeroDivisionError):
             features['max_pain_distance'] = 0
 
         # Gamma exposure
@@ -983,11 +991,19 @@ class MLMarketRegimeDetector:
 
         max_pain = option_data.get('max_pain', 0)
         spot = option_data.get('spot', 0)
-        if max_pain > 0 and spot > 0:
-            distance = ((spot - max_pain) / spot) * 100
-            if abs(distance) > 1:
-                direction = "above" if distance > 0 else "below"
-                signals.append(f"🎯 Max Pain: {max_pain:.0f} ({abs(distance):.1f}% {direction} spot)")
+
+        # Ensure values are numeric
+        try:
+            max_pain = float(max_pain) if isinstance(max_pain, (int, float)) else 0
+            spot = float(spot) if isinstance(spot, (int, float)) else 0
+
+            if max_pain > 0 and spot > 0:
+                distance = ((spot - max_pain) / spot) * 100
+                if abs(distance) > 1:
+                    direction = "above" if distance > 0 else "below"
+                    signals.append(f"🎯 Max Pain: {max_pain:.0f} ({abs(distance):.1f}% {direction} spot)")
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
 
         # ATM Bias signals (NEW!)
         atm_bias = option_data.get('atm_bias', {})
