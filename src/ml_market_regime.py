@@ -860,18 +860,39 @@ class MLMarketRegimeDetector:
 
         current_price = reversal_data.get('current_price', 0)
 
+        # Ensure current_price is a float
+        try:
+            current_price = float(current_price) if isinstance(current_price, (int, float)) else 0
+        except (ValueError, TypeError):
+            return features
+
         # Direction of expected reversal
         features['reversal_is_bullish'] = 1.0 if zone.is_bullish else -1.0
 
         # Proximity to percentile targets (normalized)
-        if zone.percentile_50_price and current_price > 0:
-            features['distance_to_50th_pct'] = abs(current_price - zone.percentile_50_price) / current_price
+        try:
+            if zone.percentile_50_price and current_price > 0:
+                p50 = float(zone.percentile_50_price) if isinstance(zone.percentile_50_price, (int, float)) else 0
+                if p50 > 0:
+                    features['distance_to_50th_pct'] = abs(current_price - p50) / current_price
+        except (ValueError, TypeError, AttributeError):
+            pass
 
-        if zone.percentile_75_price and current_price > 0:
-            features['distance_to_75th_pct'] = abs(current_price - zone.percentile_75_price) / current_price
+        try:
+            if zone.percentile_75_price and current_price > 0:
+                p75 = float(zone.percentile_75_price) if isinstance(zone.percentile_75_price, (int, float)) else 0
+                if p75 > 0:
+                    features['distance_to_75th_pct'] = abs(current_price - p75) / current_price
+        except (ValueError, TypeError, AttributeError):
+            pass
 
-        if zone.percentile_90_price and current_price > 0:
-            features['distance_to_90th_pct'] = abs(current_price - zone.percentile_90_price) / current_price
+        try:
+            if zone.percentile_90_price and current_price > 0:
+                p90 = float(zone.percentile_90_price) if isinstance(zone.percentile_90_price, (int, float)) else 0
+                if p90 > 0:
+                    features['distance_to_90th_pct'] = abs(current_price - p90) / current_price
+        except (ValueError, TypeError, AttributeError):
+            pass
 
         # Time until reversal (bars remaining to percentile targets)
         features['bars_to_50th_pct'] = zone.percentile_50_bars / 100.0  # Normalize
@@ -897,6 +918,17 @@ class MLMarketRegimeDetector:
         htf_low = footprint_data.get('htf_low', 0)
         value_area_high = footprint_data.get('value_area_high', 0)
         value_area_low = footprint_data.get('value_area_low', 0)
+
+        # Ensure all values are floats
+        try:
+            current_price = float(current_price) if isinstance(current_price, (int, float)) else 0
+            poc_price = float(poc_price) if isinstance(poc_price, (int, float)) else 0
+            htf_high = float(htf_high) if isinstance(htf_high, (int, float)) else 0
+            htf_low = float(htf_low) if isinstance(htf_low, (int, float)) else 0
+            value_area_high = float(value_area_high) if isinstance(value_area_high, (int, float)) else 0
+            value_area_low = float(value_area_low) if isinstance(value_area_low, (int, float)) else 0
+        except (ValueError, TypeError):
+            return features
 
         if current_price == 0:
             return features
@@ -1095,20 +1127,40 @@ class MLMarketRegimeDetector:
 
         current_price = reversal_data.get('current_price', 0)
 
+        # Ensure current_price is a float
+        try:
+            current_price = float(current_price) if isinstance(current_price, (int, float)) else 0
+        except (ValueError, TypeError):
+            return signals
+
         # Direction of expected reversal
         direction = "Bullish" if zone.is_bullish else "Bearish"
-        signals.append(f"🎯 Reversal Zone: {direction} reversal expected from {zone.price:.2f}")
+        try:
+            zone_price = float(zone.price) if isinstance(zone.price, (int, float)) else 0
+            signals.append(f"🎯 Reversal Zone: {direction} reversal expected from {zone_price:.2f}")
+        except (ValueError, TypeError, AttributeError):
+            signals.append(f"🎯 Reversal Zone: {direction} reversal expected")
 
         # Show key probability targets
-        if zone.percentile_50_price:
-            distance_pct = abs(current_price - zone.percentile_50_price) / current_price * 100
-            if distance_pct < 2:  # Within 2% of target
-                signals.append(f"   ✓ Near 50% probability target: {zone.percentile_50_price:.2f}")
-            else:
-                signals.append(f"   Target (50%): {zone.percentile_50_price:.2f}")
+        try:
+            if zone.percentile_50_price and current_price > 0:
+                p50 = float(zone.percentile_50_price) if isinstance(zone.percentile_50_price, (int, float)) else 0
+                if p50 > 0:
+                    distance_pct = abs(current_price - p50) / current_price * 100
+                    if distance_pct < 2:  # Within 2% of target
+                        signals.append(f"   ✓ Near 50% probability target: {p50:.2f}")
+                    else:
+                        signals.append(f"   Target (50%): {p50:.2f}")
+        except (ValueError, TypeError, AttributeError):
+            pass
 
-        if zone.percentile_75_price:
-            signals.append(f"   Target (75%): {zone.percentile_75_price:.2f}")
+        try:
+            if zone.percentile_75_price:
+                p75 = float(zone.percentile_75_price) if isinstance(zone.percentile_75_price, (int, float)) else 0
+                if p75 > 0:
+                    signals.append(f"   Target (75%): {p75:.2f}")
+        except (ValueError, TypeError, AttributeError):
+            pass
 
         # Historical sample size
         total_samples = reversal_data.get('total_bullish_samples' if zone.is_bullish else 'total_bearish_samples', 0)
@@ -1129,28 +1181,48 @@ class MLMarketRegimeDetector:
         htf_low = footprint_data.get('htf_low', 0)
         timeframe = footprint_data.get('timeframe', '1D')
 
+        # Ensure all values are floats
+        try:
+            current_price = float(current_price) if isinstance(current_price, (int, float)) else 0
+            poc_price = float(poc_price) if isinstance(poc_price, (int, float)) else 0
+            value_area_high = float(value_area_high) if isinstance(value_area_high, (int, float)) else 0
+            value_area_low = float(value_area_low) if isinstance(value_area_low, (int, float)) else 0
+            htf_high = float(htf_high) if isinstance(htf_high, (int, float)) else 0
+            htf_low = float(htf_low) if isinstance(htf_low, (int, float)) else 0
+        except (ValueError, TypeError):
+            return signals
+
         # POC analysis
-        if poc_price > 0:
-            poc_distance_pct = abs(current_price - poc_price) / current_price * 100
-            if poc_distance_pct < 0.5:  # Within 0.5% of POC
-                signals.append(f"📊 {timeframe} POC: Price at key volume node {poc_price:.2f}")
-            else:
-                position = "above" if current_price > poc_price else "below"
-                signals.append(f"📊 {timeframe} POC: {poc_price:.2f} ({position} current price)")
+        if poc_price > 0 and current_price > 0:
+            try:
+                poc_distance_pct = abs(current_price - poc_price) / current_price * 100
+                if poc_distance_pct < 0.5:  # Within 0.5% of POC
+                    signals.append(f"📊 {timeframe} POC: Price at key volume node {poc_price:.2f}")
+                else:
+                    position = "above" if current_price > poc_price else "below"
+                    signals.append(f"📊 {timeframe} POC: {poc_price:.2f} ({position} current price)")
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
 
         # Value area analysis
         if value_area_high > 0 and value_area_low > 0:
-            if value_area_low <= current_price <= value_area_high:
-                signals.append(f"   ✓ Price in Value Area ({value_area_low:.2f} - {value_area_high:.2f})")
-            elif current_price > value_area_high:
-                signals.append(f"   ⚠️ Price above Value Area - potential reversal zone")
-            else:
-                signals.append(f"   ⚠️ Price below Value Area - potential support zone")
+            try:
+                if value_area_low <= current_price <= value_area_high:
+                    signals.append(f"   ✓ Price in Value Area ({value_area_low:.2f} - {value_area_high:.2f})")
+                elif current_price > value_area_high:
+                    signals.append(f"   ⚠️ Price above Value Area - potential reversal zone")
+                else:
+                    signals.append(f"   ⚠️ Price below Value Area - potential support zone")
+            except (ValueError, TypeError):
+                pass
 
         # HTF range analysis
-        if htf_high > 0 and htf_low > 0:
-            range_position = (current_price - htf_low) / (htf_high - htf_low) * 100
-            signals.append(f"   {timeframe} Range: {range_position:.0f}% ({htf_low:.2f} - {htf_high:.2f})")
+        if htf_high > 0 and htf_low > 0 and htf_high > htf_low:
+            try:
+                range_position = (current_price - htf_low) / (htf_high - htf_low) * 100
+                signals.append(f"   {timeframe} Range: {range_position:.0f}% ({htf_low:.2f} - {htf_high:.2f})")
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
 
         return signals
 
