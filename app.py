@@ -5333,27 +5333,21 @@ with tab8:
 
 with tab9:
     st.markdown("# 🔍 NSE Stock Screener")
-    st.markdown("### ✅ Tab 9 LOADED")
-    st.write("=" * 50)
-    st.info("If you see this, tab 9 is working!")
-    st.write("=" * 50)
 
-    try:
-        from nse_stock_screener_dhan import render_nse_stock_screener_tab
-        render_nse_stock_screener_tab()
-    except Exception as e:
-        st.error(f"❌ Error loading NSE Stock Screener: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+    # LAZY LOADING - Only load when user clicks button (performance fix)
+    if st.button("🔄 Load Stock Screener", type="primary", key="load_screener_btn"):
+        st.session_state.load_stock_screener = True
 
-        st.info("""
-        **NSE Stock Screener Not Available**
-
-        To use this feature:
-        1. Ensure nse_stock_screener_dhan.py is in the project root
-        2. Required modules: advanced_chart_analysis.py, bias_analysis.py, src/ml_market_regime.py, NiftyOptionScreener.py
-        3. Internet connection required for fetching stock data and Dhan API access
-        """)
+    if st.session_state.get('load_stock_screener', False):
+        try:
+            with st.spinner("Loading stock screener..."):
+                from nse_stock_screener_dhan import render_nse_stock_screener_tab
+                render_nse_stock_screener_tab()
+        except Exception as e:
+            st.error(f"❌ Error loading NSE Stock Screener: {e}")
+            st.info("Ensure nse_stock_screener_dhan.py exists and all dependencies are installed.")
+    else:
+        st.info("👆 Click 'Load Stock Screener' to start screening NSE stocks.")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 10: NIFTY FUTURES ANALYSIS
@@ -5362,66 +5356,56 @@ with tab9:
 with tab10:
     st.markdown("# 📈 NIFTY Futures Analysis")
 
-    try:
-        from src.nifty_futures_ui import render_nifty_futures_dashboard
+    # LAZY LOADING - Only fetch when user clicks button (performance fix)
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        load_futures = st.button("🔄 Load Futures Data", type="primary", key="load_futures_btn")
+    with col2:
+        if 'futures_data_cache' in st.session_state:
+            st.caption("✅ Data loaded - Click to refresh")
 
-        # Get spot price from nifty_data
-        spot_price = nifty_data.get('spot_price', 25000.0)
-
-        # Get futures data using Dhan API + yfinance
-        futures_data = None
+    if load_futures or 'futures_data_cache' in st.session_state:
         try:
-            from dhan_data_fetcher import get_nifty_futures_data
+            from src.nifty_futures_ui import render_nifty_futures_dashboard
 
-            futures_result = get_nifty_futures_data()
+            spot_price = nifty_data.get('spot_price', 25000.0)
+            futures_data = None
 
-            # Update spot price from futures data if available (even if futures fetch failed)
-            if futures_result.get('spot_price'):
-                spot_price = futures_result['spot_price']
-                logger.info(f"Updated spot price from futures data: ₹{spot_price:,.2f}")
+            # Only fetch if button clicked (not from cache)
+            if load_futures:
+                with st.spinner("Loading futures data..."):
+                    try:
+                        from dhan_data_fetcher import get_nifty_futures_data
+                        futures_result = get_nifty_futures_data()
 
-            if futures_result.get('success'):
-                futures_data = {
-                    'current_month': futures_result.get('current_month', {}),
-                    'next_month': futures_result.get('next_month', {}),
-                    'data_source': futures_result.get('data_source', 'unknown')
-                }
-                logger.info(f"Fetched futures data using {futures_result.get('data_source')}")
+                        if futures_result.get('spot_price'):
+                            spot_price = futures_result['spot_price']
+
+                        if futures_result.get('success'):
+                            futures_data = {
+                                'current_month': futures_result.get('current_month', {}),
+                                'next_month': futures_result.get('next_month', {}),
+                                'data_source': futures_result.get('data_source', 'unknown')
+                            }
+                            st.session_state.futures_data_cache = futures_data
+                            st.session_state.futures_spot_cache = spot_price
+                            st.success("✅ Futures data loaded!")
+                    except Exception as e:
+                        st.warning(f"Could not fetch futures data: {e}")
             else:
-                error_msg = futures_result.get('error', 'Unknown error')
-                logger.warning(f"Could not fetch futures data: {error_msg}")
-                futures_data = None  # Will use demo data in UI
+                # Use cached data
+                futures_data = st.session_state.get('futures_data_cache')
+                spot_price = st.session_state.get('futures_spot_cache', spot_price)
 
-        except Exception as e:
-            logger.warning(f"Could not fetch futures data: {e}")
-            futures_data = None  # Will use demo data in UI
+            option_chain_data = st.session_state.get('option_chain')
 
-        # Get participant data if available
-        participant_data = None
-        try:
-            # Try to get FII/DII data
-            # For now, using demo data - replace with actual data source
-            participant_data = None  # Will use demo data in UI
-        except Exception as e:
-            logger.warning(f"Could not fetch participant data: {e}")
-
-        # Get option chain for correlation
-        option_chain_data = None
-        try:
-            # Try to get from existing option chain data
-            if 'option_chain' in st.session_state:
-                option_chain_data = st.session_state.option_chain
-        except Exception as e:
-            logger.warning(f"Could not get option chain data: {e}")
-
-        # Render the futures dashboard
-        render_nifty_futures_dashboard(
-            spot_price=spot_price,
-            futures_data=futures_data,
-            participant_data=participant_data,
-            option_chain_data=option_chain_data,
-            historical_data=None  # Can add historical data if available
-        )
+            render_nifty_futures_dashboard(
+                spot_price=spot_price,
+                futures_data=futures_data,
+                participant_data=None,
+                option_chain_data=option_chain_data,
+                historical_data=None
+            )
 
     except ImportError as e:
         st.error(f"❌ Error importing NIFTY Futures UI: {e}")
@@ -5448,37 +5432,22 @@ with tab11:
     st.markdown("# 🤖 AI Training & Model Management")
     st.caption("Train XGBoost models on real trading data | Track predictions & outcomes | Manage model versions")
 
-    try:
-        from src.ai_training_ui import render_ai_training_dashboard
+    # LAZY LOADING - Only load when user clicks button (performance fix)
+    if st.button("🔄 Load AI Training Dashboard", type="primary", key="load_ai_training_btn"):
+        st.session_state.load_ai_training = True
 
-        # Render the AI training dashboard
-        render_ai_training_dashboard()
-
-    except ImportError as e:
-        st.error(f"❌ AI Training module not available: {e}")
-        st.info("""
-        **AI Training System Components:**
-
-        The AI Training system helps you:
-        - 📊 Collect training data from real predictions
-        - 🎯 Train XGBoost models on actual trading outcomes
-        - 💾 Save and load trained models
-        - 📈 Track model performance over time
-        - 🔄 Retrain models with new data
-
-        **Required files:**
-        - `src/ai_training_ui.py` - UI dashboard
-        - `src/training_data_collector.py` - Data collection system
-        - `src/model_trainer_pipeline.py` - Model training pipeline
-        - `src/xgboost_ml_analyzer_enhanced.py` - Enhanced ML analyzer
-
-        All files are present in your repository!
-        """)
-    except Exception as e:
-        st.error(f"❌ Error loading AI Training: {e}")
-        import traceback
-        with st.expander("Show error details"):
-            st.code(traceback.format_exc())
+    if st.session_state.get('load_ai_training', False):
+        try:
+            with st.spinner("Loading AI Training dashboard..."):
+                from src.ai_training_ui import render_ai_training_dashboard
+                render_ai_training_dashboard()
+        except ImportError as e:
+            st.error(f"❌ AI Training module not available: {e}")
+            st.info("Required: src/ai_training_ui.py, src/training_data_collector.py, src/model_trainer_pipeline.py")
+        except Exception as e:
+            st.error(f"❌ Error loading AI Training: {e}")
+    else:
+        st.info("👆 Click 'Load AI Training Dashboard' to access AI model training and management.")
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
