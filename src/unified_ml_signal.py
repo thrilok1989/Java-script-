@@ -411,9 +411,11 @@ class UnifiedMLSignalGenerator:
         try:
             if 'expiry_spike_data' in st.session_state:
                 expiry_data = st.session_state.expiry_spike_data
-                days_to_expiry = expiry_data.get('days_to_expiry', 7.0)
-                expiry_spike_prob = expiry_data.get('probability', 0.0)
-                expiry_spike_type = expiry_data.get('type', 'None')
+                # Ensure expiry_data is a dict before calling .get()
+                if expiry_data and isinstance(expiry_data, dict):
+                    days_to_expiry = expiry_data.get('days_to_expiry', 7.0)
+                    expiry_spike_prob = expiry_data.get('probability', 0.0)
+                    expiry_spike_type = expiry_data.get('type', 'None')
 
                 if expiry_spike_prob > 60:
                     expiry_warning = f"⚠️ HIGH RISK ({expiry_spike_prob:.0f}%)"
