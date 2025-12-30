@@ -580,6 +580,109 @@ def calculate_ai_analysis_sentiment(ai_report):
     }
 
 
+def calculate_ml_regime_sentiment():
+    """
+    Calculate sentiment from ML Market Regime Detection
+    Returns: dict with sentiment, score, and details
+    """
+    try:
+        # Check if we have cached ML regime result
+        if 'ml_regime_result' in st.session_state and st.session_state.ml_regime_result:
+            regime_data = st.session_state.ml_regime_result
+        else:
+            # Try to get from moment_metrics if available
+            if 'moment_metrics' in st.session_state:
+                regime_data = st.session_state.moment_metrics.get('market_regime', {})
+            else:
+                # Run ML regime detection
+                try:
+                    from src.ml_market_regime import MLMarketRegimeDetector
+                    import yfinance as yf
+
+                    # Get price data
+                    nifty = yf.Ticker('^NSEI')
+                    df = nifty.history(period='5d', interval='1m')
+
+                    if df is not None and not df.empty:
+                        # Add required columns
+                        df['ATR'] = df['High'] - df['Low']
+
+                        detector = MLMarketRegimeDetector()
+                        result = detector.detect_regime(df)
+
+                        regime_data = {
+                            'regime': result.regime,
+                            'confidence': result.confidence,
+                            'trend_strength': result.trend_strength,
+                            'volatility_state': result.volatility_state,
+                            'recommended_strategy': result.recommended_strategy,
+                            'optimal_timeframe': result.optimal_timeframe
+                        }
+
+                        # Cache the result
+                        st.session_state.ml_regime_result = regime_data
+                    else:
+                        return None
+                except Exception as e:
+                    # Return None if ML detection fails
+                    return None
+
+        if not regime_data or regime_data.get('regime') == 'Unknown':
+            return None
+
+        regime = regime_data.get('regime', 'Unknown')
+        confidence = regime_data.get('confidence', 0)
+        trend_strength = regime_data.get('trend_strength', 0)
+        volatility_state = regime_data.get('volatility_state', 'Unknown')
+        strategy = regime_data.get('recommended_strategy', '')
+
+        # Map regime to bias
+        if regime in ['Trending Up', 'TRENDING_UP']:
+            bias = "BULLISH"
+            score = min(trend_strength * 1.5, 100)  # Scale trend strength to score
+            icon = "🤖🐂"
+        elif regime in ['Trending Down', 'TRENDING_DOWN']:
+            bias = "BEARISH"
+            score = -min(trend_strength * 1.5, 100)
+            icon = "🤖🐻"
+        elif regime in ['Volatile Breakout', 'VOLATILE']:
+            bias = "NEUTRAL"
+            score = 0
+            icon = "🤖⚡"
+        elif regime in ['Range Bound', 'RANGE_BOUND', 'Consolidation']:
+            bias = "NEUTRAL"
+            score = 0
+            icon = "🤖📊"
+        else:
+            bias = "NEUTRAL"
+            score = 0
+            icon = "🤖❓"
+
+        details = [
+            f"Regime: {regime}",
+            f"Confidence: {confidence:.1f}%",
+            f"Trend Strength: {trend_strength:.1f}",
+            f"Volatility: {volatility_state}",
+            f"Strategy: {strategy}"
+        ]
+
+        return {
+            'bias': bias,
+            'score': score,
+            'confidence': confidence,
+            'icon': icon,
+            'details': details,
+            'regime': regime,
+            'trend_strength': trend_strength,
+            'volatility_state': volatility_state,
+            'recommended_strategy': strategy
+        }
+
+    except Exception as e:
+        # Return None on error
+        return None
+
+
 def calculate_overall_sentiment():
     """
     Calculate overall market sentiment by combining all data sources
@@ -620,6 +723,11 @@ def calculate_overall_sentiment():
     if sector_rotation_sentiment:
         sentiment_sources['Sector Rotation'] = sector_rotation_sentiment
 
+    # 6. ML Market Regime Detection (NEW)
+    ml_regime_sentiment = calculate_ml_regime_sentiment()
+    if ml_regime_sentiment:
+        sentiment_sources['ML Regime'] = ml_regime_sentiment
+
     # If no data available
     if not sentiment_sources:
         return {
@@ -640,7 +748,8 @@ def calculate_overall_sentiment():
         'Technical Indicators': 3.0,
         'ATM Strike Verdict': 3.5,      # ATM ±2 strikes analysis
         'PCR/OI Analysis': 2.5,          # PCR sentiment from Tab 0
-        'Sector Rotation': 3.0           # Sector rotation bias from Tab 0
+        'Sector Rotation': 3.0,          # Sector rotation bias from Tab 0
+        'ML Regime': 4.0                 # ML-based regime detection (highest weight)
     }
 
     total_weighted_score = 0

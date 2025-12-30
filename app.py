@@ -2911,6 +2911,77 @@ with tab6:
         else:
             st.info(f"⏱️ Next auto-refresh in {int(time_until_refresh)} seconds (auto-refresh enabled)")
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # ML MARKET REGIME ANALYSIS (NEW)
+    # ═══════════════════════════════════════════════════════════════════════
+    if st.session_state.chart_data is not None and len(st.session_state.chart_data) > 0:
+        try:
+            from src.ml_market_regime import MLMarketRegimeDetector
+
+            df_for_ml = st.session_state.chart_data.copy()
+
+            # Add ATR if not present
+            if 'ATR' not in df_for_ml.columns:
+                df_for_ml['ATR'] = df_for_ml['High'] - df_for_ml['Low']
+
+            detector = MLMarketRegimeDetector()
+            ml_result = detector.detect_regime(df_for_ml)
+
+            # Display ML Regime in a prominent section
+            st.subheader("🤖 ML Market Regime Analysis")
+
+            col1, col2, col3, col4, col5 = st.columns(5)
+
+            # Color-code regime
+            regime_colors = {
+                'Trending Up': '#00FF00',
+                'TRENDING_UP': '#00FF00',
+                'Trending Down': '#FF0000',
+                'TRENDING_DOWN': '#FF0000',
+                'Range Bound': '#FFD700',
+                'RANGE_BOUND': '#FFD700',
+                'Volatile Breakout': '#FF6600',
+                'VOLATILE': '#FF6600',
+                'Consolidation': '#808080'
+            }
+            regime_color = regime_colors.get(ml_result.regime, '#FFFFFF')
+
+            with col1:
+                st.markdown(f"""
+                <div style="background-color: {regime_color}; padding: 10px; border-radius: 8px; text-align: center;">
+                    <b style="color: black; font-size: 14px;">REGIME</b><br>
+                    <span style="color: black; font-size: 16px; font-weight: bold;">{ml_result.regime}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col2:
+                st.metric("Confidence", f"{ml_result.confidence:.1f}%")
+
+            with col3:
+                st.metric("Trend Strength", f"{ml_result.trend_strength:.1f}")
+
+            with col4:
+                st.metric("Volatility", ml_result.volatility_state)
+
+            with col5:
+                st.metric("Optimal TF", ml_result.optimal_timeframe)
+
+            # Show strategy recommendation
+            st.info(f"📊 **Strategy:** {ml_result.recommended_strategy}")
+
+            # Cache the ML result for other tabs
+            st.session_state.ml_regime_result = {
+                'regime': ml_result.regime,
+                'confidence': ml_result.confidence,
+                'trend_strength': ml_result.trend_strength,
+                'volatility_state': ml_result.volatility_state,
+                'recommended_strategy': ml_result.recommended_strategy,
+                'optimal_timeframe': ml_result.optimal_timeframe
+            }
+
+        except Exception as e:
+            st.warning(f"⚠️ ML Regime Analysis unavailable: {str(e)[:100]}")
+
     st.divider()
 
     # Indicator toggles
