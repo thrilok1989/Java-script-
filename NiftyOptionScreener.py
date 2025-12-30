@@ -2305,6 +2305,409 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
         "message": f"Expiry in {days_to_expiry:.1f} days"
     }
 
+
+def detect_expiry_spikes_enhanced(merged_df, spot, atm_strike, days_to_expiry, expiry_date_str, total_gex_net=None):
+    """
+    🚀 ENHANCED Expiry Spike Detection v2.0
+
+    NEW FEATURES:
+    1. Expected price range calculation
+    2. Target levels based on OI analysis
+    3. Time-based probability (morning vs afternoon)
+    4. GEX integration for volatility prediction
+    5. OI change analysis during expiry
+
+    This is an ENHANCED version - original detect_expiry_spikes() is preserved.
+
+    Returns: dict with spike probability, direction, price range, targets, and key levels
+    """
+    from datetime import datetime
+
+    # Get base result from original function first
+    base_result = detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_date_str)
+
+    # If not active, return with default enhanced fields
+    if days_to_expiry > 5:
+        base_result.update({
+            "expected_range": {"low": spot, "high": spot, "range_points": 0, "range_percent": 0, "center": spot},
+            "target_levels": [],
+            "time_analysis": {"current_phase": "N/A", "phase_probability": 0, "high_spike_windows": [], "current_window_active": False},
+            "gex_impact": {"gex_value": 0, "impact": "Neutral", "score": 0, "message": "Not active"},
+            "oi_change_analysis": {"net_change": 0, "bias": "Neutral", "unwinding_intensity": 0}
+        })
+        return base_result
+
+    # Get strike gap
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ENHANCED FEATURE 1: OI-BASED TARGET LEVELS
+    # ═══════════════════════════════════════════════════════════════════
+    target_levels = []
+
+    # Max Pain as primary target
+    max_pain = calculate_seller_max_pain(merged_df)
+    max_pain_strike = 0
+    if max_pain:
+        max_pain_strike = max_pain.get("max_pain_strike", 0)
+        if max_pain_strike > 0:
+            target_levels.append({"level": max_pain_strike, "type": "Max Pain", "priority": 1})
+
+    # CALL and PUT walls
+    max_ce_oi_strike = merged_df.loc[merged_df["OI_CE"].idxmax()] if not merged_df.empty else None
+    max_pe_oi_strike = merged_df.loc[merged_df["OI_PE"].idxmax()] if not merged_df.empty else None
+
+    max_ce_strike = 0
+    max_pe_strike = 0
+
+    if max_ce_oi_strike is not None:
+        max_ce_oi = int(max_ce_oi_strike["OI_CE"])
+        max_ce_strike = int(max_ce_oi_strike["strikePrice"])
+        if max_ce_oi > 1000000:
+            target_levels.append({
+                "level": max_ce_strike,
+                "type": "CALL Wall" if max_ce_oi > 2000000 else "CALL Resistance",
+                "priority": 2 if max_ce_oi > 2000000 else 3,
+                "oi": max_ce_oi
+            })
+
+    if max_pe_oi_strike is not None:
+        max_pe_oi = int(max_pe_oi_strike["OI_PE"])
+        max_pe_strike = int(max_pe_oi_strike["strikePrice"])
+        if max_pe_oi > 1000000:
+            target_levels.append({
+                "level": max_pe_strike,
+                "type": "PUT Wall" if max_pe_oi > 2000000 else "PUT Support",
+                "priority": 2 if max_pe_oi > 2000000 else 3,
+                "oi": max_pe_oi
+            })
+
+    # Additional OI-based targets (2nd and 3rd highest)
+    ce_sorted = merged_df.nlargest(3, 'OI_CE')
+    pe_sorted = merged_df.nlargest(3, 'OI_PE')
+
+    for idx, row in ce_sorted.iterrows():
+        strike = int(row['strikePrice'])
+        oi = int(row['OI_CE'])
+        if strike != max_ce_strike and strike > spot and oi > 500000:
+            target_levels.append({"level": strike, "type": "CE Resistance", "priority": 4, "oi": oi})
+
+    for idx, row in pe_sorted.iterrows():
+        strike = int(row['strikePrice'])
+        oi = int(row['OI_PE'])
+        if strike != max_pe_strike and strike < spot and oi > 500000:
+            target_levels.append({"level": strike, "type": "PE Support", "priority": 4, "oi": oi})
+
+    # Sort by priority
+    target_levels.sort(key=lambda x: x.get("priority", 99))
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ENHANCED FEATURE 2: OI CHANGE ANALYSIS
+    # ═══════════════════════════════════════════════════════════════════
+    ce_oi_change = merged_df["Chg_OI_CE"].sum()
+    pe_oi_change = merged_df["Chg_OI_PE"].sum()
+    net_oi_change = ce_oi_change + pe_oi_change
+
+    ce_unwind = (merged_df["Chg_OI_CE"] < 0).sum()
+    pe_unwind = (merged_df["Chg_OI_PE"] < 0).sum()
+    total_unwind = ce_unwind + pe_unwind
+    total_strikes = len(merged_df)
+    unwinding_intensity = (total_unwind / total_strikes * 100) if total_strikes > 0 else 0
+
+    # Determine OI change bias
+    oi_change_bias = "Neutral"
+    oi_change_signal = ""
+
+    if ce_oi_change < -500000 and pe_oi_change > 0:
+        oi_change_bias = "Bullish Unwinding"
+        oi_change_signal = "CALL unwinding + PUT buildup = Bullish pressure"
+    elif pe_oi_change < -500000 and ce_oi_change > 0:
+        oi_change_bias = "Bearish Unwinding"
+        oi_change_signal = "PUT unwinding + CALL buildup = Bearish pressure"
+    elif ce_oi_change < -1000000 and pe_oi_change < -1000000:
+        oi_change_bias = "Massive Unwinding"
+        oi_change_signal = "Both sides unwinding = Explosive move expected"
+    elif ce_oi_change > 500000 and pe_oi_change > 500000:
+        oi_change_bias = "Fresh Buildup"
+        oi_change_signal = "Fresh OI both sides = Range bound expected"
+    elif net_oi_change > 1000000:
+        oi_change_bias = "Long Buildup"
+        oi_change_signal = "Net long buildup = Trend continuation likely"
+    elif net_oi_change < -1000000:
+        oi_change_bias = "Short Covering"
+        oi_change_signal = "Net short covering = Short squeeze possible"
+
+    oi_change_analysis = {
+        "ce_change": int(ce_oi_change),
+        "pe_change": int(pe_oi_change),
+        "net_change": int(net_oi_change),
+        "bias": oi_change_bias,
+        "signal": oi_change_signal,
+        "unwinding_intensity": round(unwinding_intensity, 1),
+        "ce_unwind_strikes": ce_unwind,
+        "pe_unwind_strikes": pe_unwind,
+        "total_unwind_strikes": total_unwind
+    }
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ENHANCED FEATURE 3: GEX INTEGRATION
+    # ═══════════════════════════════════════════════════════════════════
+    gex_impact = {
+        "gex_value": 0,
+        "impact": "Unknown",
+        "score": 0,
+        "message": "GEX data not provided",
+        "volatility_expectation": "Normal"
+    }
+
+    additional_spike_score = 0
+
+    if total_gex_net is not None:
+        gex_impact["gex_value"] = int(total_gex_net)
+
+        if total_gex_net < -2000000:  # Large negative GEX
+            gex_score = min(25, int((abs(total_gex_net) / 1000000) * 5))
+            additional_spike_score += gex_score
+            gex_impact["impact"] = "EXPLOSIVE"
+            gex_impact["score"] = gex_score
+            gex_impact["message"] = f"Negative GEX (₹{abs(total_gex_net)/1000000:.1f}M) = Violent moves expected"
+            gex_impact["volatility_expectation"] = "Very High - MMs hedge aggressively"
+
+        elif total_gex_net < -500000:
+            gex_score = 12
+            additional_spike_score += gex_score
+            gex_impact["impact"] = "VOLATILE"
+            gex_impact["score"] = gex_score
+            gex_impact["message"] = "Mild negative GEX = Above average volatility"
+            gex_impact["volatility_expectation"] = "High"
+
+        elif total_gex_net > 2000000:  # Large positive GEX
+            gex_impact["impact"] = "STABILIZING"
+            gex_impact["score"] = -15  # Reduces spike probability
+            additional_spike_score -= 10
+            gex_impact["message"] = f"Positive GEX (₹{total_gex_net/1000000:.1f}M) = Mean reversion likely"
+            gex_impact["volatility_expectation"] = "Low - Price pinning expected"
+
+        elif total_gex_net > 500000:
+            gex_impact["impact"] = "MILD STABILIZING"
+            gex_impact["score"] = -5
+            additional_spike_score -= 5
+            gex_impact["message"] = "Mild positive GEX = Reduced volatility"
+            gex_impact["volatility_expectation"] = "Below Average"
+        else:
+            gex_impact["impact"] = "NEUTRAL"
+            gex_impact["score"] = 0
+            gex_impact["message"] = "GEX neutral = Normal market behavior"
+            gex_impact["volatility_expectation"] = "Normal"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ENHANCED FEATURE 4: TIME-BASED PROBABILITY
+    # ═══════════════════════════════════════════════════════════════════
+    current_hour = datetime.now().hour
+    current_minute = datetime.now().minute
+    current_time_decimal = current_hour + current_minute / 60
+
+    time_analysis = {
+        "current_phase": "Pre-Market",
+        "phase_probability": 0,
+        "high_spike_windows": [],
+        "current_window_active": False,
+        "recommendation": "",
+        "next_high_risk_window": ""
+    }
+
+    # Define high-volatility windows on expiry day (IST)
+    high_spike_windows = [
+        {"start": 9.25, "end": 10.0, "name": "Opening Spike", "probability": 75, "description": "Gap fills and initial positioning"},
+        {"start": 10.5, "end": 11.5, "name": "Mid-Morning Unwinding", "probability": 65, "description": "FII/DII position adjustments"},
+        {"start": 14.0, "end": 14.5, "name": "Afternoon Positioning", "probability": 60, "description": "Pre-expiry hedging activity"},
+        {"start": 14.75, "end": 15.5, "name": "Final Hour Gamma Squeeze", "probability": 85, "description": "Maximum gamma effect, violent moves"}
+    ]
+
+    if days_to_expiry <= 1:  # Expiry day specific analysis
+        for window in high_spike_windows:
+            if window["start"] <= current_time_decimal <= window["end"]:
+                time_analysis["current_phase"] = window["name"]
+                time_analysis["phase_probability"] = window["probability"]
+                time_analysis["current_window_active"] = True
+                time_analysis["recommendation"] = window["description"]
+                additional_spike_score += int(window["probability"] / 8)
+                break
+
+        if not time_analysis["current_window_active"]:
+            if current_time_decimal < 9.25:
+                time_analysis["current_phase"] = "Pre-Market"
+                time_analysis["recommendation"] = "Wait for 9:15 opening - expect gap moves"
+                time_analysis["next_high_risk_window"] = "09:15-10:00 (Opening Spike)"
+            elif current_time_decimal < 10.5:
+                time_analysis["current_phase"] = "Post-Opening Lull"
+                time_analysis["phase_probability"] = 35
+                time_analysis["recommendation"] = "Consolidation phase - wait for next spike window"
+                time_analysis["next_high_risk_window"] = "10:30-11:30 (Mid-Morning)"
+            elif current_time_decimal < 14.0:
+                time_analysis["current_phase"] = "Mid-Day Consolidation"
+                time_analysis["phase_probability"] = 40
+                time_analysis["recommendation"] = "Lower risk - prepare for afternoon action"
+                time_analysis["next_high_risk_window"] = "14:00-14:30 (Afternoon)"
+            elif current_time_decimal < 14.75:
+                time_analysis["current_phase"] = "Pre-Final Hour"
+                time_analysis["phase_probability"] = 50
+                time_analysis["recommendation"] = "Building up for final hour - reduce positions"
+                time_analysis["next_high_risk_window"] = "14:45-15:30 (Gamma Squeeze)"
+            else:
+                time_analysis["current_phase"] = "Post-Market"
+                time_analysis["recommendation"] = "Market closed"
+
+        time_analysis["high_spike_windows"] = [
+            {"time": "09:15-10:00", "name": "Opening Spike", "probability": 75},
+            {"time": "10:30-11:30", "name": "Mid-Morning Unwinding", "probability": 65},
+            {"time": "14:00-14:30", "name": "Afternoon Positioning", "probability": 60},
+            {"time": "14:45-15:30", "name": "Final Hour Gamma Squeeze", "probability": 85}
+        ]
+    else:
+        time_analysis["current_phase"] = f"T-{days_to_expiry:.0f} days to Expiry"
+        time_analysis["phase_probability"] = max(20, 60 - (days_to_expiry * 10))
+        time_analysis["recommendation"] = "Monitor OI buildup pattern for expiry day prediction"
+        time_analysis["high_spike_windows"] = []
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ENHANCED FEATURE 5: EXPECTED PRICE RANGE CALCULATION
+    # ═══════════════════════════════════════════════════════════════════
+    # ATM concentration for range calculation
+    atm_window = 2
+    atm_strikes = [s for s in merged_df["strikePrice"]
+                   if abs(s - atm_strike) <= (atm_window * strike_gap_val)]
+    atm_ce_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_CE"].sum()
+    atm_pe_oi = merged_df.loc[merged_df["strikePrice"].isin(atm_strikes), "OI_PE"].sum()
+    total_oi_near_atm = atm_ce_oi + atm_pe_oi
+    total_oi_all = merged_df["OI_CE"].sum() + merged_df["OI_PE"].sum()
+    atm_concentration = (total_oi_near_atm / total_oi_all) if total_oi_all > 0 else 0
+
+    # Base range: 0.5% of spot
+    base_range_percent = 0.5
+
+    # Multiplier based on days to expiry
+    if days_to_expiry <= 0.5:
+        range_multiplier = 2.5  # Expiry day afternoon
+    elif days_to_expiry <= 1:
+        range_multiplier = 2.0  # Expiry day morning
+    elif days_to_expiry <= 2:
+        range_multiplier = 1.5  # Day before expiry
+    elif days_to_expiry <= 3:
+        range_multiplier = 1.2
+    else:
+        range_multiplier = 1.0
+
+    # GEX adjustment
+    if total_gex_net is not None:
+        if total_gex_net < -2000000:
+            range_multiplier *= 1.5  # Negative GEX = wider range
+        elif total_gex_net < -500000:
+            range_multiplier *= 1.2
+        elif total_gex_net > 2000000:
+            range_multiplier *= 0.6  # Positive GEX = tighter range (pinning)
+        elif total_gex_net > 500000:
+            range_multiplier *= 0.8
+
+    # ATM concentration adjustment (high concentration = pinning = tighter range)
+    if atm_concentration > 0.5:
+        range_multiplier *= 0.7
+    elif atm_concentration > 0.3:
+        range_multiplier *= 0.85
+
+    # Time-based adjustment (final hour = wider range)
+    if days_to_expiry <= 1 and time_analysis.get("current_phase") == "Final Hour Gamma Squeeze":
+        range_multiplier *= 1.3
+
+    # Calculate range
+    range_percent = base_range_percent * range_multiplier
+    range_points = int(spot * range_percent / 100)
+
+    # Initial range
+    expected_low = spot - range_points
+    expected_high = spot + range_points
+
+    # Bound by OI walls (price tends to stay within major OI levels)
+    if max_pe_strike > 0 and max_pe_strike < spot:
+        expected_low = max(expected_low, max_pe_strike - strike_gap_val)
+    if max_ce_strike > 0 and max_ce_strike > spot:
+        expected_high = min(expected_high, max_ce_strike + strike_gap_val)
+
+    # Include max pain in range
+    if max_pain_strike > 0:
+        if spot > max_pain_strike:
+            expected_low = min(expected_low, max_pain_strike)
+        else:
+            expected_high = max(expected_high, max_pain_strike)
+
+    expected_range = {
+        "low": int(expected_low),
+        "high": int(expected_high),
+        "range_points": int(expected_high - expected_low),
+        "range_percent": round((expected_high - expected_low) / spot * 100, 2),
+        "center": int((expected_high + expected_low) / 2),
+        "bias": "BULLISH" if spot < (expected_high + expected_low) / 2 else "BEARISH" if spot > (expected_high + expected_low) / 2 else "NEUTRAL"
+    }
+
+    # ═══════════════════════════════════════════════════════════════════
+    # FINAL ENHANCED PROBABILITY
+    # ═══════════════════════════════════════════════════════════════════
+    enhanced_score = base_result.get("score", 0) + additional_spike_score
+    enhanced_score = max(0, enhanced_score)  # No negative scores
+
+    # Enhanced probability calculation
+    enhanced_probability = min(100, int(enhanced_score * 1.2))
+
+    # Boost if in high-spike time window
+    if time_analysis.get("current_window_active"):
+        enhanced_probability = min(100, enhanced_probability + 10)
+
+    # Update intensity based on enhanced probability
+    if enhanced_probability >= 75:
+        enhanced_intensity = "EXTREME SPIKE RISK"
+        enhanced_color = "#ff0000"
+    elif enhanced_probability >= 60:
+        enhanced_intensity = "HIGH SPIKE RISK"
+        enhanced_color = "#ff4400"
+    elif enhanced_probability >= 45:
+        enhanced_intensity = "MODERATE SPIKE RISK"
+        enhanced_color = "#ff9900"
+    elif enhanced_probability >= 30:
+        enhanced_intensity = "LOW SPIKE RISK"
+        enhanced_color = "#ffff00"
+    else:
+        enhanced_intensity = "MINIMAL SPIKE RISK"
+        enhanced_color = "#00ff00"
+
+    # Update base result with enhanced data
+    base_result.update({
+        # Override with enhanced values
+        "probability": enhanced_probability,
+        "score": enhanced_score,
+        "intensity": enhanced_intensity,
+        "color": enhanced_color,
+        # Add new enhanced fields
+        "expected_range": expected_range,
+        "target_levels": target_levels[:6],  # Top 6 targets
+        "time_analysis": time_analysis,
+        "gex_impact": gex_impact,
+        "oi_change_analysis": oi_change_analysis,
+        "enhanced": True  # Flag to indicate enhanced version
+    })
+
+    # Add GEX and time factors to the factors list
+    if gex_impact.get("impact") not in ["Unknown", "NEUTRAL"]:
+        base_result["factors"].append(f"GEX: {gex_impact['impact']} ({gex_impact['message']})")
+
+    if time_analysis.get("current_window_active"):
+        base_result["factors"].append(f"⏰ {time_analysis['current_phase']} active ({time_analysis['phase_probability']}%)")
+
+    if oi_change_analysis.get("bias") != "Neutral":
+        base_result["factors"].append(f"OI: {oi_change_analysis['bias']} - {oi_change_analysis.get('signal', '')}")
+
+    return base_result
+
+
 def get_historical_expiry_patterns():
     """
     Return historical expiry day patterns (simplified)
