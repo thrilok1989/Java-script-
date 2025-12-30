@@ -2749,6 +2749,517 @@ def detect_expiry_spikes_enhanced(merged_df, spot, atm_strike, days_to_expiry, e
     return base_result
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 🎯 ALL-DAY SPIKE DETECTOR - Works on ANY trading day!
+# ═══════════════════════════════════════════════════════════════════════════
+
+def detect_all_market_spikes(merged_df, spot, atm_strike, days_to_expiry=None, total_gex_net=None, previous_close=None):
+    """
+    🎯 COMPREHENSIVE MARKET SPIKE DETECTOR - Finds ALL spikes!
+
+    Works on ANY trading day (not just expiry). Detects:
+    1. SUPPORT SPIKE - Price bouncing from PUT wall
+    2. RESISTANCE SPIKE - Price rejecting from CALL wall
+    3. OPENING SPIKE - Gap up/down at market open
+    4. BREAKOUT SPIKE - Price breaking key levels
+    5. MOMENTUM SPIKE - Strong directional move
+    6. SQUEEZE SPIKE - Short/Long squeeze
+
+    Returns comprehensive spike analysis with scores for each type.
+    """
+    from datetime import datetime
+
+    current_hour = datetime.now().hour
+    current_minute = datetime.now().minute
+    current_time_decimal = current_hour + current_minute / 60
+
+    # Get strike gap
+    strike_gap_val = strike_gap_from_series(merged_df["strikePrice"])
+
+    # ═══════════════════════════════════════════════════════════════════
+    # EXTRACT KEY LEVELS
+    # ═══════════════════════════════════════════════════════════════════
+
+    # CALL walls (Resistance levels)
+    ce_sorted = merged_df.nlargest(5, 'OI_CE')
+    resistance_walls = []
+    for _, row in ce_sorted.iterrows():
+        strike = int(row['strikePrice'])
+        oi = int(row['OI_CE'])
+        chg_oi = int(row.get('Chg_OI_CE', 0))
+        if oi > 500000:
+            resistance_walls.append({
+                "level": strike,
+                "oi": oi,
+                "oi_change": chg_oi,
+                "strength": "MASSIVE" if oi > 3000000 else "STRONG" if oi > 2000000 else "MODERATE"
+            })
+
+    # PUT walls (Support levels)
+    pe_sorted = merged_df.nlargest(5, 'OI_PE')
+    support_walls = []
+    for _, row in pe_sorted.iterrows():
+        strike = int(row['strikePrice'])
+        oi = int(row['OI_PE'])
+        chg_oi = int(row.get('Chg_OI_PE', 0))
+        if oi > 500000:
+            support_walls.append({
+                "level": strike,
+                "oi": oi,
+                "oi_change": chg_oi,
+                "strength": "MASSIVE" if oi > 3000000 else "STRONG" if oi > 2000000 else "MODERATE"
+            })
+
+    # Primary levels
+    max_ce_strike = resistance_walls[0]["level"] if resistance_walls else atm_strike + 200
+    max_ce_oi = resistance_walls[0]["oi"] if resistance_walls else 0
+    max_pe_strike = support_walls[0]["level"] if support_walls else atm_strike - 200
+    max_pe_oi = support_walls[0]["oi"] if support_walls else 0
+
+    # Max Pain
+    max_pain = calculate_seller_max_pain(merged_df)
+    max_pain_strike = max_pain.get("max_pain_strike", atm_strike) if max_pain else atm_strike
+
+    # OI totals and changes
+    total_ce_oi = merged_df["OI_CE"].sum()
+    total_pe_oi = merged_df["OI_PE"].sum()
+    ce_oi_change = merged_df["Chg_OI_CE"].sum()
+    pe_oi_change = merged_df["Chg_OI_PE"].sum()
+    pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 1
+
+    # ═══════════════════════════════════════════════════════════════════
+    # INITIALIZE ALL SPIKE TYPES
+    # ═══════════════════════════════════════════════════════════════════
+
+    spikes = {
+        "support_spike": {
+            "active": False,
+            "score": 0,
+            "probability": 0,
+            "level": max_pe_strike,
+            "distance_from_spot": spot - max_pe_strike,
+            "distance_percent": round((spot - max_pe_strike) / spot * 100, 2) if spot > 0 else 0,
+            "direction": "UP",
+            "factors": [],
+            "action": "BUY on touch"
+        },
+        "resistance_spike": {
+            "active": False,
+            "score": 0,
+            "probability": 0,
+            "level": max_ce_strike,
+            "distance_from_spot": max_ce_strike - spot,
+            "distance_percent": round((max_ce_strike - spot) / spot * 100, 2) if spot > 0 else 0,
+            "direction": "DOWN",
+            "factors": [],
+            "action": "SELL on touch"
+        },
+        "opening_spike": {
+            "active": False,
+            "score": 0,
+            "probability": 0,
+            "direction": None,
+            "expected_gap": 0,
+            "factors": [],
+            "action": ""
+        },
+        "breakout_spike": {
+            "active": False,
+            "score": 0,
+            "probability": 0,
+            "direction": None,
+            "breakout_level": 0,
+            "factors": [],
+            "action": ""
+        },
+        "momentum_spike": {
+            "active": False,
+            "score": 0,
+            "probability": 0,
+            "direction": None,
+            "factors": [],
+            "action": ""
+        },
+        "squeeze_spike": {
+            "active": False,
+            "score": 0,
+            "probability": 0,
+            "type": None,  # "SHORT_SQUEEZE" or "LONG_SQUEEZE"
+            "factors": [],
+            "action": ""
+        }
+    }
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1. SUPPORT SPIKE DETECTION
+    # ═══════════════════════════════════════════════════════════════════
+    support_score = 0
+    support_factors = []
+
+    support_distance = spot - max_pe_strike
+    support_dist_pct = (support_distance / spot * 100) if spot > 0 else 0
+
+    # Proximity check
+    if support_dist_pct <= 0.3:
+        support_score += 50
+        support_factors.append(f"🎯 AT PUT WALL ₹{max_pe_strike:,} (only {support_dist_pct:.2f}% away)")
+    elif support_dist_pct <= 0.5:
+        support_score += 40
+        support_factors.append(f"Very close to PUT wall ₹{max_pe_strike:,} ({support_dist_pct:.2f}%)")
+    elif support_dist_pct <= 1.0:
+        support_score += 25
+        support_factors.append(f"Approaching PUT wall ₹{max_pe_strike:,} ({support_dist_pct:.2f}%)")
+    elif support_distance < 0:  # Below support!
+        support_score += 60
+        support_factors.append(f"⚠️ BELOW PUT wall ₹{max_pe_strike:,} - Strong bounce expected!")
+
+    # OI strength
+    if max_pe_oi > 3000000:
+        support_score += 25
+        support_factors.append(f"MASSIVE PUT OI: {max_pe_oi/1000000:.1f}M")
+    elif max_pe_oi > 2000000:
+        support_score += 15
+        support_factors.append(f"Strong PUT OI: {max_pe_oi/1000000:.1f}M")
+
+    # Fresh PUT buildup (strengthening support)
+    if pe_oi_change > 500000:
+        support_score += 15
+        support_factors.append(f"Fresh PUT buildup +{pe_oi_change/1000:.0f}K")
+
+    spikes["support_spike"]["score"] = min(100, support_score)
+    spikes["support_spike"]["probability"] = min(100, int(support_score * 1.2))
+    spikes["support_spike"]["active"] = support_score >= 40
+    spikes["support_spike"]["factors"] = support_factors
+    spikes["support_spike"]["distance_from_spot"] = round(support_distance, 0)
+    spikes["support_spike"]["distance_percent"] = round(support_dist_pct, 2)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 2. RESISTANCE SPIKE DETECTION
+    # ═══════════════════════════════════════════════════════════════════
+    resistance_score = 0
+    resistance_factors = []
+
+    resistance_distance = max_ce_strike - spot
+    resistance_dist_pct = (resistance_distance / spot * 100) if spot > 0 else 0
+
+    # Proximity check
+    if resistance_dist_pct <= 0.3:
+        resistance_score += 50
+        resistance_factors.append(f"🎯 AT CALL WALL ₹{max_ce_strike:,} (only {resistance_dist_pct:.2f}% away)")
+    elif resistance_dist_pct <= 0.5:
+        resistance_score += 40
+        resistance_factors.append(f"Very close to CALL wall ₹{max_ce_strike:,} ({resistance_dist_pct:.2f}%)")
+    elif resistance_dist_pct <= 1.0:
+        resistance_score += 25
+        resistance_factors.append(f"Approaching CALL wall ₹{max_ce_strike:,} ({resistance_dist_pct:.2f}%)")
+    elif resistance_distance < 0:  # Above resistance!
+        resistance_score += 60
+        resistance_factors.append(f"⚠️ ABOVE CALL wall ₹{max_ce_strike:,} - Breakout or rejection!")
+
+    # OI strength
+    if max_ce_oi > 3000000:
+        resistance_score += 25
+        resistance_factors.append(f"MASSIVE CALL OI: {max_ce_oi/1000000:.1f}M")
+    elif max_ce_oi > 2000000:
+        resistance_score += 15
+        resistance_factors.append(f"Strong CALL OI: {max_ce_oi/1000000:.1f}M")
+
+    # Fresh CALL buildup (strengthening resistance)
+    if ce_oi_change > 500000:
+        resistance_score += 15
+        resistance_factors.append(f"Fresh CALL buildup +{ce_oi_change/1000:.0f}K")
+
+    spikes["resistance_spike"]["score"] = min(100, resistance_score)
+    spikes["resistance_spike"]["probability"] = min(100, int(resistance_score * 1.2))
+    spikes["resistance_spike"]["active"] = resistance_score >= 40
+    spikes["resistance_spike"]["factors"] = resistance_factors
+    spikes["resistance_spike"]["distance_from_spot"] = round(resistance_distance, 0)
+    spikes["resistance_spike"]["distance_percent"] = round(resistance_dist_pct, 2)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 3. OPENING SPIKE PREDICTION
+    # ═══════════════════════════════════════════════════════════════════
+    opening_score = 0
+    opening_factors = []
+    opening_direction = None
+
+    # PCR analysis
+    if pcr > 1.5:
+        opening_score += 30
+        opening_direction = "UP"
+        opening_factors.append(f"High PCR {pcr:.2f} = Bullish opening")
+    elif pcr < 0.7:
+        opening_score += 30
+        opening_direction = "DOWN"
+        opening_factors.append(f"Low PCR {pcr:.2f} = Bearish opening")
+
+    # Max Pain distance
+    mp_distance = spot - max_pain_strike
+    mp_dist_pct = abs(mp_distance / spot * 100) if spot > 0 else 0
+    if mp_dist_pct > 1.5:
+        opening_score += 25
+        if mp_distance > 0:
+            opening_direction = "DOWN"
+            opening_factors.append(f"Spot {mp_dist_pct:.1f}% above Max Pain - Gap DOWN likely")
+        else:
+            opening_direction = "UP"
+            opening_factors.append(f"Spot {mp_dist_pct:.1f}% below Max Pain - Gap UP likely")
+
+    # OI unwinding pattern
+    if ce_oi_change < -1000000:
+        opening_score += 20
+        opening_direction = "UP" if opening_direction is None else opening_direction
+        opening_factors.append(f"CALL unwinding {ce_oi_change/1000:.0f}K = Gap UP")
+
+    if pe_oi_change < -1000000:
+        opening_score += 20
+        opening_direction = "DOWN" if opening_direction is None else opening_direction
+        opening_factors.append(f"PUT unwinding {pe_oi_change/1000:.0f}K = Gap DOWN")
+
+    # GEX impact
+    if total_gex_net is not None and total_gex_net < -2000000:
+        opening_score += 15
+        opening_factors.append(f"Negative GEX = Volatile opening")
+
+    expected_gap = 0
+    if opening_direction == "UP":
+        expected_gap = int(spot * 0.005 * (opening_score / 50))  # 0.5% scaled by score
+    elif opening_direction == "DOWN":
+        expected_gap = -int(spot * 0.005 * (opening_score / 50))
+
+    spikes["opening_spike"]["score"] = min(100, opening_score)
+    spikes["opening_spike"]["probability"] = min(100, int(opening_score * 1.1))
+    spikes["opening_spike"]["active"] = opening_score >= 40
+    spikes["opening_spike"]["direction"] = opening_direction
+    spikes["opening_spike"]["expected_gap"] = expected_gap
+    spikes["opening_spike"]["factors"] = opening_factors
+    spikes["opening_spike"]["action"] = f"Expect {opening_direction} gap of ~₹{abs(expected_gap):,}" if opening_direction else "Flat opening"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 4. BREAKOUT SPIKE DETECTION
+    # ═══════════════════════════════════════════════════════════════════
+    breakout_score = 0
+    breakout_factors = []
+    breakout_direction = None
+    breakout_level = 0
+
+    # Check if spot is near breakout levels
+    if resistance_distance < 0:  # Above resistance
+        breakout_score += 50
+        breakout_direction = "UP"
+        breakout_level = max_ce_strike
+        breakout_factors.append(f"🚀 BREAKOUT above CALL wall ₹{max_ce_strike:,}!")
+
+        # Check if CALL wall is shifting up (writers running)
+        if ce_oi_change < -500000:
+            breakout_score += 25
+            breakout_factors.append(f"CALL writers exiting = Breakout confirmed")
+
+    elif support_distance < 0:  # Below support
+        breakout_score += 50
+        breakout_direction = "DOWN"
+        breakout_level = max_pe_strike
+        breakout_factors.append(f"📉 BREAKDOWN below PUT wall ₹{max_pe_strike:,}!")
+
+        # Check if PUT wall is shifting down (writers running)
+        if pe_oi_change < -500000:
+            breakout_score += 25
+            breakout_factors.append(f"PUT writers exiting = Breakdown confirmed")
+
+    spikes["breakout_spike"]["score"] = min(100, breakout_score)
+    spikes["breakout_spike"]["probability"] = min(100, int(breakout_score * 1.1))
+    spikes["breakout_spike"]["active"] = breakout_score >= 40
+    spikes["breakout_spike"]["direction"] = breakout_direction
+    spikes["breakout_spike"]["breakout_level"] = breakout_level
+    spikes["breakout_spike"]["factors"] = breakout_factors
+    spikes["breakout_spike"]["action"] = f"Trade {breakout_direction} breakout from ₹{breakout_level:,}" if breakout_direction else ""
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 5. MOMENTUM SPIKE DETECTION (Based on OI velocity)
+    # ═══════════════════════════════════════════════════════════════════
+    momentum_score = 0
+    momentum_factors = []
+    momentum_direction = None
+
+    net_oi_change = ce_oi_change + pe_oi_change
+
+    # Strong OI velocity indicates momentum
+    if abs(ce_oi_change) > 2000000 or abs(pe_oi_change) > 2000000:
+        momentum_score += 40
+
+        if ce_oi_change < -2000000 and pe_oi_change > 1000000:
+            momentum_direction = "UP"
+            momentum_factors.append(f"Strong CALL unwinding + PUT buildup = UP momentum")
+        elif pe_oi_change < -2000000 and ce_oi_change > 1000000:
+            momentum_direction = "DOWN"
+            momentum_factors.append(f"Strong PUT unwinding + CALL buildup = DOWN momentum")
+
+    # PCR extremes indicate momentum
+    if pcr > 1.8:
+        momentum_score += 25
+        momentum_direction = "UP"
+        momentum_factors.append(f"Extreme high PCR {pcr:.2f} = Bullish momentum")
+    elif pcr < 0.5:
+        momentum_score += 25
+        momentum_direction = "DOWN"
+        momentum_factors.append(f"Extreme low PCR {pcr:.2f} = Bearish momentum")
+
+    spikes["momentum_spike"]["score"] = min(100, momentum_score)
+    spikes["momentum_spike"]["probability"] = min(100, int(momentum_score * 1.1))
+    spikes["momentum_spike"]["active"] = momentum_score >= 40
+    spikes["momentum_spike"]["direction"] = momentum_direction
+    spikes["momentum_spike"]["factors"] = momentum_factors
+    spikes["momentum_spike"]["action"] = f"Ride {momentum_direction} momentum" if momentum_direction else ""
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 6. SQUEEZE SPIKE DETECTION
+    # ═══════════════════════════════════════════════════════════════════
+    squeeze_score = 0
+    squeeze_factors = []
+    squeeze_type = None
+
+    # Short Squeeze: Price above max pain + CALL unwinding
+    if spot > max_pain_strike and ce_oi_change < -1000000:
+        squeeze_score += 50
+        squeeze_type = "SHORT_SQUEEZE"
+        squeeze_factors.append(f"Price above Max Pain + CALL unwinding = Short Squeeze")
+
+    # Long Squeeze: Price below max pain + PUT unwinding
+    elif spot < max_pain_strike and pe_oi_change < -1000000:
+        squeeze_score += 50
+        squeeze_type = "LONG_SQUEEZE"
+        squeeze_factors.append(f"Price below Max Pain + PUT unwinding = Long Squeeze")
+
+    # Additional squeeze indicators
+    if squeeze_type and days_to_expiry is not None and days_to_expiry <= 2:
+        squeeze_score += 25
+        squeeze_factors.append(f"Near expiry intensifies squeeze!")
+
+    spikes["squeeze_spike"]["score"] = min(100, squeeze_score)
+    spikes["squeeze_spike"]["probability"] = min(100, int(squeeze_score * 1.1))
+    spikes["squeeze_spike"]["active"] = squeeze_score >= 40
+    spikes["squeeze_spike"]["type"] = squeeze_type
+    spikes["squeeze_spike"]["factors"] = squeeze_factors
+    spikes["squeeze_spike"]["action"] = f"Trade {squeeze_type.replace('_', ' ')}" if squeeze_type else ""
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TIME-BASED SPIKE WINDOWS
+    # ═══════════════════════════════════════════════════════════════════
+    time_windows = [
+        {"start": 9.25, "end": 9.75, "name": "Opening 30min", "spike_boost": 15},
+        {"start": 9.75, "end": 10.25, "name": "First Hour End", "spike_boost": 10},
+        {"start": 11.5, "end": 12.0, "name": "Pre-Lunch", "spike_boost": 8},
+        {"start": 14.0, "end": 14.5, "name": "Afternoon Session", "spike_boost": 10},
+        {"start": 15.0, "end": 15.5, "name": "Last 30min", "spike_boost": 12}
+    ]
+
+    current_window = None
+    for window in time_windows:
+        if window["start"] <= current_time_decimal <= window["end"]:
+            current_window = window
+            break
+
+    # ═══════════════════════════════════════════════════════════════════
+    # COMPILE FINAL RESULT
+    # ═══════════════════════════════════════════════════════════════════
+
+    # Find the most likely spike
+    active_spikes = []
+    for spike_name, spike_data in spikes.items():
+        if spike_data["active"]:
+            active_spikes.append({
+                "name": spike_name,
+                "score": spike_data["score"],
+                "probability": spike_data["probability"],
+                "direction": spike_data.get("direction"),
+                "data": spike_data
+            })
+
+    # Sort by score
+    active_spikes.sort(key=lambda x: x["score"], reverse=True)
+
+    # Primary spike (highest score)
+    primary_spike = active_spikes[0] if active_spikes else None
+
+    result = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "spot": spot,
+        "atm": atm_strike,
+
+        # All spike types with their scores
+        "spikes": spikes,
+
+        # Active spikes (score >= 40)
+        "active_spikes": active_spikes,
+        "active_spike_count": len(active_spikes),
+
+        # Primary spike (most likely)
+        "primary_spike": {
+            "type": primary_spike["name"] if primary_spike else "NONE",
+            "score": primary_spike["score"] if primary_spike else 0,
+            "probability": primary_spike["probability"] if primary_spike else 0,
+            "direction": primary_spike["direction"] if primary_spike else None
+        },
+
+        # Key levels
+        "key_levels": {
+            "resistance": resistance_walls[:3],
+            "support": support_walls[:3],
+            "max_pain": max_pain_strike,
+            "atm": atm_strike
+        },
+
+        # Time analysis
+        "time_analysis": {
+            "current_phase": current_window["name"] if current_window else "Regular Trading",
+            "spike_boost": current_window["spike_boost"] if current_window else 0
+        },
+
+        # Summary
+        "summary": {
+            "spike_detected": len(active_spikes) > 0,
+            "spike_count": len(active_spikes),
+            "primary_type": primary_spike["name"].replace("_", " ").title() if primary_spike else "No Spike",
+            "primary_score": primary_spike["score"] if primary_spike else 0,
+            "recommendation": _get_spike_recommendation(primary_spike, spot, max_pe_strike, max_ce_strike) if primary_spike else "No clear spike setup"
+        },
+
+        # Days to expiry impact
+        "expiry_factor": {
+            "days_to_expiry": days_to_expiry,
+            "expiry_boost": 15 if days_to_expiry and days_to_expiry <= 2 else 0
+        }
+    }
+
+    return result
+
+
+def _get_spike_recommendation(spike, spot, support, resistance):
+    """Helper function to get recommendation based on spike type"""
+    if not spike:
+        return "No clear spike setup"
+
+    spike_type = spike["name"]
+    direction = spike.get("direction")
+    score = spike["score"]
+
+    if spike_type == "support_spike":
+        return f"🟢 SUPPORT SPIKE at ₹{support:,} ({score}%) - BUY on touch, SL below ₹{support - 50:,}"
+    elif spike_type == "resistance_spike":
+        return f"🔴 RESISTANCE SPIKE at ₹{resistance:,} ({score}%) - SELL on touch, SL above ₹{resistance + 50:,}"
+    elif spike_type == "opening_spike":
+        return f"🌅 OPENING {direction} SPIKE expected ({score}%) - Trade gap direction"
+    elif spike_type == "breakout_spike":
+        return f"🚀 BREAKOUT {direction} ({score}%) - Trade momentum with trailing SL"
+    elif spike_type == "momentum_spike":
+        return f"💨 {direction} MOMENTUM ({score}%) - Ride the trend"
+    elif spike_type == "squeeze_spike":
+        squeeze_type = spike["data"].get("type", "").replace("_", " ")
+        return f"🔥 {squeeze_type} ({score}%) - Explosive move expected!"
+    else:
+        return f"Spike detected: {spike_type} ({score}%)"
+
+
 def get_historical_expiry_patterns():
     """
     Return historical expiry day patterns (simplified)
