@@ -51,6 +51,13 @@ try:
 except ImportError:
     ADVANCED_DEPTH_AVAILABLE = False
 
+# Import option chain table module
+try:
+    from option_chain_table import render_option_chain_table_tab
+    OPTION_CHAIN_TABLE_AVAILABLE = True
+except ImportError:
+    OPTION_CHAIN_TABLE_AVAILABLE = False
+
 # -----------------------
 #  IST TIMEZONE SETUP
 # -----------------------
@@ -5529,6 +5536,7 @@ def render_nifty_option_screener():
     # ═══════════════════════════════════════════════════════════════════
 
     screener_tabs = st.tabs([
+        "📊 Option Chain Table",
         "📊 OI/PCR Analytics",
         "🎯 ATM Bias Analyzer",
         "🎪 Seller's Perspective",
@@ -5539,10 +5547,28 @@ def render_nifty_option_screener():
     ])
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 1: OI/PCR ANALYTICS
+    # SUB-TAB 0: OPTION CHAIN TABLE (NEW)
     # ═══════════════════════════════════════════════════════════════════
 
     with screener_tabs[0]:
+        if OPTION_CHAIN_TABLE_AVAILABLE:
+            render_option_chain_table_tab(
+                merged_df=merged,
+                spot=spot,
+                atm_strike=atm_strike,
+                strike_gap=strike_gap,
+                expiry=expiry,
+                days_to_expiry=days_to_expiry,
+                tau=tau
+            )
+        else:
+            st.error("Option Chain Table module not available. Please ensure option_chain_table.py is in the project directory.")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SUB-TAB 1: OI/PCR ANALYTICS
+    # ═══════════════════════════════════════════════════════════════════
+
+    with screener_tabs[1]:
         st.markdown("## 📊 ENHANCED OI & PCR ANALYTICS DASHBOARD")
     
     # Row 1: Totals
@@ -5786,7 +5812,7 @@ def render_nifty_option_screener():
     # SUB-TAB 2: ATM BIAS ANALYZER
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[1]:
+    with screener_tabs[2]:
         st.markdown("## 🎯 ATM BIAS ANALYZER")
 
         # Display ATM Bias Dashboard
@@ -5817,10 +5843,10 @@ def render_nifty_option_screener():
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 4: MARKET DEPTH ANALYZER
+    # SUB-TAB 5: MARKET DEPTH ANALYZER
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[4]:
+    with screener_tabs[5]:
         # Display Basic Market Depth Dashboard
         display_market_depth_dashboard(spot, depth_analysis, depth_signals, depth_enhanced_pressure)
 
@@ -5888,10 +5914,10 @@ def render_nifty_option_screener():
             st.info("ℹ️ Advanced depth analysis module not available. Install `market_depth_advanced.py` for full functionality.")
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 5: EXPIRY ANALYSIS
+    # SUB-TAB 6: EXPIRY ANALYSIS
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[5]:
+    with screener_tabs[6]:
         st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
 
         # Main spike card
@@ -6083,10 +6109,10 @@ def render_nifty_option_screener():
             """)
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 5: TELEGRAM SIGNALS
+    # SUB-TAB 7: TELEGRAM SIGNALS
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[6]:
+    with screener_tabs[7]:
         st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
 
         if telegram_signal:
@@ -6214,10 +6240,10 @@ def render_nifty_option_screener():
                 st.info(f"📝 Last signal was: {st.session_state['last_signal']}")
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 3: MOMENT DETECTOR
+    # SUB-TAB 4: MOMENT DETECTOR
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[3]:
+    with screener_tabs[4]:
         st.markdown("## 🚀 MOMENT DETECTOR (Is this a real move?)")
 
         moment_col1, moment_col2, moment_col3, moment_col4 = st.columns(4)
@@ -6702,10 +6728,10 @@ def render_nifty_option_screener():
     st.markdown("---")
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 2: SELLER'S PERSPECTIVE
+    # SUB-TAB 3: SELLER'S PERSPECTIVE
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[2]:
+    with screener_tabs[3]:
         st.markdown("## 🎪 SELLER'S PERSPECTIVE")
 
         st.markdown(f"""
