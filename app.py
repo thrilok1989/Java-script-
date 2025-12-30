@@ -1697,31 +1697,9 @@ with col1:
         trend_emoji = "🔺" if bear_strength['trend'] == "STRENGTHENING" else "🔻" if bear_strength['trend'] == "WEAKENING" else "➖"
         st.caption(f"**VOB Bear:** {bear_strength['strength_score']}/100 {trend_emoji} {bear_strength['trend']}")
 
-    # HTF S/R Status
-    if st.session_state.htf_data_nifty:
-        from indicators.htf_sr_strength_tracker import HTFSRStrengthTracker
-        htf_tracker = HTFSRStrengthTracker()
-        df_nifty = get_cached_chart_data('^NSEI', '7d', '1m')
-
-        # Get latest support and resistance levels
-        # htf_data_nifty is a list, iterate directly
-        for level_data in st.session_state.htf_data_nifty:
-            if level_data and df_nifty is not None:
-                timeframe = level_data.get('timeframe')
-                support = level_data.get('pivot_low')
-                resistance = level_data.get('pivot_high')
-
-                if support:
-                    support_strength = htf_tracker.calculate_strength(support, 'SUPPORT', df_nifty, lookback_periods=100)
-                    trend_emoji = "🔺" if support_strength['trend'] == "STRENGTHENING" else "🔻" if support_strength['trend'] == "WEAKENING" else "➖"
-                    st.caption(f"**HTF Support ({timeframe}):** {support_strength['strength_score']}/100 {trend_emoji} {support_strength['trend']}")
-
-                if resistance:
-                    resistance_strength = htf_tracker.calculate_strength(resistance, 'RESISTANCE', df_nifty, lookback_periods=100)
-                    trend_emoji = "🔺" if resistance_strength['trend'] == "STRENGTHENING" else "🔻" if resistance_strength['trend'] == "WEAKENING" else "➖"
-                    st.caption(f"**HTF Resistance ({timeframe}):** {resistance_strength['strength_score']}/100 {trend_emoji} {resistance_strength['trend']}")
-
-                break  # Only show one timeframe for brevity
+    # HTF S/R Status - DISABLED FOR PERFORMANCE
+    # if st.session_state.htf_data_nifty:
+    #     ... (disabled - was fetching 7-day chart data and calculating strength)
 
 # SENSEX Summary - Using cached strength values
 with col2:
@@ -1739,31 +1717,9 @@ with col2:
         trend_emoji = "🔺" if bear_strength['trend'] == "STRENGTHENING" else "🔻" if bear_strength['trend'] == "WEAKENING" else "➖"
         st.caption(f"**VOB Bear:** {bear_strength['strength_score']}/100 {trend_emoji} {bear_strength['trend']}")
 
-    # HTF S/R Status
-    if st.session_state.htf_data_sensex:
-        from indicators.htf_sr_strength_tracker import HTFSRStrengthTracker
-        htf_tracker = HTFSRStrengthTracker()
-        df_sensex = get_cached_chart_data('^BSESN', '7d', '1m')
-
-        # Get latest support and resistance levels
-        # htf_data_sensex is a list, iterate directly
-        for level_data in st.session_state.htf_data_sensex:
-            if level_data and df_sensex is not None:
-                timeframe = level_data.get('timeframe')
-                support = level_data.get('pivot_low')
-                resistance = level_data.get('pivot_high')
-
-                if support:
-                    support_strength = htf_tracker.calculate_strength(support, 'SUPPORT', df_sensex, lookback_periods=100)
-                    trend_emoji = "🔺" if support_strength['trend'] == "STRENGTHENING" else "🔻" if support_strength['trend'] == "WEAKENING" else "➖"
-                    st.caption(f"**HTF Support ({timeframe}):** {support_strength['strength_score']}/100 {trend_emoji} {support_strength['trend']}")
-
-                if resistance:
-                    resistance_strength = htf_tracker.calculate_strength(resistance, 'RESISTANCE', df_sensex, lookback_periods=100)
-                    trend_emoji = "🔺" if resistance_strength['trend'] == "STRENGTHENING" else "🔻" if resistance_strength['trend'] == "WEAKENING" else "➖"
-                    st.caption(f"**HTF Resistance ({timeframe}):** {resistance_strength['strength_score']}/100 {trend_emoji} {resistance_strength['trend']}")
-
-                break  # Only show one timeframe for brevity
+    # HTF S/R Status - DISABLED FOR PERFORMANCE
+    # if st.session_state.htf_data_sensex:
+    #     ... (disabled - was fetching 7-day chart data and calculating strength)
 
 st.divider()
 
