@@ -6498,6 +6498,7 @@ def render_nifty_option_screener():
         "🚀 Moment Detector",
         "📊 Market Depth Analyzer",
         "📅 Expiry Analysis",
+        "🎯 All-Day Spike Detector",
         "📱 Telegram Signals"
     ])
 
@@ -7097,10 +7098,182 @@ def render_nifty_option_screener():
             """)
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 7: TELEGRAM SIGNALS
+    # SUB-TAB 7: ALL-DAY SPIKE DETECTOR (NEW!)
     # ═══════════════════════════════════════════════════════════════════
 
     with screener_tabs[7]:
+        st.markdown("## 🎯 ALL-DAY SPIKE DETECTOR")
+        st.caption("Detects Support, Resistance, Opening, Breakout, Momentum & Squeeze spikes on ANY trading day")
+
+        # Call the new spike detector function
+        try:
+            spike_result = detect_all_market_spikes(
+                merged_df=merged,
+                spot=spot,
+                atm_strike=atm_strike,
+                days_to_expiry=days_to_expiry,
+                total_gex_net=total_gex_net
+            )
+
+            # Display primary spike
+            col_main1, col_main2, col_main3 = st.columns(3)
+
+            with col_main1:
+                primary_type = spike_result["primary_spike"]["type"].replace("_", " ").title()
+                primary_score = spike_result["primary_spike"]["score"]
+                primary_prob = spike_result["primary_spike"]["probability"]
+
+                color = "#00ff00" if "support" in primary_type.lower() else "#ff4444" if "resistance" in primary_type.lower() else "#ffaa00"
+
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, {color}22, {color}44);
+                            border: 2px solid {color};
+                            border-radius: 10px;
+                            padding: 15px;
+                            text-align: center;">
+                    <div style="font-size: 0.9rem; color: #aaa;">PRIMARY SPIKE</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: {color};">{primary_type}</div>
+                    <div style="font-size: 2rem; font-weight: 900; color: {color};">{primary_score}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col_main2:
+                st.metric("Active Spikes", spike_result["active_spike_count"])
+                st.metric("Current Phase", spike_result["time_analysis"]["current_phase"])
+
+            with col_main3:
+                direction = spike_result["primary_spike"]["direction"]
+                if direction == "UP":
+                    st.success(f"⬆️ Direction: **{direction}** - Look for LONG")
+                elif direction == "DOWN":
+                    st.error(f"⬇️ Direction: **{direction}** - Look for SHORT")
+                else:
+                    st.info("↔️ Direction: **NEUTRAL**")
+
+            st.markdown("---")
+
+            # Display all 6 spike types in 2 rows
+            st.markdown("### 📊 All Spike Types")
+
+            row1_col1, row1_col2, row1_col3 = st.columns(3)
+
+            # Support Spike
+            with row1_col1:
+                ss = spike_result["spikes"]["support_spike"]
+                st.markdown(f"""
+                <div style="background: #1a2e1a; border-radius: 8px; padding: 10px; border-left: 4px solid {'#00ff00' if ss['active'] else '#444'};">
+                    <div style="font-weight: 600;">🟢 SUPPORT SPIKE</div>
+                    <div style="font-size: 1.5rem; color: {'#00ff00' if ss['active'] else '#666'};">{ss['score']}%</div>
+                    <div style="font-size: 0.8rem; color: #aaa;">Level: ₹{ss['level']:,} ({ss['distance_percent']:.2f}% away)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Resistance Spike
+            with row1_col2:
+                rs = spike_result["spikes"]["resistance_spike"]
+                st.markdown(f"""
+                <div style="background: #2e1a1a; border-radius: 8px; padding: 10px; border-left: 4px solid {'#ff4444' if rs['active'] else '#444'};">
+                    <div style="font-weight: 600;">🔴 RESISTANCE SPIKE</div>
+                    <div style="font-size: 1.5rem; color: {'#ff4444' if rs['active'] else '#666'};">{rs['score']}%</div>
+                    <div style="font-size: 0.8rem; color: #aaa;">Level: ₹{rs['level']:,} ({rs['distance_percent']:.2f}% away)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Opening Spike
+            with row1_col3:
+                os_spike = spike_result["spikes"]["opening_spike"]
+                os_color = "#00ff00" if os_spike.get("direction") == "UP" else "#ff4444" if os_spike.get("direction") == "DOWN" else "#666"
+                st.markdown(f"""
+                <div style="background: #1a1f2e; border-radius: 8px; padding: 10px; border-left: 4px solid {'#ffaa00' if os_spike['active'] else '#444'};">
+                    <div style="font-weight: 600;">🌅 OPENING SPIKE</div>
+                    <div style="font-size: 1.5rem; color: {'#ffaa00' if os_spike['active'] else '#666'};">{os_spike['score']}%</div>
+                    <div style="font-size: 0.8rem; color: #aaa;">Direction: {os_spike.get('direction', 'N/A')} | Gap: ₹{os_spike.get('expected_gap', 0):,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            row2_col1, row2_col2, row2_col3 = st.columns(3)
+
+            # Breakout Spike
+            with row2_col1:
+                bs = spike_result["spikes"]["breakout_spike"]
+                st.markdown(f"""
+                <div style="background: #2e2e1a; border-radius: 8px; padding: 10px; border-left: 4px solid {'#ffff00' if bs['active'] else '#444'};">
+                    <div style="font-weight: 600;">🚀 BREAKOUT SPIKE</div>
+                    <div style="font-size: 1.5rem; color: {'#ffff00' if bs['active'] else '#666'};">{bs['score']}%</div>
+                    <div style="font-size: 0.8rem; color: #aaa;">Direction: {bs.get('direction', 'N/A')}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Momentum Spike
+            with row2_col2:
+                ms = spike_result["spikes"]["momentum_spike"]
+                st.markdown(f"""
+                <div style="background: #1a2e2e; border-radius: 8px; padding: 10px; border-left: 4px solid {'#00ffff' if ms['active'] else '#444'};">
+                    <div style="font-weight: 600;">💨 MOMENTUM SPIKE</div>
+                    <div style="font-size: 1.5rem; color: {'#00ffff' if ms['active'] else '#666'};">{ms['score']}%</div>
+                    <div style="font-size: 0.8rem; color: #aaa;">Direction: {ms.get('direction', 'N/A')}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Squeeze Spike
+            with row2_col3:
+                sq = spike_result["spikes"]["squeeze_spike"]
+                st.markdown(f"""
+                <div style="background: #2e1a2e; border-radius: 8px; padding: 10px; border-left: 4px solid {'#ff00ff' if sq['active'] else '#444'};">
+                    <div style="font-weight: 600;">🔥 SQUEEZE SPIKE</div>
+                    <div style="font-size: 1.5rem; color: {'#ff00ff' if sq['active'] else '#666'};">{sq['score']}%</div>
+                    <div style="font-size: 0.8rem; color: #aaa;">Type: {sq.get('type', 'N/A')}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("---")
+
+            # Key Levels
+            st.markdown("### 🎯 Key Levels")
+            level_col1, level_col2, level_col3 = st.columns(3)
+
+            with level_col1:
+                st.markdown("**Support Levels:**")
+                for sup in spike_result["key_levels"]["support"][:3]:
+                    st.write(f"₹{sup['level']:,} ({sup['strength']}) - OI: {sup['oi']:,}")
+
+            with level_col2:
+                st.markdown("**Resistance Levels:**")
+                for res in spike_result["key_levels"]["resistance"][:3]:
+                    st.write(f"₹{res['level']:,} ({res['strength']}) - OI: {res['oi']:,}")
+
+            with level_col3:
+                st.metric("Max Pain", f"₹{spike_result['key_levels']['max_pain']:,}")
+                st.metric("ATM Strike", f"₹{spike_result['key_levels']['atm']:,}")
+
+            # Recommendation
+            st.markdown("---")
+            st.markdown("### 💡 Recommendation")
+            recommendation = spike_result["summary"]["recommendation"]
+            if "SUPPORT" in recommendation or "UP" in recommendation or "LONG" in recommendation:
+                st.success(recommendation)
+            elif "RESISTANCE" in recommendation or "DOWN" in recommendation or "SHORT" in recommendation:
+                st.error(recommendation)
+            else:
+                st.info(recommendation)
+
+            # Active spike factors
+            if spike_result["active_spikes"]:
+                with st.expander("📋 Spike Factors Details", expanded=False):
+                    for spike in spike_result["active_spikes"]:
+                        st.markdown(f"**{spike['name'].replace('_', ' ').title()}** (Score: {spike['score']})")
+                        for factor in spike["data"].get("factors", []):
+                            st.write(f"  • {factor}")
+
+        except Exception as e:
+            st.error(f"⚠️ Spike detection error: {str(e)}")
+            st.info("Spike detector requires merged option chain data.")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SUB-TAB 8: TELEGRAM SIGNALS
+    # ═══════════════════════════════════════════════════════════════════
+
+    with screener_tabs[8]:
         st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
 
         if telegram_signal:
