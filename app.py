@@ -1887,47 +1887,59 @@ else:
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
-# UNIFIED ML TRADING SIGNAL (Above all tabs - after data is loaded)
+# UNIFIED ML TRADING SIGNAL (Above all tabs - cached for performance)
 # ═══════════════════════════════════════════════════════════════════════
+# Initialize cache timestamp if not exists
+if 'unified_ml_cache_time' not in st.session_state:
+    st.session_state.unified_ml_cache_time = 0
+
 with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
     try:
         from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+        import time as time_module
 
-        # Fetch chart data for ML analysis (uses cached data)
-        df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+        current_time = time_module.time()
+        cache_duration = 120  # Only regenerate every 120 seconds (2 minutes)
 
-        if df_for_signal is not None and len(df_for_signal) > 0:
-            # Store in session state for other components
-            st.session_state.chart_data = df_for_signal
+        # Check if we have cached signal and it's still valid
+        cached_signal = st.session_state.get('unified_ml_signal')
+        time_since_cache = current_time - st.session_state.unified_ml_cache_time
 
-            # Get option chain and other data from session state
-            option_chain = st.session_state.get('option_chain_data')
-            vix_current = st.session_state.get('vix_current', 15.0)
+        if cached_signal is not None and time_since_cache < cache_duration:
+            # Use cached signal - no API calls needed
             spot_price = nifty_data.get('spot_price') if nifty_data else None
-            bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
-
-            # Generate unified signal
-            signal_generator = UnifiedMLSignalGenerator()
-            unified_signal = signal_generator.generate_signal(
-                df=df_for_signal,
-                option_chain=option_chain,
-                vix_current=vix_current,
-                spot_price=spot_price,
-                bias_results=bias_results
-            )
-
-            # Store in session state for Perplexity and other uses
-            st.session_state.unified_ml_signal = unified_signal
-
-            # Display the unified signal
-            render_unified_signal(unified_signal, spot_price=spot_price)
+            render_unified_signal(cached_signal, spot_price=spot_price)
+            st.caption(f"🔄 Signal updates in {int(cache_duration - time_since_cache)}s")
         else:
-            # Show loading message if no data yet
-            st.info("⏳ Loading market data... Unified signal will appear once data is available.")
+            # Need to regenerate signal
+            df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+
+            if df_for_signal is not None and len(df_for_signal) > 0:
+                st.session_state.chart_data = df_for_signal
+
+                option_chain = st.session_state.get('option_chain_data')
+                vix_current = st.session_state.get('vix_current', 15.0)
+                spot_price = nifty_data.get('spot_price') if nifty_data else None
+                bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
+
+                signal_generator = UnifiedMLSignalGenerator()
+                unified_signal = signal_generator.generate_signal(
+                    df=df_for_signal,
+                    option_chain=option_chain,
+                    vix_current=vix_current,
+                    spot_price=spot_price,
+                    bias_results=bias_results
+                )
+
+                # Cache the signal
+                st.session_state.unified_ml_signal = unified_signal
+                st.session_state.unified_ml_cache_time = current_time
+
+                render_unified_signal(unified_signal, spot_price=spot_price)
+            else:
+                st.info("⏳ Loading market data... Unified signal will appear once data is available.")
     except Exception as e:
-        # Show error message so user knows what's wrong
         st.warning(f"⚠️ ML Signal temporarily unavailable: {str(e)}")
-        st.info("⏳ Signal will appear once all components are loaded.")
 
 st.divider()
 
