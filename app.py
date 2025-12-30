@@ -1889,47 +1889,47 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════
 # UNIFIED ML TRADING SIGNAL (Above all tabs - after data is loaded)
 # ═══════════════════════════════════════════════════════════════════════
-try:
-    from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
+    try:
+        from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
 
-    # Fetch chart data for ML analysis (uses cached data)
-    df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+        # Fetch chart data for ML analysis (uses cached data)
+        df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
 
-    if df_for_signal is not None and len(df_for_signal) > 0:
-        # Store in session state for other components
-        st.session_state.chart_data = df_for_signal
+        if df_for_signal is not None and len(df_for_signal) > 0:
+            # Store in session state for other components
+            st.session_state.chart_data = df_for_signal
 
-        # Get option chain and other data from session state
-        option_chain = st.session_state.get('option_chain_data')
-        vix_current = st.session_state.get('vix_current', 15.0)
-        spot_price = nifty_data.get('spot_price') if nifty_data else None
-        bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
+            # Get option chain and other data from session state
+            option_chain = st.session_state.get('option_chain_data')
+            vix_current = st.session_state.get('vix_current', 15.0)
+            spot_price = nifty_data.get('spot_price') if nifty_data else None
+            bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
 
-        # Generate unified signal
-        signal_generator = UnifiedMLSignalGenerator()
-        unified_signal = signal_generator.generate_signal(
-            df=df_for_signal,
-            option_chain=option_chain,
-            vix_current=vix_current,
-            spot_price=spot_price,
-            bias_results=bias_results
-        )
+            # Generate unified signal
+            signal_generator = UnifiedMLSignalGenerator()
+            unified_signal = signal_generator.generate_signal(
+                df=df_for_signal,
+                option_chain=option_chain,
+                vix_current=vix_current,
+                spot_price=spot_price,
+                bias_results=bias_results
+            )
 
-        # Store in session state for Perplexity and other uses
-        st.session_state.unified_ml_signal = unified_signal
+            # Store in session state for Perplexity and other uses
+            st.session_state.unified_ml_signal = unified_signal
 
-        # Display the unified signal in an expandable section
-        with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
+            # Display the unified signal
             render_unified_signal(unified_signal, spot_price=spot_price)
-
-        st.divider()
-    else:
-        # Show loading message if no data yet
-        with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=False):
+        else:
+            # Show loading message if no data yet
             st.info("⏳ Loading market data... Unified signal will appear once data is available.")
-except Exception as e:
-    # Log error but don't break the app
-    st.session_state.unified_ml_error = str(e)
+    except Exception as e:
+        # Show error message so user knows what's wrong
+        st.warning(f"⚠️ ML Signal temporarily unavailable: {str(e)}")
+        st.info("⏳ Signal will appear once all components are loaded.")
+
+st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
 # TABS - USING NATIVE STREAMLIT TABS FOR BETTER UX
