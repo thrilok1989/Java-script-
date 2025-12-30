@@ -1887,18 +1887,17 @@ else:
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
-# UNIFIED ML TRADING SIGNAL (Above all tabs - cached for performance)
+# UNIFIED ML TRADING SIGNAL (Above all tabs - heavily cached for performance)
 # ═══════════════════════════════════════════════════════════════════════
-# Initialize cache timestamp if not exists
+# Initialize cache variables once
 if 'unified_ml_cache_time' not in st.session_state:
     st.session_state.unified_ml_cache_time = 0
+if 'unified_ml_generator' not in st.session_state:
+    st.session_state.unified_ml_generator = None
 
 with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
     try:
-        from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
-        import time as time_module
-
-        current_time = time_module.time()
+        current_time = time.time()
         cache_duration = 120  # Only regenerate every 120 seconds (2 minutes)
 
         # Check if we have cached signal and it's still valid
@@ -1906,12 +1905,19 @@ with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
         time_since_cache = current_time - st.session_state.unified_ml_cache_time
 
         if cached_signal is not None and time_since_cache < cache_duration:
-            # Use cached signal - no API calls needed
+            # Use cached signal - no computation needed
+            from src.unified_ml_signal import render_unified_signal
             spot_price = nifty_data.get('spot_price') if nifty_data else None
             render_unified_signal(cached_signal, spot_price=spot_price)
             st.caption(f"🔄 Signal updates in {int(cache_duration - time_since_cache)}s")
         else:
-            # Need to regenerate signal
+            # Need to regenerate signal - but use cached generator
+            from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+
+            # Create generator once and reuse (major performance fix)
+            if st.session_state.unified_ml_generator is None:
+                st.session_state.unified_ml_generator = UnifiedMLSignalGenerator()
+
             df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
 
             if df_for_signal is not None and len(df_for_signal) > 0:
@@ -1922,8 +1928,8 @@ with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
                 spot_price = nifty_data.get('spot_price') if nifty_data else None
                 bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
 
-                signal_generator = UnifiedMLSignalGenerator()
-                unified_signal = signal_generator.generate_signal(
+                # Use cached generator instead of creating new one
+                unified_signal = st.session_state.unified_ml_generator.generate_signal(
                     df=df_for_signal,
                     option_chain=option_chain,
                     vix_current=vix_current,
