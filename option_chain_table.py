@@ -1,11 +1,10 @@
 """
 Option Chain Table Module
 ========================
-Displays option chain data in a tabulated format similar to trading apps
+Displays option chain data in a tabulated format using native Streamlit components
 - ATM ±5 strikes (11 total strikes)
 - Calls on left, Strike in middle, Puts on right
-- Columns: LTP, OI, Change OI, Volume, IV, GEX, IV Skew, Delta Exposure
-- Click on LTP to place buy order via Dhan API
+- Uses st.dataframe for display
 """
 
 import streamlit as st
@@ -41,19 +40,6 @@ def safe_int(val, default=0):
         return default
 
 
-def calculate_iv_skew_for_strike(iv_ce, iv_pe, iv_atm_ce, iv_atm_pe):
-    """Calculate IV Skew relative to ATM"""
-    try:
-        if pd.isna(iv_ce) or pd.isna(iv_pe) or iv_atm_ce == 0 or iv_atm_pe == 0:
-            return 0.0
-        atm_avg_iv = (iv_atm_ce + iv_atm_pe) / 2
-        current_avg_iv = (iv_ce + iv_pe) / 2
-        skew = current_avg_iv - atm_avg_iv
-        return round(skew, 2)
-    except:
-        return 0.0
-
-
 def format_oi_lakhs(value):
     """Format OI in lakhs"""
     try:
@@ -65,7 +51,7 @@ def format_oi_lakhs(value):
 
 
 def format_change_oi(value):
-    """Format Change in OI in thousands"""
+    """Format Change in OI"""
     try:
         if pd.isna(value) or value == 0:
             return "0"
@@ -94,12 +80,10 @@ def format_volume(value):
 
 
 def format_gex(value):
-    """Format GEX - use existing GEX values from screener"""
+    """Format GEX"""
     try:
         if pd.isna(value) or value == 0:
             return "-"
-        # GEX is already calculated in screener as gamma * notional * OI
-        # Scale down for display
         abs_val = abs(value)
         if abs_val >= 10000000:
             return f"{value/10000000:.1f}Cr"
@@ -123,8 +107,6 @@ def calculate_max_pain_from_df(df):
             strike_row = df[df["strikePrice"] == strike]
             if strike_row.empty:
                 continue
-            ce_oi = safe_int(strike_row.iloc[0].get("OI_CE", 0))
-            pe_oi = safe_int(strike_row.iloc[0].get("OI_PE", 0))
 
             call_loss = sum(
                 max(0, s - strike) * safe_int(df[df["strikePrice"] == s].iloc[0].get("OI_CE", 0))
@@ -147,10 +129,9 @@ def calculate_max_pain_from_df(df):
 
 def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expiry, days_to_expiry, tau):
     """
-    Render the option chain table using data from the parent screener
-    Uses native Streamlit components instead of HTML
+    Render the option chain table using native Streamlit components
     """
-    st.markdown("## 📊 Option Chain Table")
+    st.subheader("Option Chain Table")
     st.caption("ATM ±5 strikes | Calls on Left, Puts on Right | Click to Trade")
 
     # Controls row
@@ -195,24 +176,16 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
 
     st.divider()
 
-    # Get ATM IV for skew calculation
-    atm_row = df_filtered[df_filtered["strikePrice"] == atm_strike]
-    if not atm_row.empty:
-        iv_atm_ce = safe_float(atm_row.iloc[0].get("IV_CE", 15.0))
-        iv_atm_pe = safe_float(atm_row.iloc[0].get("IV_PE", 15.0))
-    else:
-        iv_atm_ce = iv_atm_pe = 15.0
-
-    # Build the display dataframe
-    display_data = []
+    # Build display dataframe for CALLS
+    calls_data = []
+    puts_data = []
+    strike_data = []
 
     for _, row in df_filtered.iterrows():
         strike = int(row["strikePrice"])
         is_atm = strike == atm_strike
-        is_itm_ce = strike < spot
-        is_itm_pe = strike > spot
 
-        # Extract CE values
+        # CE values
         ltp_ce = safe_float(row.get("LTP_CE", 0))
         oi_ce = safe_int(row.get("OI_CE", 0))
         chg_oi_ce = safe_int(row.get("Chg_OI_CE", 0))
@@ -221,7 +194,7 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
         delta_ce = safe_float(row.get("Delta_CE", 0))
         gex_ce = safe_float(row.get("GEX_CE", 0))
 
-        # Extract PE values
+        # PE values
         ltp_pe = safe_float(row.get("LTP_PE", 0))
         oi_pe = safe_int(row.get("OI_PE", 0))
         chg_oi_pe = safe_int(row.get("Chg_OI_PE", 0))
@@ -230,118 +203,74 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
         delta_pe = safe_float(row.get("Delta_PE", 0))
         gex_pe = safe_float(row.get("GEX_PE", 0))
 
-        # Calculate IV Skew
-        iv_skew = calculate_iv_skew_for_strike(iv_ce, iv_pe, iv_atm_ce, iv_atm_pe)
-
         # Strike PCR
         strike_pcr = oi_pe / max(oi_ce, 1)
 
         # ATM marker
-        atm_marker = "⭐" if is_atm else ""
+        atm_marker = " ⭐" if is_atm else ""
 
-        display_data.append({
-            # CE Side
-            "CE_Delta": f"{delta_ce:.2f}",
-            "CE_IV": f"{iv_ce:.1f}%" if iv_ce > 0 else "-",
-            "CE_GEX": format_gex(gex_ce),
-            "CE_Vol": format_volume(vol_ce),
-            "CE_ChgOI": format_change_oi(chg_oi_ce),
-            "CE_OI": format_oi_lakhs(oi_ce),
-            "CE_LTP": f"₹{ltp_ce:.2f}",
-            # Strike
-            "Strike": f"{atm_marker}{strike:,}",
-            "PCR": f"{strike_pcr:.2f}",
-            # PE Side
-            "PE_LTP": f"₹{ltp_pe:.2f}",
-            "PE_OI": format_oi_lakhs(oi_pe),
-            "PE_ChgOI": format_change_oi(chg_oi_pe),
-            "PE_Vol": format_volume(vol_pe),
-            "PE_GEX": format_gex(gex_pe),
-            "PE_IV": f"{iv_pe:.1f}%" if iv_pe > 0 else "-",
-            "PE_Delta": f"{delta_pe:.2f}",
-            # Hidden for selection
-            "_strike": strike,
-            "_is_atm": is_atm,
+        calls_data.append({
+            "OI (L)": format_oi_lakhs(oi_ce),
+            "Chg OI": format_change_oi(chg_oi_ce),
+            "Volume": format_volume(vol_ce),
+            "IV %": f"{iv_ce:.1f}" if iv_ce > 0 else "-",
+            "LTP": f"₹{ltp_ce:.2f}",
+            "Delta": f"{delta_ce:.2f}",
         })
 
-    display_df = pd.DataFrame(display_data)
+        strike_data.append({
+            "Strike": f"{strike:,}{atm_marker}",
+            "PCR": f"{strike_pcr:.2f}",
+        })
 
-    # Create styled columns
-    st.markdown("### 📈 CALLS (CE) | Strike | PUTS (PE) 📉")
+        puts_data.append({
+            "Delta": f"{delta_pe:.2f}",
+            "LTP": f"₹{ltp_pe:.2f}",
+            "IV %": f"{iv_pe:.1f}" if iv_pe > 0 else "-",
+            "Volume": format_volume(vol_pe),
+            "Chg OI": format_change_oi(chg_oi_pe),
+            "OI (L)": format_oi_lakhs(oi_pe),
+        })
 
-    # Display header
-    header_cols = st.columns([1, 1, 1, 1, 1, 1, 1.5, 1.5, 1, 1.5, 1, 1, 1, 1, 1, 1])
-    headers = ["Delta", "IV", "GEX", "Vol", "Chg OI", "OI(L)", "LTP", "Strike", "PCR", "LTP", "OI(L)", "Chg OI", "Vol", "GEX", "IV", "Delta"]
+    calls_df = pd.DataFrame(calls_data)
+    strike_df = pd.DataFrame(strike_data)
+    puts_df = pd.DataFrame(puts_data)
 
-    for col, header in zip(header_cols, headers):
-        with col:
-            if header in ["LTP", "Strike", "PCR"]:
-                st.markdown(f"**{header}**")
-            else:
-                st.markdown(f"<small>{header}</small>", unsafe_allow_html=True)
+    # Display tables side by side
+    st.write("**CALLS (CE)** | **Strike** | **PUTS (PE)**")
 
-    st.divider()
+    col_ce, col_strike, col_pe = st.columns([4, 2, 4])
 
-    # Display each row
-    for idx, row_data in display_df.iterrows():
-        is_atm = row_data["_is_atm"]
-        strike = row_data["_strike"]
+    with col_ce:
+        st.dataframe(
+            calls_df,
+            use_container_width=True,
+            hide_index=True,
+            height=min(400, (len(calls_df) + 1) * 35)
+        )
 
-        # Row styling
-        if is_atm:
-            st.markdown("""<div style='background: rgba(255,215,0,0.15); padding: 5px; border-radius: 5px; border: 1px solid gold;'>""", unsafe_allow_html=True)
+    with col_strike:
+        st.dataframe(
+            strike_df,
+            use_container_width=True,
+            hide_index=True,
+            height=min(400, (len(strike_df) + 1) * 35)
+        )
 
-        cols = st.columns([1, 1, 1, 1, 1, 1, 1.5, 1.5, 1, 1.5, 1, 1, 1, 1, 1, 1])
-
-        # CE Side (green tint)
-        with cols[0]:
-            st.markdown(f"<span style='color:#00ff88'>{row_data['CE_Delta']}</span>", unsafe_allow_html=True)
-        with cols[1]:
-            st.markdown(f"<span style='color:#74b9ff'>{row_data['CE_IV']}</span>", unsafe_allow_html=True)
-        with cols[2]:
-            st.markdown(f"<span style='color:#00ff88'>{row_data['CE_GEX']}</span>", unsafe_allow_html=True)
-        with cols[3]:
-            st.text(row_data['CE_Vol'])
-        with cols[4]:
-            color = "#00ff88" if "+" in row_data['CE_ChgOI'] else "#ff6b6b" if "-" in row_data['CE_ChgOI'] else "#888"
-            st.markdown(f"<span style='color:{color}'>{row_data['CE_ChgOI']}</span>", unsafe_allow_html=True)
-        with cols[5]:
-            st.text(row_data['CE_OI'])
-        with cols[6]:
-            st.markdown(f"**<span style='color:#00ff88; font-size:16px'>{row_data['CE_LTP']}</span>**", unsafe_allow_html=True)
-
-        # Strike (center)
-        with cols[7]:
-            st.markdown(f"**<span style='color:#00d4ff; font-size:16px'>{row_data['Strike']}</span>**", unsafe_allow_html=True)
-        with cols[8]:
-            st.markdown(f"<span style='color:#ffd700'>{row_data['PCR']}</span>", unsafe_allow_html=True)
-
-        # PE Side (red tint)
-        with cols[9]:
-            st.markdown(f"**<span style='color:#ff6b6b; font-size:16px'>{row_data['PE_LTP']}</span>**", unsafe_allow_html=True)
-        with cols[10]:
-            st.text(row_data['PE_OI'])
-        with cols[11]:
-            color = "#00ff88" if "+" in row_data['PE_ChgOI'] else "#ff6b6b" if "-" in row_data['PE_ChgOI'] else "#888"
-            st.markdown(f"<span style='color:{color}'>{row_data['PE_ChgOI']}</span>", unsafe_allow_html=True)
-        with cols[12]:
-            st.text(row_data['PE_Vol'])
-        with cols[13]:
-            st.markdown(f"<span style='color:#ff6b6b'>{row_data['PE_GEX']}</span>", unsafe_allow_html=True)
-        with cols[14]:
-            st.markdown(f"<span style='color:#74b9ff'>{row_data['PE_IV']}</span>", unsafe_allow_html=True)
-        with cols[15]:
-            st.markdown(f"<span style='color:#ff6b6b'>{row_data['PE_Delta']}</span>", unsafe_allow_html=True)
-
-        if is_atm:
-            st.markdown("</div>", unsafe_allow_html=True)
+    with col_pe:
+        st.dataframe(
+            puts_df,
+            use_container_width=True,
+            hide_index=True,
+            height=min(400, (len(puts_df) + 1) * 35)
+        )
 
     # Legend
     st.divider()
-    st.caption("""
-    **Legend:** 🟢 CE (Calls) | 🔴 PE (Puts) | ⭐ ATM Strike | OI in Lakhs |
-    GEX = Gamma Exposure | PCR = Put-Call Ratio for strike
-    """)
+    st.caption(
+        "Legend: ⭐ = ATM Strike | OI in Lakhs | "
+        "PCR = Put-Call Ratio | Chg OI = Change in Open Interest"
+    )
 
     st.divider()
 
@@ -350,10 +279,10 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
 
 
 def render_buy_section(df, spot, expiry, atm_strike):
-    """Render the buy option section"""
-    st.markdown("### 🛒 Quick Buy Option")
+    """Render the buy option section using native Streamlit components"""
+    st.subheader("Quick Buy Option")
 
-    col1, col2, col3, col4 = st.columns([2, 2, 1, 3])
+    col1, col2, col3 = st.columns([2, 2, 1])
 
     strikes = sorted(df["strikePrice"].unique())
 
@@ -396,25 +325,26 @@ def render_buy_section(df, spot, expiry, atm_strike):
         current_iv = 0
         current_delta = 0
 
+    quantity = lots * LOT_SIZE
+    est_cost = current_ltp * quantity
+
+    # Order summary
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("LTP", f"₹{current_ltp:.2f}")
+    with col2:
+        st.metric("Quantity", f"{quantity}")
+    with col3:
+        st.metric("Est. Cost", f"₹{est_cost:,.0f}")
     with col4:
-        quantity = lots * LOT_SIZE
-        est_cost = current_ltp * quantity
-        ltp_color = "#00ff88" if option_type == "CE" else "#ff6b6b"
-
-        st.markdown(f"""
-        | LTP | Qty | Est. Cost | IV / Delta |
-        |:---:|:---:|:---:|:---:|
-        | **₹{current_ltp:.2f}** | {quantity} | ₹{est_cost:,.0f} | {current_iv:.1f}% / {current_delta:.3f} |
-        """)
-
-    st.markdown("")
+        st.metric("IV / Delta", f"{current_iv:.1f}% / {current_delta:.2f}")
 
     # Buy buttons
     col1, col2, col3 = st.columns([2, 2, 4])
 
     with col1:
         if st.button(
-            f"🟢 BUY {option_type} @ Market",
+            f"BUY {option_type} @ Market",
             type="primary",
             use_container_width=True,
             key="buy_market_button"
@@ -423,22 +353,21 @@ def render_buy_section(df, spot, expiry, atm_strike):
 
     with col2:
         limit_price = st.number_input(
-            "Limit ₹",
+            "Limit Price",
             min_value=0.05,
             value=float(current_ltp) if current_ltp > 0 else 10.0,
             step=0.05,
-            key="limit_price_field",
-            label_visibility="collapsed"
+            key="limit_price_field"
         )
         if st.button(
-            f"🟡 BUY @ ₹{limit_price:.2f}",
+            f"BUY @ ₹{limit_price:.2f}",
             use_container_width=True,
             key="buy_limit_button"
         ):
             place_buy_order(selected_strike, option_type, lots, "LIMIT", spot, expiry, limit_price)
 
     with col3:
-        st.warning("⚠️ Orders via Dhan API. Ensure sufficient margin. Market orders execute immediately.")
+        st.warning("Orders via Dhan API. Ensure sufficient margin.")
 
 
 def place_buy_order(strike, option_type, lots, order_type, spot, expiry, limit_price=None):
@@ -457,17 +386,14 @@ def place_buy_order(strike, option_type, lots, order_type, spot, expiry, limit_p
         sl_price = spot + sl_offset if option_type == "CE" else spot - abs(sl_offset)
         target_price = spot + target_offset if option_type == "CE" else spot - abs(target_offset)
 
-        st.info(f"""
-        **Order Preview:**
-        - Symbol: NIFTY {int(strike)} {option_type} ({expiry})
-        - Type: {order_type}
-        - Quantity: {quantity} ({lots} lots)
-        - Direction: BUY
-        {"- Limit Price: ₹" + f"{limit_price:.2f}" if order_type == "LIMIT" and limit_price else ""}
-        """)
+        st.info(
+            f"**Order Preview:** NIFTY {int(strike)} {option_type} ({expiry}) | "
+            f"Type: {order_type} | Qty: {quantity} ({lots} lots) | Direction: BUY"
+            + (f" | Limit: ₹{limit_price:.2f}" if order_type == "LIMIT" and limit_price else "")
+        )
 
         confirm_key = f"confirm_order_{strike}_{option_type}_{order_type}"
-        if st.button("✅ Confirm Order", type="primary", key=confirm_key):
+        if st.button("Confirm Order", type="primary", key=confirm_key):
             with st.spinner("Placing order..."):
                 result = dhan.place_super_order(
                     index="NIFTY",
@@ -480,17 +406,13 @@ def place_buy_order(strike, option_type, lots, order_type, spot, expiry, limit_p
                 )
 
                 if result.get('success'):
-                    st.success(f"""
-                    ✅ **Order Placed!**
-                    - Order ID: {result.get('order_id', 'N/A')}
-                    - Status: {result.get('status', 'PENDING')}
-                    """)
+                    st.success(
+                        f"Order Placed! Order ID: {result.get('order_id', 'N/A')} | "
+                        f"Status: {result.get('status', 'PENDING')}"
+                    )
                     st.balloons()
                 else:
-                    st.error(f"""
-                    ❌ **Order Failed**
-                    - Error: {result.get('error', 'Unknown error')}
-                    """)
+                    st.error(f"Order Failed: {result.get('error', 'Unknown error')}")
 
     except Exception as e:
         st.error(f"Error placing order: {str(e)}")
