@@ -2078,6 +2078,13 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
         expiry_info = f"\n{spike_emoji} *Expiry Spike Risk*: {expiry_spike_data['probability']}% - {expiry_spike_data['type']}"
         if expiry_spike_data.get("key_levels"):
             expiry_info += f"\n🎯 *Spike Levels*: {', '.join(expiry_spike_data['key_levels'][:2])}"
+        # Add spike strike price ranges
+        support_range = expiry_spike_data.get("support_spike_range", {})
+        resistance_range = expiry_spike_data.get("resistance_spike_range", {})
+        if support_range.get("start") is not None:
+            expiry_info += f"\n🛡️ *Support Spike Range*: ₹{support_range['start']:,} → ₹{support_range['end']:,}"
+        if resistance_range.get("start") is not None:
+            expiry_info += f"\n🚧 *Resistance Spike Range*: ₹{resistance_range['start']:,} → ₹{resistance_range['end']:,}"
     
     # Generate the message
     message = f"""
@@ -2173,7 +2180,9 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
             "intensity": "NO SPIKE DETECTED",
             "factors": [],
             "days_to_expiry": days_to_expiry,
-            "expiry_date": expiry_date_str
+            "expiry_date": expiry_date_str,
+            "resistance_spike_range": {"start": None, "end": None, "strikes": [], "total_oi": 0},
+            "support_spike_range": {"start": None, "end": None, "strikes": [], "total_oi": 0}
         }
     
     spike_score = 0
@@ -2235,7 +2244,11 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
     # Factor 4: Large OI Build-up at Single Strike (0-20 points)
     max_ce_oi_strike = merged_df.loc[merged_df["OI_CE"].idxmax()] if not merged_df.empty else None
     max_pe_oi_strike = merged_df.loc[merged_df["OI_PE"].idxmax()] if not merged_df.empty else None
-    
+
+    # Initialize spike range tracking
+    resistance_spike_range = {"start": None, "end": None, "strikes": [], "total_oi": 0}
+    support_spike_range = {"start": None, "end": None, "strikes": [], "total_oi": 0}
+
     if max_ce_oi_strike is not None:
         max_ce_oi = int(max_ce_oi_strike["OI_CE"])
         max_ce_strike = int(max_ce_oi_strike["strikePrice"])
@@ -2245,7 +2258,20 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
             key_levels.append(f"CALL Wall: ₹{max_ce_strike:,}")
             if abs(spot - max_ce_strike) < (strike_gap_val * 3):
                 spike_type = "RESISTANCE SPIKE"
-    
+
+            # Find resistance spike range - strikes with significant CALL OI (>40% of max)
+            oi_threshold = max_ce_oi * 0.40
+            significant_ce_strikes = merged_df[
+                (merged_df["OI_CE"] >= oi_threshold) &
+                (merged_df["strikePrice"] >= spot)
+            ].sort_values("strikePrice")
+
+            if not significant_ce_strikes.empty:
+                resistance_spike_range["start"] = int(significant_ce_strikes["strikePrice"].min())
+                resistance_spike_range["end"] = int(significant_ce_strikes["strikePrice"].max())
+                resistance_spike_range["strikes"] = significant_ce_strikes["strikePrice"].astype(int).tolist()
+                resistance_spike_range["total_oi"] = int(significant_ce_strikes["OI_CE"].sum())
+
     if max_pe_oi_strike is not None:
         max_pe_oi = int(max_pe_oi_strike["OI_PE"])
         max_pe_strike = int(max_pe_oi_strike["strikePrice"])
@@ -2255,6 +2281,19 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
             key_levels.append(f"PUT Wall: ₹{max_pe_strike:,}")
             if abs(spot - max_pe_strike) < (strike_gap_val * 3):
                 spike_type = "SUPPORT SPIKE"
+
+            # Find support spike range - strikes with significant PUT OI (>40% of max)
+            oi_threshold = max_pe_oi * 0.40
+            significant_pe_strikes = merged_df[
+                (merged_df["OI_PE"] >= oi_threshold) &
+                (merged_df["strikePrice"] <= spot)
+            ].sort_values("strikePrice")
+
+            if not significant_pe_strikes.empty:
+                support_spike_range["start"] = int(significant_pe_strikes["strikePrice"].min())
+                support_spike_range["end"] = int(significant_pe_strikes["strikePrice"].max())
+                support_spike_range["strikes"] = significant_pe_strikes["strikePrice"].astype(int).tolist()
+                support_spike_range["total_oi"] = int(significant_pe_strikes["OI_PE"].sum())
     
     # Factor 5: Gamma Flip Zone (0-10 points)
     if days_to_expiry <= 1:
@@ -2302,7 +2341,9 @@ def detect_expiry_spikes(merged_df, spot, atm_strike, days_to_expiry, expiry_dat
         "key_levels": key_levels,
         "days_to_expiry": days_to_expiry,
         "expiry_date": expiry_date_str,
-        "message": f"Expiry in {days_to_expiry:.1f} days"
+        "message": f"Expiry in {days_to_expiry:.1f} days",
+        "resistance_spike_range": resistance_spike_range,
+        "support_spike_range": support_spike_range
     }
 
 def get_historical_expiry_patterns():
@@ -6003,7 +6044,40 @@ def render_nifty_option_screener():
                         st.markdown(f"• {level}")
                 else:
                     st.info("No extreme levels detected")
-                
+
+                # Display Spike Strike Price Ranges
+                support_range = expiry_spike_data.get("support_spike_range", {})
+                resistance_range = expiry_spike_data.get("resistance_spike_range", {})
+
+                if support_range.get("start") is not None or resistance_range.get("start") is not None:
+                    st.markdown("### 📊 Spike Strike Price Range")
+
+                    if support_range.get("start") is not None:
+                        st.markdown(f"""
+                        <div style='background: rgba(0,255,0,0.1); border-left: 3px solid #00ff00; padding: 10px; margin: 5px 0; border-radius: 5px;'>
+                            <strong style='color:#00ff00;'>🛡️ SUPPORT SPIKE RANGE</strong><br/>
+                            <span style='color:#ffffff;'>Start: ₹{support_range['start']:,} → End: ₹{support_range['end']:,}</span><br/>
+                            <span style='color:#aaaaaa; font-size: 0.85em;'>
+                                Strikes: {', '.join([f"₹{s:,}" for s in support_range['strikes'][:5]])}
+                                {f"... (+{len(support_range['strikes'])-5} more)" if len(support_range['strikes']) > 5 else ""}
+                            </span><br/>
+                            <span style='color:#66b3ff; font-size: 0.85em;'>Total PUT OI: {support_range['total_oi']:,}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    if resistance_range.get("start") is not None:
+                        st.markdown(f"""
+                        <div style='background: rgba(255,0,0,0.1); border-left: 3px solid #ff4444; padding: 10px; margin: 5px 0; border-radius: 5px;'>
+                            <strong style='color:#ff4444;'>🚧 RESISTANCE SPIKE RANGE</strong><br/>
+                            <span style='color:#ffffff;'>Start: ₹{resistance_range['start']:,} → End: ₹{resistance_range['end']:,}</span><br/>
+                            <span style='color:#aaaaaa; font-size: 0.85em;'>
+                                Strikes: {', '.join([f"₹{s:,}" for s in resistance_range['strikes'][:5]])}
+                                {f"... (+{len(resistance_range['strikes'])-5} more)" if len(resistance_range['strikes']) > 5 else ""}
+                            </span><br/>
+                            <span style='color:#66b3ff; font-size: 0.85em;'>Total CALL OI: {resistance_range['total_oi']:,}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
                 # Gamma spike risk
                 if gamma_spike_risk["score"] > 0:
                     st.markdown(f"### ⚡ Gamma Spike Risk")
@@ -7231,9 +7305,84 @@ def render_nifty_option_screener():
                 st.markdown(f"• {factor}")
         else:
             st.info("No spike triggers detected")
-        
+
         st.markdown("---")
-        
+
+        # Spike Strike Price Ranges
+        support_range = expiry_spike_data.get("support_spike_range", {})
+        resistance_range = expiry_spike_data.get("resistance_spike_range", {})
+
+        if support_range.get("start") is not None or resistance_range.get("start") is not None:
+            st.markdown("#### 📊 SPIKE STRIKE PRICE RANGE")
+
+            spike_range_cols = st.columns(2)
+
+            with spike_range_cols[0]:
+                if support_range.get("start") is not None:
+                    st.markdown(f"""
+                    <div style='background: rgba(0,255,0,0.1); border: 2px solid #00ff00; padding: 15px; margin: 10px 0; border-radius: 10px;'>
+                        <h4 style='color:#00ff00; margin:0 0 10px 0;'>🛡️ SUPPORT SPIKE RANGE</h4>
+                        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                            <span style='color:#aaaaaa;'>Start Strike:</span>
+                            <span style='color:#ffffff; font-weight:700;'>₹{support_range['start']:,}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                            <span style='color:#aaaaaa;'>End Strike:</span>
+                            <span style='color:#ffffff; font-weight:700;'>₹{support_range['end']:,}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                            <span style='color:#aaaaaa;'>Range Width:</span>
+                            <span style='color:#66b3ff;'>{len(support_range['strikes'])} strikes</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between;'>
+                            <span style='color:#aaaaaa;'>Total PUT OI:</span>
+                            <span style='color:#00ff88; font-weight:700;'>{support_range['total_oi']:,}</span>
+                        </div>
+                        <div style='margin-top: 10px; padding-top: 10px; border-top: 1px solid #333;'>
+                            <span style='color:#888888; font-size: 0.85em;'>
+                                Strikes: {', '.join([f"₹{s:,}" for s in support_range['strikes'][:6]])}
+                                {f" (+{len(support_range['strikes'])-6} more)" if len(support_range['strikes']) > 6 else ""}
+                            </span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("No significant support spike range detected")
+
+            with spike_range_cols[1]:
+                if resistance_range.get("start") is not None:
+                    st.markdown(f"""
+                    <div style='background: rgba(255,0,0,0.1); border: 2px solid #ff4444; padding: 15px; margin: 10px 0; border-radius: 10px;'>
+                        <h4 style='color:#ff4444; margin:0 0 10px 0;'>🚧 RESISTANCE SPIKE RANGE</h4>
+                        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                            <span style='color:#aaaaaa;'>Start Strike:</span>
+                            <span style='color:#ffffff; font-weight:700;'>₹{resistance_range['start']:,}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                            <span style='color:#aaaaaa;'>End Strike:</span>
+                            <span style='color:#ffffff; font-weight:700;'>₹{resistance_range['end']:,}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                            <span style='color:#aaaaaa;'>Range Width:</span>
+                            <span style='color:#66b3ff;'>{len(resistance_range['strikes'])} strikes</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between;'>
+                            <span style='color:#aaaaaa;'>Total CALL OI:</span>
+                            <span style='color:#ff6666; font-weight:700;'>{resistance_range['total_oi']:,}</span>
+                        </div>
+                        <div style='margin-top: 10px; padding-top: 10px; border-top: 1px solid #333;'>
+                            <span style='color:#888888; font-size: 0.85em;'>
+                                Strikes: {', '.join([f"₹{s:,}" for s in resistance_range['strikes'][:6]])}
+                                {f" (+{len(resistance_range['strikes'])-6} more)" if len(resistance_range['strikes']) > 6 else ""}
+                            </span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("No significant resistance spike range detected")
+
+            st.markdown("---")
+
         # Violent Unwinding
         if violent_unwinding_signals:
             st.markdown("#### 🚨 VIOLENT UNWINDING DETECTED")
