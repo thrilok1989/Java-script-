@@ -132,12 +132,14 @@ class PerplexityMarketInsights:
         bias_data: Optional[Dict[str, Any]],
         current_price: Optional[float]
     ) -> str:
-        """Build a context-aware query with bias data"""
+        """Build a context-aware query with comprehensive market data"""
         context_parts = []
 
+        # Basic price data
         if current_price:
             context_parts.append(f"Current NIFTY 50 price: {current_price:.2f}")
 
+        # Bias data
         if bias_data:
             context_parts.append(f"Overall Bias: {bias_data.get('overall_bias', 'NEUTRAL')}")
             context_parts.append(f"Confidence: {bias_data.get('overall_confidence', 0)}%")
@@ -146,9 +148,79 @@ class PerplexityMarketInsights:
                 f"{bias_data.get('bearish_count', 0)} Bearish"
             )
 
+        # Get additional data from session state
+        try:
+            # Unified ML Signal
+            if hasattr(st, 'session_state') and 'unified_ml_signal' in st.session_state:
+                signal = st.session_state.unified_ml_signal
+                context_parts.append(f"\n--- ML TRADING SIGNAL ---")
+                context_parts.append(f"Signal: {signal.signal}")
+                context_parts.append(f"Confidence: {signal.confidence:.0f}%")
+                context_parts.append(f"Market Regime: {signal.regime}")
+                context_parts.append(f"Volatility State: {signal.volatility_state}")
+                context_parts.append(f"Risk Level: {signal.risk_level}")
+                context_parts.append(f"Strategy: {signal.recommended_strategy}")
+
+            # ML Regime Result
+            if hasattr(st, 'session_state') and 'ml_regime_result' in st.session_state:
+                regime = st.session_state.ml_regime_result
+                context_parts.append(f"\n--- MARKET REGIME ---")
+                context_parts.append(f"Regime: {regime.get('regime', 'Unknown')}")
+                context_parts.append(f"Trend Strength: {regime.get('trend_strength', 0):.0f}%")
+                context_parts.append(f"Optimal Timeframe: {regime.get('optimal_timeframe', 'N/A')}")
+
+            # Option Chain Data (GEX, PCR, Max Pain)
+            if hasattr(st, 'session_state') and 'nifty_screener_data' in st.session_state:
+                screener = st.session_state.nifty_screener_data
+                context_parts.append(f"\n--- OPTION CHAIN DATA ---")
+                if 'total_gex_net' in screener:
+                    context_parts.append(f"Total GEX: ₹{screener['total_gex_net']:,.0f}")
+                if 'seller_max_pain' in screener:
+                    context_parts.append(f"Max Pain: ₹{screener['seller_max_pain']:,.0f}")
+                if 'oi_pcr_metrics' in screener:
+                    pcr = screener['oi_pcr_metrics']
+                    context_parts.append(f"PCR: {pcr.get('pcr_total', 0):.2f}")
+
+            # Expiry Analysis
+            if hasattr(st, 'session_state') and 'expiry_spike_data' in st.session_state:
+                expiry = st.session_state.expiry_spike_data
+                context_parts.append(f"\n--- EXPIRY ANALYSIS ---")
+                context_parts.append(f"Days to Expiry: {expiry.get('days_to_expiry', 0):.1f}")
+                context_parts.append(f"Spike Probability: {expiry.get('probability', 0)}%")
+                context_parts.append(f"Spike Type: {expiry.get('type', 'None')}")
+
+            # Support/Resistance Levels
+            if hasattr(st, 'session_state') and 'htf_sr_levels' in st.session_state:
+                sr = st.session_state.htf_sr_levels
+                context_parts.append(f"\n--- SUPPORT/RESISTANCE ---")
+                if sr.get('support_levels'):
+                    context_parts.append(f"Key Supports: {', '.join([f'₹{s:,.0f}' for s in sr['support_levels'][:3]])}")
+                if sr.get('resistance_levels'):
+                    context_parts.append(f"Key Resistances: {', '.join([f'₹{r:,.0f}' for r in sr['resistance_levels'][:3]])}")
+
+            # VIX Data
+            if hasattr(st, 'session_state') and 'vix_current' in st.session_state:
+                vix = st.session_state.vix_current
+                context_parts.append(f"\n--- VOLATILITY ---")
+                context_parts.append(f"India VIX: {vix:.2f}")
+
+            # Sector Rotation
+            if hasattr(st, 'session_state') and 'sector_data' in st.session_state:
+                sectors = st.session_state.sector_data
+                if sectors:
+                    context_parts.append(f"\n--- SECTOR ROTATION ---")
+                    best = max(sectors.items(), key=lambda x: x[1].get('change', 0), default=('N/A', {'change': 0}))
+                    worst = min(sectors.items(), key=lambda x: x[1].get('change', 0), default=('N/A', {'change': 0}))
+                    context_parts.append(f"Best Sector: {best[0]} ({best[1].get('change', 0):+.2f}%)")
+                    context_parts.append(f"Worst Sector: {worst[0]} ({worst[1].get('change', 0):+.2f}%)")
+
+        except Exception as e:
+            # Silently handle errors in fetching session data
+            pass
+
         if context_parts:
             context = "\n".join(context_parts)
-            return f"{context}\n\nQuestion: {query}"
+            return f"MARKET DATA:\n{context}\n\nQUESTION: {query}"
         else:
             return query
 

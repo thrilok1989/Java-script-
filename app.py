@@ -470,6 +470,53 @@ refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
+# ═══════════════════════════════════════════════════════════════════════
+# UNIFIED ML TRADING SIGNAL (Above all tabs)
+# ═══════════════════════════════════════════════════════════════════════
+try:
+    from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+
+    # Check if we have price data
+    if 'chart_data' in st.session_state and st.session_state.chart_data is not None:
+        df_for_signal = st.session_state.chart_data
+    elif 'data_df' in st.session_state and st.session_state.data_df is not None:
+        df_for_signal = st.session_state.data_df
+    else:
+        df_for_signal = None
+
+    if df_for_signal is not None and len(df_for_signal) > 0:
+        # Get option chain and other data from session state
+        option_chain = st.session_state.get('option_chain_data')
+        vix_current = st.session_state.get('vix_current', 15.0)
+        spot_price = st.session_state.get('nifty_spot') or st.session_state.get('current_nifty_price')
+        bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
+
+        # Generate unified signal
+        signal_generator = UnifiedMLSignalGenerator()
+        unified_signal = signal_generator.generate_signal(
+            df=df_for_signal,
+            option_chain=option_chain,
+            vix_current=vix_current,
+            spot_price=spot_price,
+            bias_results=bias_results
+        )
+
+        # Store in session state for Perplexity and other uses
+        st.session_state.unified_ml_signal = unified_signal
+
+        # Display the unified signal
+        with st.expander("🤖 **UNIFIED ML TRADING SIGNAL** - Click to expand", expanded=True):
+            render_unified_signal(unified_signal, spot_price=spot_price)
+
+        st.divider()
+    else:
+        # Show loading message if no data yet
+        with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=False):
+            st.info("⏳ Loading market data... Unified signal will appear once data is available.")
+except Exception as e:
+    # Silently handle if unified signal module not available
+    pass
+
 # Check and run AI analysis if needed
 check_and_run_ai_analysis()
 
