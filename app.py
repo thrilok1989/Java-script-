@@ -5407,22 +5407,13 @@ with tab10:
                 historical_data=None
             )
 
-    except ImportError as e:
-        st.error(f"❌ Error importing NIFTY Futures UI: {e}")
-        st.info("""
-        **NIFTY Futures Analysis Not Available**
-
-        The futures analysis module is installed but may have import errors.
-        Please ensure:
-        1. src/nifty_futures_ui.py exists
-        2. src/nifty_futures_analyzer.py exists
-        3. src/nifty_futures_bias_analysis.py exists
-        4. All dependencies are installed
-        """)
-    except Exception as e:
-        st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+        except ImportError as e:
+            st.error(f"❌ Error importing NIFTY Futures UI: {e}")
+            st.info("Required: src/nifty_futures_ui.py, src/nifty_futures_analyzer.py")
+        except Exception as e:
+            st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
+    else:
+        st.info("👆 Click 'Load Futures Data' to view NIFTY Futures analysis.")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 11: AI TRAINING & MODEL MANAGEMENT
