@@ -1297,7 +1297,9 @@ with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
                 option_chain = st.session_state.get('option_chain_data')
                 vix_current = st.session_state.get('vix_current', 15.0)
                 spot_price = nifty_data.get('spot_price') if nifty_data else None
-                bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
+                # Safely get bias_results - handle None case
+                bias_analysis = st.session_state.get('bias_analysis_results')
+                bias_results = bias_analysis.get('bias_results') if isinstance(bias_analysis, dict) else None
 
                 # Use cached generator instead of creating new one
                 unified_signal = st.session_state.unified_ml_generator.generate_signal(
