@@ -533,9 +533,32 @@ with st.sidebar:
             st.success("✅ Connected")
         else:
             st.error("❌ Connection Failed")
-    
+
     st.divider()
-    
+
+    # API Rate Limiter Status
+    st.subheader("📊 API Rate Limiter")
+    try:
+        from api_request_limiter import global_rate_limiter
+        rate_status = global_rate_limiter.get_status()
+
+        if rate_status['healthy']:
+            st.success(f"✅ Healthy | {rate_status['total_requests']} requests")
+        else:
+            st.error(f"⚠️ {rate_status['message']}")
+            for cb in rate_status['circuit_breakers_active']:
+                st.warning(f"⏳ {cb['api_type']}: {cb['remaining_seconds']}s remaining")
+
+            # Reset button
+            if st.button("🔄 Reset Rate Limiter", key="reset_rate_limiter"):
+                global_rate_limiter.reset_circuit_breaker()
+                st.success("✅ Rate limiter reset!")
+                st.rerun()
+    except Exception as e:
+        st.warning(f"⚠️ Status unavailable: {e}")
+
+    st.divider()
+
     # Telegram status
     st.subheader("📱 Telegram Alerts")
     telegram_creds = get_telegram_credentials()

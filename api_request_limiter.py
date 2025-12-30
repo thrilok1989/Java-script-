@@ -50,11 +50,12 @@ class GlobalRateLimiter:
         self._lock = threading.RLock()
 
         # Rate limits (seconds between requests per endpoint type)
+        # INCREASED intervals to prevent 429 errors on Dhan API
         self.rate_limits = {
-            'quote': 1.0,        # 1 request/second (OHLC, LTP)
-            'data': 0.2,         # 5 requests/second (Historical data)
-            'option_chain': 3.0, # 1 request/3 seconds (Option chain)
-            'default': 1.0       # Default for unknown endpoints
+            'quote': 2.0,        # 1 request per 2 seconds (more conservative)
+            'data': 1.0,         # 1 request per second (reduced from 5/sec)
+            'option_chain': 5.0, # 1 request per 5 seconds (more conservative)
+            'default': 2.0       # Default for unknown endpoints
         }
 
         # Last request timestamp per endpoint
@@ -72,13 +73,17 @@ class GlobalRateLimiter:
         self._circuit_broken: Dict[str, bool] = {}
         self._circuit_break_until: Dict[str, float] = {}
         self._failure_count: Dict[str, int] = {}
-        self._max_failures = 5  # Break circuit after 5 consecutive failures
-        self._circuit_break_duration = 300.0  # 5 minutes
+        self._max_failures = 3  # Break circuit after 3 consecutive failures (reduced from 5)
+        self._circuit_break_duration = 60.0  # 60 seconds (reduced from 5 minutes)
 
         # Global request queue (all endpoints)
         self._global_queue = deque(maxlen=1000)
-        self._min_global_interval = 0.1  # Minimum 100ms between ANY requests
+        self._min_global_interval = 0.5  # Minimum 500ms between ANY requests (increased from 100ms)
         self._last_global_request = 0.0
+
+        # Startup protection - prevent burst of requests on app load
+        self._startup_time = time.time()
+        self._startup_delay = 5.0  # 5 seconds delay after startup before allowing requests
 
     def wait_for_slot(self, api_type: str) -> bool:
         """
@@ -91,6 +96,13 @@ class GlobalRateLimiter:
             True if slot acquired, False if circuit breaker is active
         """
         with self._lock:
+            # Startup protection - wait if app just started
+            time_since_startup = time.time() - self._startup_time
+            if time_since_startup < self._startup_delay:
+                wait_time = self._startup_delay - time_since_startup
+                logger.info(f"Startup protection: waiting {wait_time:.2f}s before first API call")
+                time.sleep(wait_time)
+
             # Check circuit breaker
             if self._is_circuit_broken(api_type):
                 logger.warning(f"Circuit breaker active for {api_type}. "
@@ -252,7 +264,77 @@ class GlobalRateLimiter:
             self._failure_count.clear()
             self._global_queue.clear()
             self._last_global_request = 0.0
+            self._startup_time = time.time()  # Reset startup time
             logger.info("Rate limiter state reset")
+
+    def reset_circuit_breaker(self, api_type: str = None):
+        """
+        Manually reset circuit breaker for an endpoint or all endpoints
+
+        Args:
+            api_type: Specific endpoint to reset, or None for all
+        """
+        with self._lock:
+            if api_type:
+                if api_type in self._circuit_broken:
+                    del self._circuit_broken[api_type]
+                if api_type in self._circuit_break_until:
+                    del self._circuit_break_until[api_type]
+                if api_type in self._failure_count:
+                    self._failure_count[api_type] = 0
+                if api_type in self._backoff_until:
+                    del self._backoff_until[api_type]
+                if api_type in self._backoff_count:
+                    self._backoff_count[api_type] = 0
+                logger.info(f"Circuit breaker manually reset for {api_type}")
+            else:
+                self._circuit_broken.clear()
+                self._circuit_break_until.clear()
+                self._failure_count.clear()
+                self._backoff_until.clear()
+                self._backoff_count.clear()
+                logger.info("All circuit breakers manually reset")
+
+    def get_status(self) -> Dict:
+        """
+        Get human-readable status of rate limiter
+
+        Returns:
+            Dictionary with status information
+        """
+        with self._lock:
+            status = {
+                'healthy': True,
+                'circuit_breakers_active': [],
+                'backoff_active': [],
+                'total_requests': sum(self._request_count.values()),
+                'message': 'All systems operational'
+            }
+
+            # Check for active circuit breakers
+            for api_type, is_broken in self._circuit_broken.items():
+                if is_broken:
+                    until = self._circuit_break_until.get(api_type, 0)
+                    remaining = max(0, until - time.time())
+                    status['circuit_breakers_active'].append({
+                        'api_type': api_type,
+                        'remaining_seconds': round(remaining, 1)
+                    })
+                    status['healthy'] = False
+
+            # Check for active backoffs
+            for api_type, until in self._backoff_until.items():
+                if time.time() < until:
+                    remaining = until - time.time()
+                    status['backoff_active'].append({
+                        'api_type': api_type,
+                        'remaining_seconds': round(remaining, 1)
+                    })
+
+            if not status['healthy']:
+                status['message'] = f"Circuit breaker active for: {', '.join([cb['api_type'] for cb in status['circuit_breakers_active']])}"
+
+            return status
 
 
 # Global singleton instance
