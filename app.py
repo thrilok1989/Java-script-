@@ -470,6 +470,53 @@ refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
+# ═══════════════════════════════════════════════════════════════════════
+# UNIFIED ML TRADING SIGNAL (Above all tabs)
+# ═══════════════════════════════════════════════════════════════════════
+try:
+    from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+
+    # Check if we have price data
+    if 'chart_data' in st.session_state and st.session_state.chart_data is not None:
+        df_for_signal = st.session_state.chart_data
+    elif 'data_df' in st.session_state and st.session_state.data_df is not None:
+        df_for_signal = st.session_state.data_df
+    else:
+        df_for_signal = None
+
+    if df_for_signal is not None and len(df_for_signal) > 0:
+        # Get option chain and other data from session state
+        option_chain = st.session_state.get('option_chain_data')
+        vix_current = st.session_state.get('vix_current', 15.0)
+        spot_price = st.session_state.get('nifty_spot') or st.session_state.get('current_nifty_price')
+        bias_results = st.session_state.get('bias_analysis_results', {}).get('bias_results')
+
+        # Generate unified signal
+        signal_generator = UnifiedMLSignalGenerator()
+        unified_signal = signal_generator.generate_signal(
+            df=df_for_signal,
+            option_chain=option_chain,
+            vix_current=vix_current,
+            spot_price=spot_price,
+            bias_results=bias_results
+        )
+
+        # Store in session state for Perplexity and other uses
+        st.session_state.unified_ml_signal = unified_signal
+
+        # Display the unified signal
+        with st.expander("🤖 **UNIFIED ML TRADING SIGNAL** - Click to expand", expanded=True):
+            render_unified_signal(unified_signal, spot_price=spot_price)
+
+        st.divider()
+    else:
+        # Show loading message if no data yet
+        with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=False):
+            st.info("⏳ Loading market data... Unified signal will appear once data is available.")
+except Exception as e:
+    # Silently handle if unified signal module not available
+    pass
+
 # Check and run AI analysis if needed
 check_and_run_ai_analysis()
 
@@ -533,9 +580,32 @@ with st.sidebar:
             st.success("✅ Connected")
         else:
             st.error("❌ Connection Failed")
-    
+
     st.divider()
-    
+
+    # API Rate Limiter Status
+    st.subheader("📊 API Rate Limiter")
+    try:
+        from api_request_limiter import global_rate_limiter
+        rate_status = global_rate_limiter.get_status()
+
+        if rate_status['healthy']:
+            st.success(f"✅ Healthy | {rate_status['total_requests']} requests")
+        else:
+            st.error(f"⚠️ {rate_status['message']}")
+            for cb in rate_status['circuit_breakers_active']:
+                st.warning(f"⏳ {cb['api_type']}: {cb['remaining_seconds']}s remaining")
+
+            # Reset button
+            if st.button("🔄 Reset Rate Limiter", key="reset_rate_limiter"):
+                global_rate_limiter.reset_circuit_breaker()
+                st.success("✅ Rate limiter reset!")
+                st.rerun()
+    except Exception as e:
+        st.warning(f"⚠️ Status unavailable: {e}")
+
+    st.divider()
+
     # Telegram status
     st.subheader("📱 Telegram Alerts")
     telegram_creds = get_telegram_credentials()
@@ -2887,6 +2957,77 @@ with tab6:
             st.rerun()
         else:
             st.info(f"⏱️ Next auto-refresh in {int(time_until_refresh)} seconds (auto-refresh enabled)")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # ML MARKET REGIME ANALYSIS (NEW)
+    # ═══════════════════════════════════════════════════════════════════════
+    if st.session_state.chart_data is not None and len(st.session_state.chart_data) > 0:
+        try:
+            from src.ml_market_regime import MLMarketRegimeDetector
+
+            df_for_ml = st.session_state.chart_data.copy()
+
+            # Add ATR if not present
+            if 'ATR' not in df_for_ml.columns:
+                df_for_ml['ATR'] = df_for_ml['High'] - df_for_ml['Low']
+
+            detector = MLMarketRegimeDetector()
+            ml_result = detector.detect_regime(df_for_ml)
+
+            # Display ML Regime in a prominent section
+            st.subheader("🤖 ML Market Regime Analysis")
+
+            col1, col2, col3, col4, col5 = st.columns(5)
+
+            # Color-code regime
+            regime_colors = {
+                'Trending Up': '#00FF00',
+                'TRENDING_UP': '#00FF00',
+                'Trending Down': '#FF0000',
+                'TRENDING_DOWN': '#FF0000',
+                'Range Bound': '#FFD700',
+                'RANGE_BOUND': '#FFD700',
+                'Volatile Breakout': '#FF6600',
+                'VOLATILE': '#FF6600',
+                'Consolidation': '#808080'
+            }
+            regime_color = regime_colors.get(ml_result.regime, '#FFFFFF')
+
+            with col1:
+                st.markdown(f"""
+                <div style="background-color: {regime_color}; padding: 10px; border-radius: 8px; text-align: center;">
+                    <b style="color: black; font-size: 14px;">REGIME</b><br>
+                    <span style="color: black; font-size: 16px; font-weight: bold;">{ml_result.regime}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col2:
+                st.metric("Confidence", f"{ml_result.confidence:.1f}%")
+
+            with col3:
+                st.metric("Trend Strength", f"{ml_result.trend_strength:.1f}")
+
+            with col4:
+                st.metric("Volatility", ml_result.volatility_state)
+
+            with col5:
+                st.metric("Optimal TF", ml_result.optimal_timeframe)
+
+            # Show strategy recommendation
+            st.info(f"📊 **Strategy:** {ml_result.recommended_strategy}")
+
+            # Cache the ML result for other tabs
+            st.session_state.ml_regime_result = {
+                'regime': ml_result.regime,
+                'confidence': ml_result.confidence,
+                'trend_strength': ml_result.trend_strength,
+                'volatility_state': ml_result.volatility_state,
+                'recommended_strategy': ml_result.recommended_strategy,
+                'optimal_timeframe': ml_result.optimal_timeframe
+            }
+
+        except Exception as e:
+            st.warning(f"⚠️ ML Regime Analysis unavailable: {str(e)[:100]}")
 
     st.divider()
 
