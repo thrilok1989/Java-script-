@@ -66,7 +66,12 @@ class UnifiedSignal:
     bullish_reasons: list
     bearish_reasons: list
 
-    timestamp: datetime
+    # ATM Option LTP for trade recommendation
+    atm_strike: float = 0.0
+    atm_call_ltp: float = 0.0
+    atm_put_ltp: float = 0.0
+
+    timestamp: datetime = None
 
 
 class UnifiedMLSignalGenerator:
@@ -445,6 +450,28 @@ class UnifiedMLSignalGenerator:
         # Expiry score (higher = riskier)
         scores['expiry'] = min(expiry_spike_prob, 100)
 
+        # Get ATM option LTP from session state
+        atm_strike_val = 0.0
+        atm_call_ltp = 0.0
+        atm_put_ltp = 0.0
+        try:
+            if 'merged_df' in st.session_state and st.session_state.merged_df is not None:
+                merged_df = st.session_state.merged_df
+                if 'atm_strike' in st.session_state:
+                    atm_strike_val = st.session_state.atm_strike
+                elif spot_price:
+                    # Calculate ATM strike from spot price
+                    if 'strikePrice' in merged_df.columns:
+                        atm_strike_val = min(merged_df['strikePrice'].tolist(), key=lambda x: abs(x - spot_price))
+
+                if atm_strike_val > 0:
+                    atm_row = merged_df[merged_df['strikePrice'] == atm_strike_val]
+                    if not atm_row.empty:
+                        atm_call_ltp = float(atm_row['LTP_CE'].iloc[0]) if 'LTP_CE' in atm_row.columns else 0.0
+                        atm_put_ltp = float(atm_row['LTP_PE'].iloc[0]) if 'LTP_PE' in atm_row.columns else 0.0
+        except Exception as e:
+            logger.debug(f"Could not fetch ATM LTP: {e}")
+
         return UnifiedSignal(
             signal=signal,
             confidence=confidence,
@@ -470,6 +497,9 @@ class UnifiedMLSignalGenerator:
             targets=targets,
             bullish_reasons=bullish_reasons,
             bearish_reasons=bearish_reasons,
+            atm_strike=atm_strike_val,
+            atm_call_ltp=atm_call_ltp,
+            atm_put_ltp=atm_put_ltp,
             timestamp=datetime.now()
         )
 
@@ -502,6 +532,36 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+    # Show ATM Option Recommendation based on signal
+    if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #00FF0022, #00FF0044);
+                    border: 2px solid #00FF00;
+                    border-radius: 10px;
+                    padding: 15px;
+                    text-align: center;
+                    margin-bottom: 15px;">
+            <h3 style="color: #00FF00; margin: 0;">📈 BUY ATM CALL @ ₹{signal.atm_strike:,.0f}</h3>
+            <p style="color: #90EE90; margin: 5px 0 0 0; font-size: 1.5rem; font-weight: bold;">
+                LTP: ₹{signal.atm_call_ltp:,.2f}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    elif signal.signal in ['STRONG SELL', 'SELL'] and signal.atm_put_ltp > 0:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #FF000022, #FF000044);
+                    border: 2px solid #FF0000;
+                    border-radius: 10px;
+                    padding: 15px;
+                    text-align: center;
+                    margin-bottom: 15px;">
+            <h3 style="color: #FF6347; margin: 0;">📉 BUY ATM PUT @ ₹{signal.atm_strike:,.0f}</h3>
+            <p style="color: #FFA07A; margin: 5px 0 0 0; font-size: 1.5rem; font-weight: bold;">
+                LTP: ₹{signal.atm_put_ltp:,.2f}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Metrics row 1
     col1, col2, col3, col4, col5, col6 = st.columns(6)

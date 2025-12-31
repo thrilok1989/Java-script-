@@ -5851,6 +5851,7 @@ def load_option_screener_data_silently():
         # Filter ATM window
         strike_gap = strike_gap_from_series(df_ce["strikePrice"])
         atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
+        st.session_state['atm_strike'] = atm_strike  # Store for ML signal
         lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
         upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
 
@@ -6140,15 +6141,17 @@ def render_nifty_option_screener():
     # Filter ATM window
     strike_gap = strike_gap_from_series(df_ce["strikePrice"])
     atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
+    st.session_state['atm_strike'] = atm_strike  # Store for ML signal
     lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
     upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
-    
+
     df_ce = df_ce[(df_ce["strikePrice"]>=lower) & (df_ce["strikePrice"]<=upper)].reset_index(drop=True)
     df_pe = df_pe[(df_pe["strikePrice"]>=lower) & (df_pe["strikePrice"]<=upper)].reset_index(drop=True)
-    
+
     merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
     merged["strikePrice"] = merged["strikePrice"].astype(int)
-    
+    st.session_state['merged_df'] = merged  # Store for ML signal
+
     # Session storage for prev LTP/IV
     if "prev_ltps_seller" not in st.session_state:
         st.session_state["prev_ltps_seller"] = {}
