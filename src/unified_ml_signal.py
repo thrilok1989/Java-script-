@@ -689,6 +689,40 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     </div>
     """, unsafe_allow_html=True)
 
+    # Show Spike Detector Status
+    spike_data = st.session_state.get('all_day_spike_result', {})
+    if spike_data:
+        primary_spike = spike_data.get('primary_spike', {})
+        spike_prob = primary_spike.get('probability', 0)
+        spike_type = primary_spike.get('type', 'None').replace('_', ' ').title()
+        spike_dir = primary_spike.get('direction', 'NEUTRAL')
+        active_count = spike_data.get('active_spike_count', 0)
+
+        if spike_prob > 0:
+            spike_color = "#00ff00" if spike_dir == "UP" else "#ff4444" if spike_dir == "DOWN" else "#ffaa00"
+            spike_emoji = "🚀" if spike_dir == "UP" else "📉" if spike_dir == "DOWN" else "↔️"
+
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, {spike_color}15, {spike_color}30);
+                        border: 1px solid {spike_color};
+                        border-radius: 8px;
+                        padding: 10px 15px;
+                        margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="color: {spike_color}; font-weight: 700;">{spike_emoji} SPIKE: {spike_type}</span>
+                        <span style="color: #888; margin-left: 10px;">({active_count} active)</span>
+                    </div>
+                    <div style="text-align: right;">
+                        <span style="color: {spike_color}; font-size: 1.3rem; font-weight: 900;">{spike_prob:.0f}%</span>
+                        <span style="color: #888; margin-left: 5px;">{spike_dir}</span>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.caption("💡 Visit NIFTY Option Screener tab to activate spike detection")
+
     # Show ATM Option Recommendation based on signal
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
         st.markdown(f"""
