@@ -860,16 +860,119 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     }
     phase_explanation = phase_explanations.get(market_phase, "Market in transition phase.")
 
-    # Support/Resistance from spike data if available
-    support = 0
-    resistance = 0
+    # ═══════════════════════════════════════════════════════════════════
+    # COMPREHENSIVE SUPPORT/RESISTANCE (Option Chain + Chart + Multi-TF)
+    # ═══════════════════════════════════════════════════════════════════
+    support_levels = []
+    resistance_levels = []
+
+    # 1. From ML Regime (chart-based S/R)
+    if support_resistance:
+        if support_resistance.get('near_support'):
+            support_levels.append({'price': support_resistance['near_support'], 'source': 'Chart', 'type': 'Near'})
+        if support_resistance.get('major_support'):
+            support_levels.append({'price': support_resistance['major_support'], 'source': 'Chart', 'type': 'Major'})
+        if support_resistance.get('near_resistance'):
+            resistance_levels.append({'price': support_resistance['near_resistance'], 'source': 'Chart', 'type': 'Near'})
+        if support_resistance.get('major_resistance'):
+            resistance_levels.append({'price': support_resistance['major_resistance'], 'source': 'Chart', 'type': 'Major'})
+        # All supports/resistances
+        for s in support_resistance.get('all_supports', []):
+            if s and {'price': s, 'source': 'Chart', 'type': 'Swing'} not in support_levels:
+                support_levels.append({'price': s, 'source': 'Chart', 'type': 'Swing'})
+        for r in support_resistance.get('all_resistances', []):
+            if r and {'price': r, 'source': 'Chart', 'type': 'Swing'} not in resistance_levels:
+                resistance_levels.append({'price': r, 'source': 'Chart', 'type': 'Swing'})
+
+    # 2. From Spike Detector (OI-based S/R)
     if spike_data and spike_data.get('key_levels'):
         key_levels = spike_data.get('key_levels', {})
-        support = key_levels.get('support', 0)
-        resistance = key_levels.get('resistance', 0)
-    elif support_resistance:
-        support = support_resistance.get('near_support', support_resistance.get('major_support', 0))
-        resistance = support_resistance.get('near_resistance', support_resistance.get('major_resistance', 0))
+        if key_levels.get('support'):
+            support_levels.append({'price': key_levels['support'], 'source': 'OI', 'type': 'Strike'})
+        if key_levels.get('resistance'):
+            resistance_levels.append({'price': key_levels['resistance'], 'source': 'OI', 'type': 'Strike'})
+        if key_levels.get('max_pain'):
+            mp = key_levels['max_pain']
+            if spot_price and mp < spot_price:
+                support_levels.append({'price': mp, 'source': 'MaxPain', 'type': 'Magnet'})
+            elif spot_price:
+                resistance_levels.append({'price': mp, 'source': 'MaxPain', 'type': 'Magnet'})
+
+    # 3. From Option Chain (NIFTY Option Screener data)
+    option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+    if option_data:
+        supp_data = option_data.get('support', {})
+        res_data = option_data.get('resistance', {})
+        if supp_data.get('strike'):
+            support_levels.append({'price': supp_data['strike'], 'source': 'OI-Wall', 'type': supp_data.get('strength', 'Strike')})
+        if res_data.get('strike'):
+            resistance_levels.append({'price': res_data['strike'], 'source': 'OI-Wall', 'type': res_data.get('strength', 'Strike')})
+        # Max Pain from option chain
+        max_pain = option_data.get('max_pain')
+        if max_pain and isinstance(max_pain, (int, float)):
+            if spot_price and max_pain < spot_price:
+                support_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
+            elif spot_price:
+                resistance_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
+
+    # 4. Align and merge nearby levels (within 50 points = same zone)
+    def merge_sr_levels(levels, merge_threshold=50):
+        if not levels:
+            return []
+        # Sort by price
+        sorted_levels = sorted(levels, key=lambda x: x['price'])
+        merged = []
+        current_zone = None
+
+        for lvl in sorted_levels:
+            if current_zone is None:
+                current_zone = {
+                    'prices': [lvl['price']],
+                    'sources': [lvl['source']],
+                    'types': [lvl['type']]
+                }
+            elif abs(lvl['price'] - current_zone['prices'][-1]) <= merge_threshold:
+                # Same zone - merge
+                current_zone['prices'].append(lvl['price'])
+                if lvl['source'] not in current_zone['sources']:
+                    current_zone['sources'].append(lvl['source'])
+                if lvl['type'] not in current_zone['types']:
+                    current_zone['types'].append(lvl['type'])
+            else:
+                # New zone
+                merged.append({
+                    'price': sum(current_zone['prices']) / len(current_zone['prices']),
+                    'range': (min(current_zone['prices']), max(current_zone['prices'])),
+                    'sources': current_zone['sources'],
+                    'strength': len(current_zone['prices'])  # More sources = stronger
+                })
+                current_zone = {
+                    'prices': [lvl['price']],
+                    'sources': [lvl['source']],
+                    'types': [lvl['type']]
+                }
+
+        # Don't forget last zone
+        if current_zone:
+            merged.append({
+                'price': sum(current_zone['prices']) / len(current_zone['prices']),
+                'range': (min(current_zone['prices']), max(current_zone['prices'])),
+                'sources': current_zone['sources'],
+                'strength': len(current_zone['prices'])
+            })
+        return merged
+
+    merged_supports = merge_sr_levels(support_levels)
+    merged_resistances = merge_sr_levels(resistance_levels)
+
+    # Sort by strength (strongest first) and proximity to spot
+    if spot_price:
+        merged_supports = sorted(merged_supports, key=lambda x: (-x['strength'], spot_price - x['price']))[:3]
+        merged_resistances = sorted(merged_resistances, key=lambda x: (-x['strength'], x['price'] - spot_price))[:3]
+
+    # Get primary S/R for display
+    support = merged_supports[0]['price'] if merged_supports else 0
+    resistance = merged_resistances[0]['price'] if merged_resistances else 0
 
     # Build signals text
     signals_text = ""
@@ -921,11 +1024,55 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
             <span style="color: #00d9ff;"> {recommended_strategy}</span>
         </p>
 
-        {f'<div style="margin: 10px 0;"><strong style="color: #aaa;">Key Levels:</strong> <span style="color: #00ff00;">Support: ₹{support:,.0f}</span> | <span style="color: #ff4444;">Resistance: ₹{resistance:,.0f}</span></div>' if support > 0 or resistance > 0 else ''}
-
         {f'<div style="margin-top: 10px;"><strong style="color: #aaa;">Signals:</strong><br>{signals_text}</div>' if signals_text else ''}
     </div>
     """, unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 📊 COMPREHENSIVE SUPPORT/RESISTANCE DISPLAY
+    # ═══════════════════════════════════════════════════════════════════
+    if merged_supports or merged_resistances:
+        # Build support zones HTML
+        support_html = ""
+        for i, s in enumerate(merged_supports[:3]):
+            strength_bars = "█" * min(s['strength'], 5)
+            sources = " + ".join(s['sources'])
+            zone_range = f"₹{s['range'][0]:,.0f} - ₹{s['range'][1]:,.0f}" if s['range'][0] != s['range'][1] else f"₹{s['price']:,.0f}"
+            color = "#00ff00" if i == 0 else "#90ee90" if i == 1 else "#a8e6a8"
+            support_html += f'<div style="margin: 3px 0;"><span style="color: {color};">S{i+1}: {zone_range}</span> <span style="color: #888; font-size: 0.8rem;">({sources}) {strength_bars}</span></div>'
+
+        # Build resistance zones HTML
+        resistance_html = ""
+        for i, r in enumerate(merged_resistances[:3]):
+            strength_bars = "█" * min(r['strength'], 5)
+            sources = " + ".join(r['sources'])
+            zone_range = f"₹{r['range'][0]:,.0f} - ₹{r['range'][1]:,.0f}" if r['range'][0] != r['range'][1] else f"₹{r['price']:,.0f}"
+            color = "#ff4444" if i == 0 else "#ff6b6b" if i == 1 else "#ff8a8a"
+            resistance_html += f'<div style="margin: 3px 0;"><span style="color: {color};">R{i+1}: {zone_range}</span> <span style="color: #888; font-size: 0.8rem;">({sources}) {strength_bars}</span></div>'
+
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #0d1117, #161b22);
+                    border: 1px solid #30363d;
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 10px 0;">
+            <h5 style="color: #58a6ff; margin: 0 0 10px 0;">📊 SUPPORT & RESISTANCE ZONES (Chart + OI Aligned)</h5>
+            <div style="display: flex; gap: 20px;">
+                <div style="flex: 1;">
+                    <div style="color: #00ff00; font-weight: 700; margin-bottom: 5px;">🛡️ SUPPORT ZONES</div>
+                    {support_html if support_html else '<span style="color: #888;">No support levels detected</span>'}
+                </div>
+                <div style="flex: 1;">
+                    <div style="color: #ff4444; font-weight: 700; margin-bottom: 5px;">🧱 RESISTANCE ZONES</div>
+                    {resistance_html if resistance_html else '<span style="color: #888;">No resistance levels detected</span>'}
+                </div>
+            </div>
+            <div style="color: #888; font-size: 0.75rem; margin-top: 8px;">
+                Sources: Chart (Price Action) | OI (Option Chain) | OI-Wall (Max OI Strike) | MaxPain (Pin Level)
+                <br>More █ = Stronger confluence (multiple sources agree)
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Show ATM Option Recommendation based on signal
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
