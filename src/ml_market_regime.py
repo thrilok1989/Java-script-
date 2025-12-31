@@ -1260,18 +1260,20 @@ class MLMarketRegimeDetector:
             price_low = lows.iloc[i]
 
             # Convert to float and validate
+            # Swing highs ABOVE current price = Resistance
             try:
                 if isinstance(price_high, (int, float)) and not np.isnan(price_high):
                     price_high_float = float(price_high)
-                    if price_high_float < current_price and price_high_float not in resistances:
+                    if price_high_float > current_price and price_high_float not in resistances:
                         resistances.append(price_high_float)
             except (ValueError, TypeError):
                 pass
 
+            # Swing lows BELOW current price = Support
             try:
                 if isinstance(price_low, (int, float)) and not np.isnan(price_low):
                     price_low_float = float(price_low)
-                    if price_low_float > current_price and price_low_float not in supports:
+                    if price_low_float < current_price and price_low_float not in supports:
                         supports.append(price_low_float)
             except (ValueError, TypeError):
                 pass
@@ -1323,12 +1325,63 @@ class MLMarketRegimeDetector:
                     except (ValueError, TypeError):
                         pass
 
+        # 4. Fibonacci Levels (from recent swing high/low)
+        try:
+            recent_high = df[high_col].tail(50).max()
+            recent_low = df[low_col].tail(50).min()
+            fib_range = recent_high - recent_low
+
+            # Fibonacci retracement levels
+            fib_levels = {
+                0.236: recent_high - (fib_range * 0.236),
+                0.382: recent_high - (fib_range * 0.382),
+                0.5: recent_high - (fib_range * 0.5),
+                0.618: recent_high - (fib_range * 0.618),
+                0.786: recent_high - (fib_range * 0.786),
+            }
+
+            for fib_pct, fib_price in fib_levels.items():
+                if isinstance(fib_price, (int, float)) and not np.isnan(fib_price):
+                    if fib_price < current_price:
+                        supports.append(float(fib_price))
+                    else:
+                        resistances.append(float(fib_price))
+        except Exception:
+            pass
+
+        # 5. Round number levels (psychological S/R)
+        try:
+            base = int(current_price / 100) * 100  # Round to nearest 100
+            round_levels = [base - 100, base - 50, base, base + 50, base + 100, base + 150]
+            for level in round_levels:
+                if level < current_price and level not in supports:
+                    supports.append(float(level))
+                elif level > current_price and level not in resistances:
+                    resistances.append(float(level))
+        except Exception:
+            pass
+
+        # 6. Volume-weighted levels (POC approximation)
+        try:
+            if 'volume' in df.columns or 'Volume' in df.columns:
+                vol_col = 'Volume' if 'Volume' in df.columns else 'volume'
+                # Simple volume-weighted average price zone
+                vwap_approx = (df[close_col] * df[vol_col]).tail(20).sum() / df[vol_col].tail(20).sum()
+                if isinstance(vwap_approx, (int, float)) and not np.isnan(vwap_approx):
+                    if vwap_approx < current_price:
+                        supports.append(float(vwap_approx))
+                    else:
+                        resistances.append(float(vwap_approx))
+        except Exception:
+            pass
+
         # Filter to ensure all values are floats and sort
         supports = [s for s in supports if isinstance(s, (int, float)) and not np.isnan(s) and s < current_price]
         resistances = [r for r in resistances if isinstance(r, (int, float)) and not np.isnan(r) and r > current_price]
 
-        supports = sorted(supports, reverse=True)[:5]
-        resistances = sorted(resistances)[:5]
+        # Remove duplicates and sort
+        supports = sorted(list(set(supports)), reverse=True)[:5]
+        resistances = sorted(list(set(resistances)))[:5]
 
         # Classify major vs near
         atr = df[high_col] - df[low_col]
