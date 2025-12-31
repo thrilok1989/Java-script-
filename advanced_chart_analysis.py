@@ -14,9 +14,6 @@ import pytz
 # Indian Standard Time (IST)
 IST = pytz.timezone('Asia/Kolkata')
 
-from indicators.volume_order_blocks import VolumeOrderBlocks
-from indicators.htf_support_resistance import HTFSupportResistance
-from indicators.htf_volume_footprint import HTFVolumeFootprint
 from indicators.ultimate_rsi import UltimateRSI
 from indicators.om_indicator import OMIndicator
 from indicators.liquidity_sentiment_profile import LiquiditySentimentProfile
@@ -35,9 +32,6 @@ class AdvancedChartAnalysis:
 
     def __init__(self):
         """Initialize Advanced Chart Analysis"""
-        # Indicators will be created with custom parameters when needed
-        self.htf_sr_indicator = HTFSupportResistance()
-
         # Initialize Dhan data fetcher for Indian indices
         try:
             self.dhan_fetcher = DhanDataFetcher()
@@ -209,17 +203,6 @@ class AdvancedChartAnalysis:
                 df.index = df.index.tz_convert(IST)
 
             # Create indicators with custom parameters
-            vob_indicator = None
-            if show_vob:
-                if vob_params:
-                    vob_indicator = VolumeOrderBlocks(
-                        sensitivity=vob_params.get('sensitivity', 5),
-                        mid_line=vob_params.get('mid_line', True),
-                        trend_shadow=vob_params.get('trend_shadow', True)
-                    )
-                else:
-                    vob_indicator = VolumeOrderBlocks()
-
             ultimate_rsi = None
             if show_rsi:
                 if rsi_params:
@@ -233,13 +216,6 @@ class AdvancedChartAnalysis:
                     om_indicator = OMIndicator(**om_params)
                 else:
                     om_indicator = OMIndicator()
-
-            htf_footprint = None
-            if show_footprint:
-                if footprint_params:
-                    htf_footprint = HTFVolumeFootprint(**footprint_params)
-                else:
-                    htf_footprint = HTFVolumeFootprint(bins=10, timeframe='1D', show_dynamic_poc=True)
 
             lsp_indicator = None
             if show_liquidity_profile:
@@ -280,7 +256,6 @@ class AdvancedChartAnalysis:
                     reversal_zones_indicator = ReversalProbabilityZones(swing_length=20, max_reversals=1000)
 
             # Calculate all indicators
-            vob_data = vob_indicator.calculate(df) if vob_indicator else None
             rsi_data = ultimate_rsi.get_signals(df) if ultimate_rsi else None
             om_data = om_indicator.calculate(df) if om_indicator else None
             lsp_data = lsp_indicator.calculate(df) if lsp_indicator else None
@@ -290,26 +265,6 @@ class AdvancedChartAnalysis:
             reversal_zones_data = reversal_zones_indicator.calculate(df) if reversal_zones_indicator else None
         except Exception as e:
             raise Exception(f"Error calculating indicators: {str(e)}")
-
-        # HTF Support/Resistance configuration
-        htf_levels = []
-        if show_htf_sr:
-            if htf_params and htf_params.get('levels_config'):
-                levels_config = htf_params['levels_config']
-            else:
-                # Default configuration
-                levels_config = [
-                    {'timeframe': '3T', 'length': 4, 'style': 'Solid', 'color': '#26a69a'},   # 3 min - Teal
-                    {'timeframe': '5T', 'length': 5, 'style': 'Solid', 'color': '#2196f3'},   # 5 min - Blue
-                    {'timeframe': '10T', 'length': 5, 'style': 'Solid', 'color': '#9c27b0'},  # 10 min - Purple
-                    {'timeframe': '15T', 'length': 5, 'style': 'Solid', 'color': '#ff9800'}   # 15 min - Orange
-                ]
-            htf_levels = self.htf_sr_indicator.calculate_multi_timeframe(df, levels_config)
-
-        # HTF Volume Footprint
-        footprint_data = None
-        if show_footprint and htf_footprint:
-            footprint_data = htf_footprint.calculate(df)
 
         # Create subplots based on what indicators are enabled
         if show_rsi and show_volume:
@@ -372,18 +327,6 @@ class AdvancedChartAnalysis:
             ),
             row=price_row, col=1
         )
-
-        # Add Volume Order Blocks
-        if show_vob and vob_data:
-            self._add_volume_order_blocks(fig, df, vob_data, row=price_row, col=1)
-
-        # Add HTF Support/Resistance
-        if show_htf_sr and htf_levels:
-            self._add_htf_support_resistance(fig, df, htf_levels, row=price_row, col=1)
-
-        # Add HTF Volume Footprint
-        if show_footprint and footprint_data and footprint_data['current_footprint']:
-            self._add_volume_footprint(fig, df, footprint_data, row=price_row, col=1)
 
         # Add Volume bars
         if show_volume and volume_row is not None:
@@ -449,103 +392,6 @@ class AdvancedChartAnalysis:
 
         return fig
 
-    def _add_volume_order_blocks(self, fig, df, vob_data, row, col):
-        """Add Volume Order Blocks to chart"""
-        # Add EMA lines
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=vob_data['ema1'],
-                mode='lines',
-                name='EMA Fast',
-                line=dict(color='#00bcd4', width=1),
-                opacity=0.7
-            ),
-            row=row, col=col
-        )
-
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=vob_data['ema2'],
-                mode='lines',
-                name='EMA Slow',
-                line=dict(color='#ff9800', width=1),
-                opacity=0.7
-            ),
-            row=row, col=col
-        )
-
-        # Add bullish blocks
-        for block in vob_data['bullish_blocks']:
-            if block['active']:
-                idx = block['index']
-                if idx < len(df):
-                    x_start = df.index[idx]
-                    x_end = df.index[-1]
-
-                    # Upper line
-                    fig.add_trace(
-                        go.Scatter(
-                            x=[x_start, x_end],
-                            y=[block['upper'], block['upper']],
-                            mode='lines',
-                            name=f"Bullish OB",
-                            line=dict(color='#26ba9f', width=2),
-                            showlegend=False
-                        ),
-                        row=row, col=col
-                    )
-
-                    # Lower line
-                    fig.add_trace(
-                        go.Scatter(
-                            x=[x_start, x_end],
-                            y=[block['lower'], block['lower']],
-                            mode='lines',
-                            line=dict(color='#26ba9f', width=2),
-                            fill='tonexty',
-                            fillcolor='rgba(38, 186, 159, 0.1)',
-                            showlegend=False
-                        ),
-                        row=row, col=col
-                    )
-
-        # Add bearish blocks
-        for block in vob_data['bearish_blocks']:
-            if block['active']:
-                idx = block['index']
-                if idx < len(df):
-                    x_start = df.index[idx]
-                    x_end = df.index[-1]
-
-                    # Upper line
-                    fig.add_trace(
-                        go.Scatter(
-                            x=[x_start, x_end],
-                            y=[block['upper'], block['upper']],
-                            mode='lines',
-                            name=f"Bearish OB",
-                            line=dict(color='#6626ba', width=2),
-                            showlegend=False
-                        ),
-                        row=row, col=col
-                    )
-
-                    # Lower line
-                    fig.add_trace(
-                        go.Scatter(
-                            x=[x_start, x_end],
-                            y=[block['lower'], block['lower']],
-                            mode='lines',
-                            line=dict(color='#6626ba', width=2),
-                            fill='tonexty',
-                            fillcolor='rgba(102, 38, 186, 0.1)',
-                            showlegend=False
-                        ),
-                        row=row, col=col
-                    )
-
     def _add_volume_bars(self, fig, df, row, col):
         """Add Volume bars to chart (TradingView style)"""
         # Determine bar colors based on candle direction
@@ -569,191 +415,6 @@ class AdvancedChartAnalysis:
 
         # Update volume y-axis
         fig.update_yaxes(title_text="Volume", row=row, col=col)
-
-    def _add_htf_support_resistance(self, fig, df, htf_levels, row, col):
-        """Add HTF Support/Resistance levels to chart"""
-        x_start = df.index[0]
-        x_end = df.index[-1]
-
-        # Map timeframe codes to display names
-        timeframe_display = {
-            '3T': '3 min',
-            '5T': '5 min',
-            '10T': '10 min',
-            '15T': '15 min',
-            '4H': '4H',
-            '12H': '12H',
-            'D': 'Daily',
-            'W': 'Weekly'
-        }
-
-        for level in htf_levels:
-            tf_display = timeframe_display.get(level['timeframe'], level['timeframe'])
-
-            # Add pivot high
-            if level['pivot_high'] is not None:
-                fig.add_trace(
-                    go.Scatter(
-                        x=[x_start, x_end],
-                        y=[level['pivot_high'], level['pivot_high']],
-                        mode='lines',
-                        name=f"{tf_display} Resistance",
-                        line=dict(color=level['color'], width=2, dash='dash'),
-                        showlegend=True
-                    ),
-                    row=row, col=col
-                )
-
-            # Add pivot low
-            if level['pivot_low'] is not None:
-                fig.add_trace(
-                    go.Scatter(
-                        x=[x_start, x_end],
-                        y=[level['pivot_low'], level['pivot_low']],
-                        mode='lines',
-                        name=f"{tf_display} Support",
-                        line=dict(color=level['color'], width=2, dash='dash'),
-                        showlegend=True
-                    ),
-                    row=row, col=col
-                )
-
-    def _add_volume_footprint(self, fig, df, footprint_data, row, col):
-        """Add HTF Volume Footprint to chart with volume bins and dynamic POC"""
-        # Extract the current footprint (VolumeFootprint dataclass)
-        current = footprint_data.get('current_footprint')
-        if not current:
-            return
-
-        show_dynamic_poc = footprint_data.get('show_dynamic_poc', False)
-        footprints = footprint_data.get('footprints', [])
-
-        # Get period bounds (convert bar indices to timestamps)
-        period_start = df.index[current.start_bar]
-        period_end = df.index[current.end_bar] if current.end_bar < len(df) else df.index[-1]
-        current_time = df.index[-1]
-
-        # Add Volume Profile Bins (horizontal rectangles showing volume distribution)
-        if current.levels and len(current.levels) > 0:
-            max_volume = max(level.volume for level in current.levels)
-
-            # Calculate the width for bins (proportional to timeframe)
-            time_range = (current_time - period_start).total_seconds()
-            # Make bins visible but not too wide - scale to ~10% of period
-            bin_width_seconds = time_range * 0.1
-
-            for level in current.levels:
-                if level.volume > 0:  # Only show bins with volume
-                    # Scale the bin width based on volume
-                    volume_ratio = level.volume / max_volume if max_volume > 0 else 0
-                    bin_x_end = period_start + pd.Timedelta(seconds=bin_width_seconds * volume_ratio)
-
-                    # Use different color for POC bin
-                    if level.is_poc:
-                        bin_color = 'rgba(41, 138, 218, 0.4)'  # Blue for POC
-                        border_color = '#298ada'
-                        border_width = 2
-                    else:
-                        # Gradient color based on volume
-                        intensity = int(120 + (volume_ratio * 135))  # Range from 120 to 255
-                        bin_color = f'rgba({intensity}, {intensity}, {intensity}, 0.2)'
-                        border_color = f'rgba({intensity}, {intensity}, {intensity}, 0.5)'
-                        border_width = 1
-
-                    # Add rectangle for this bin
-                    # For subplots, we need to specify xref and yref correctly
-                    if row == 1 and col == 1:
-                        xref, yref = 'x', 'y'
-                    else:
-                        xref, yref = f'x{row}', f'y{row}'
-
-                    fig.add_shape(
-                        type="rect",
-                        x0=period_start,
-                        x1=bin_x_end,
-                        y0=level.price_low,
-                        y1=level.price_high,
-                        fillcolor=bin_color,
-                        line=dict(color=border_color, width=border_width),
-                        layer='below',
-                        xref=xref,
-                        yref=yref
-                    )
-
-        # Handle POC display based on show_dynamic_poc setting
-        if show_dynamic_poc:
-            # Dynamic POC: Show POC line extending from period start to current time (real-time update)
-            fig.add_trace(
-                go.Scatter(
-                    x=[period_start, current_time],
-                    y=[current.poc_price, current.poc_price],
-                    mode='lines',
-                    name='Dynamic POC',
-                    line=dict(color='#298ada', width=3, dash='solid'),
-                    showlegend=True
-                ),
-                row=row, col=col
-            )
-        else:
-            # Static POC: Show historical POC lines for all completed periods
-            for footprint in footprints[:-1]:  # All except current
-                fp_start = df.index[footprint.start_bar]
-                fp_end = df.index[footprint.end_bar] if footprint.end_bar < len(df) else df.index[-1]
-                fig.add_trace(
-                    go.Scatter(
-                        x=[fp_start, fp_end],
-                        y=[footprint.poc_price, footprint.poc_price],
-                        mode='lines',
-                        name='Historical POC',
-                        line=dict(color='#298ada', width=2, dash='dash'),
-                        showlegend=False
-                    ),
-                    row=row, col=col
-                )
-
-            # Also show current period POC
-            fig.add_trace(
-                go.Scatter(
-                    x=[period_start, current_time],
-                    y=[current.poc_price, current.poc_price],
-                    mode='lines',
-                    name='POC (Point of Control)',
-                    line=dict(color='#298ada', width=3, dash='solid'),
-                    showlegend=True
-                ),
-                row=row, col=col
-            )
-
-        # Add Value Area (same for both dynamic and static)
-        value_area_high = footprint_data.get('value_area_high')
-        value_area_low = footprint_data.get('value_area_low')
-
-        if value_area_high is not None and value_area_low is not None:
-            fig.add_trace(
-                go.Scatter(
-                    x=[period_start, current_time],
-                    y=[value_area_high, value_area_high],
-                    mode='lines',
-                    name='Value Area High',
-                    line=dict(color='#64b5f6', width=1, dash='dot'),
-                    showlegend=False
-                ),
-                row=row, col=col
-            )
-
-            fig.add_trace(
-                go.Scatter(
-                    x=[period_start, current_time],
-                    y=[value_area_low, value_area_low],
-                    mode='lines',
-                    name='Value Area Low',
-                    line=dict(color='#64b5f6', width=1, dash='dot'),
-                    fill='tonexty',
-                    fillcolor='rgba(100, 181, 246, 0.1)',
-                    showlegend=False
-                ),
-                row=row, col=col
-            )
 
     def _add_ultimate_rsi(self, fig, df, rsi_data, row, col):
         """Add Ultimate RSI indicator to chart"""
