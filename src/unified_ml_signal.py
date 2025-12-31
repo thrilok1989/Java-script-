@@ -418,31 +418,101 @@ class UnifiedMLSignalGenerator:
             except Exception as e:
                 logger.warning(f"XGBoost prediction failed: {e}")
 
+        # 8. ALL-DAY SPIKE DETECTION (from NIFTY Option Screener)
+        # This overrides range-bound signals when high probability spikes are detected
+        scores['spike'] = 0
+        spike_detected = False
+        spike_direction = None
+        spike_probability = 0
+
+        try:
+            # Get spike data from session state (set by NIFTY Option Screener)
+            if 'all_day_spike_result' in st.session_state and st.session_state.all_day_spike_result:
+                spike_result = st.session_state.all_day_spike_result
+
+                # Check for active spikes
+                active_spikes = spike_result.get('active_spikes', [])
+                overall_spike_prob = spike_result.get('overall_spike_probability', 0)
+                dominant_direction = spike_result.get('dominant_direction', 'NEUTRAL')
+
+                if active_spikes and overall_spike_prob > 40:
+                    spike_detected = True
+                    spike_probability = overall_spike_prob
+
+                    # Get highest probability spike
+                    best_spike = max(active_spikes, key=lambda x: x.get('probability', 0))
+                    spike_type = best_spike.get('type', 'Unknown')
+                    spike_prob = best_spike.get('probability', 0)
+                    spike_dir = best_spike.get('direction', dominant_direction)
+
+                    # Score based on direction
+                    if spike_dir == 'UP' or spike_dir == 'BULLISH':
+                        scores['spike'] = min(spike_prob * 1.2, 100)
+                        spike_direction = 'UP'
+                        bullish_reasons.append(f"🚀 {spike_type} Spike: {spike_prob:.0f}% - Expect UP move")
+                    elif spike_dir == 'DOWN' or spike_dir == 'BEARISH':
+                        scores['spike'] = -min(spike_prob * 1.2, 100)
+                        spike_direction = 'DOWN'
+                        bearish_reasons.append(f"📉 {spike_type} Spike: {spike_prob:.0f}% - Expect DOWN move")
+
+                    # If spike probability is very high (>70%), override regime
+                    if spike_prob > 70:
+                        if spike_direction == 'UP':
+                            regime_name = f"SPIKE UP ({spike_prob:.0f}%)"
+                            strategy = f"Buy {spike_type} - High probability UP spike"
+                        else:
+                            regime_name = f"SPIKE DOWN ({spike_prob:.0f}%)"
+                            strategy = f"Sell {spike_type} - High probability DOWN spike"
+
+                # Check support/resistance spikes
+                support_spike = spike_result.get('support_spike', {})
+                resistance_spike = spike_result.get('resistance_spike', {})
+
+                if support_spike and support_spike.get('probability', 0) > 50:
+                    supp_prob = support_spike['probability']
+                    scores['spike'] += min(supp_prob * 0.5, 40)
+                    bullish_reasons.append(f"🛡️ Support Spike: {supp_prob:.0f}% at ₹{support_spike.get('level', 0):,.0f}")
+
+                if resistance_spike and resistance_spike.get('probability', 0) > 50:
+                    res_prob = resistance_spike['probability']
+                    scores['spike'] -= min(res_prob * 0.5, 40)
+                    bearish_reasons.append(f"🧱 Resistance Spike: {res_prob:.0f}% at ₹{resistance_spike.get('level', 0):,.0f}")
+
+        except Exception as e:
+            logger.warning(f"Spike detection integration failed: {e}")
+
         # Calculate weighted final score
         weights = {
-            'regime': 0.25,      # 25%
-            'xgboost': 0.20,     # 20% (if trained)
+            'regime': 0.20,      # 20% (reduced to make room for spike)
+            'xgboost': 0.15,     # 15% (if trained)
             'volatility': 0.10,  # 10%
             'oi_trap': 0.15,     # 15%
-            'cvd': 0.15,         # 15%
+            'cvd': 0.10,         # 10%
             'liquidity': 0.10,   # 10%
-            'institutional': 0.05  # 5%
+            'institutional': 0.05,  # 5%
+            'spike': 0.15        # 15% - NEW spike detection weight
         }
 
         # Adjust weights if XGBoost not trained
         if not (self.xgboost_analyzer and getattr(self.xgboost_analyzer, 'is_trained', False)):
             weights['xgboost'] = 0
-            weights['regime'] = 0.35
+            weights['regime'] = 0.25
             weights['oi_trap'] = 0.20
-            weights['cvd'] = 0.20
+            weights['cvd'] = 0.15
+            weights['spike'] = 0.20  # Increase spike weight when XGBoost not available
+
+        # If high probability spike detected, boost spike weight significantly
+        if spike_detected and spike_probability > 60:
+            weights['spike'] = 0.30  # 30% weight for strong spikes
+            weights['regime'] = 0.15  # Reduce regime weight
 
         # Normalize weights
         total_weight = sum(weights.values())
         if total_weight > 0:
             weights = {k: v / total_weight for k, v in weights.items()}
 
-        # Calculate final score
-        final_score = sum(scores[k] * weights[k] for k in scores.keys())
+        # Calculate final score (only use keys that exist in both scores and weights)
+        final_score = sum(scores.get(k, 0) * weights.get(k, 0) for k in weights.keys())
 
         # Determine signal
         if final_score >= 50:

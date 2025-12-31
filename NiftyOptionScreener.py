@@ -6387,6 +6387,35 @@ def render_nifty_option_screener():
     oi_pcr_metrics = analyze_oi_pcr_metrics(merged, spot, atm_strike)
 
     # ============================================
+    # 🎯 RUN ALL-DAY SPIKE DETECTION FOR ML SIGNAL
+    # ============================================
+    try:
+        all_day_spike_result = detect_all_market_spikes(
+            merged_df=merged,
+            spot=spot,
+            atm_strike=atm_strike,
+            days_to_expiry=days_to_expiry,
+            total_gex_net=total_gex_net
+        )
+        # Store for ML Signal integration
+        st.session_state['all_day_spike_result'] = {
+            'primary_spike': all_day_spike_result.get('primary_spike', {}),
+            'active_spikes': all_day_spike_result.get('all_spikes', []),
+            'active_spike_count': all_day_spike_result.get('active_spike_count', 0),
+            'overall_spike_probability': all_day_spike_result.get('primary_spike', {}).get('probability', 0),
+            'dominant_direction': all_day_spike_result.get('primary_spike', {}).get('direction', 'NEUTRAL'),
+            'support_spike': all_day_spike_result.get('support_spike', {}),
+            'resistance_spike': all_day_spike_result.get('resistance_spike', {}),
+            'time_analysis': all_day_spike_result.get('time_analysis', {}),
+            'recommendation': all_day_spike_result.get('recommendation', ''),
+            'key_levels': all_day_spike_result.get('key_levels', {}),
+            'timestamp': datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.warning(f"All-day spike detection failed: {e}")
+        st.session_state['all_day_spike_result'] = None
+
+    # ============================================
     # 💾 EXPORT DATA TO SESSION STATE FOR ML MARKET REGIME
     # ============================================
     # Store comprehensive option chain data for ML Market Regime integration
@@ -7045,6 +7074,21 @@ def render_nifty_option_screener():
                 days_to_expiry=days_to_expiry,
                 total_gex_net=total_gex_net
             )
+
+            # Store spike result in session state for ML Signal integration
+            st.session_state['all_day_spike_result'] = {
+                'primary_spike': spike_result.get('primary_spike', {}),
+                'active_spikes': spike_result.get('all_spikes', []),
+                'active_spike_count': spike_result.get('active_spike_count', 0),
+                'overall_spike_probability': spike_result.get('primary_spike', {}).get('probability', 0),
+                'dominant_direction': spike_result.get('primary_spike', {}).get('direction', 'NEUTRAL'),
+                'support_spike': spike_result.get('support_spike', {}),
+                'resistance_spike': spike_result.get('resistance_spike', {}),
+                'time_analysis': spike_result.get('time_analysis', {}),
+                'recommendation': spike_result.get('recommendation', ''),
+                'key_levels': spike_result.get('key_levels', {}),
+                'timestamp': datetime.now().isoformat()
+            }
 
             # Display primary spike
             col_main1, col_main2, col_main3 = st.columns(3)
