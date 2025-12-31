@@ -1013,6 +1013,35 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     with col7:
         st.markdown(f"**Timeframe:** {optimal_timeframe}")
 
+    # Row 4: Trading Range (S/R from Option Chain + Chart)
+    primary_supp = merged_supports[0]['price'] if merged_supports else 0
+    primary_res = merged_resistances[0]['price'] if merged_resistances else 0
+    range_size = abs(primary_res - primary_supp) if primary_supp and primary_res else 0
+
+    if primary_supp > 0 or primary_res > 0:
+        st.markdown("---")
+        st.markdown("**📊 TRADING RANGE (OI + Chart Aligned)**")
+        col_s, col_r, col_range = st.columns(3)
+        with col_s:
+            supp_sources = " + ".join(merged_supports[0]['sources']) if merged_supports else "N/A"
+            st.metric("🛡️ Support", f"₹{primary_supp:,.0f}", delta=None, help=f"Sources: {supp_sources}")
+        with col_r:
+            res_sources = " + ".join(merged_resistances[0]['sources']) if merged_resistances else "N/A"
+            st.metric("🧱 Resistance", f"₹{primary_res:,.0f}", delta=None, help=f"Sources: {res_sources}")
+        with col_range:
+            st.metric("📏 Range", f"{range_size:,.0f} pts", delta=None)
+
+        # Show current position in range
+        if spot_price and primary_supp and primary_res and range_size > 0:
+            position_pct = ((spot_price - primary_supp) / range_size) * 100
+            position_pct = max(0, min(100, position_pct))  # Clamp 0-100
+            if position_pct > 70:
+                st.warning(f"⚠️ Price near RESISTANCE ({position_pct:.0f}% of range) - Watch for rejection")
+            elif position_pct < 30:
+                st.warning(f"⚠️ Price near SUPPORT ({position_pct:.0f}% of range) - Watch for bounce")
+            else:
+                st.info(f"📍 Price at {position_pct:.0f}% of range (Mid-zone)")
+
     # Recommended Strategy
     st.info(f"📌 **Recommended Strategy:** {recommended_strategy}")
 
