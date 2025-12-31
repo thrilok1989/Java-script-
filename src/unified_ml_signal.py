@@ -514,17 +514,61 @@ class UnifiedMLSignalGenerator:
         # Calculate final score (only use keys that exist in both scores and weights)
         final_score = sum(scores.get(k, 0) * weights.get(k, 0) for k in weights.keys())
 
-        # Determine signal
-        if final_score >= 50:
+        # BOOST: If spike is detected with high probability, amplify the signal
+        if spike_detected and spike_probability > 50:
+            if spike_direction == 'UP':
+                final_score += spike_probability * 0.5  # Add up to 50 points
+            elif spike_direction == 'DOWN':
+                final_score -= spike_probability * 0.5  # Subtract up to 50 points
+
+        # BOOST: Use ATM Bias from session state to influence signal
+        try:
+            if 'overall_option_data' in st.session_state:
+                option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+                atm_bias_data = option_data.get('atm_bias', {})
+                atm_verdict = atm_bias_data.get('verdict', 'NEUTRAL')
+                atm_score = atm_bias_data.get('score', 0)
+
+                if atm_verdict == 'BULLISH' or atm_score > 0.3:
+                    final_score += 15
+                    if 'ATM Bias Bullish' not in [r for r in bullish_reasons]:
+                        bullish_reasons.append(f"ATM Bias: {atm_verdict} ({atm_score:.2f})")
+                elif atm_verdict == 'BEARISH' or atm_score < -0.3:
+                    final_score -= 15
+                    if 'ATM Bias Bearish' not in [r for r in bearish_reasons]:
+                        bearish_reasons.append(f"ATM Bias: {atm_verdict} ({atm_score:.2f})")
+
+                # Use seller bias
+                seller_bias = option_data.get('seller_bias', 'NEUTRAL')
+                if seller_bias == 'BULLISH':
+                    final_score += 10
+                    bullish_reasons.append("Sellers favor BULLISH")
+                elif seller_bias == 'BEARISH':
+                    final_score -= 10
+                    bearish_reasons.append("Sellers favor BEARISH")
+        except Exception:
+            pass
+
+        # Determine signal with LOWER thresholds for more responsiveness
+        if final_score >= 35:
             signal = "STRONG BUY"
-        elif final_score >= 25:
+        elif final_score >= 15:
             signal = "BUY"
-        elif final_score <= -50:
+        elif final_score <= -35:
             signal = "STRONG SELL"
-        elif final_score <= -25:
+        elif final_score <= -15:
             signal = "SELL"
         else:
             signal = "HOLD"
+
+        # OVERRIDE: High probability spike forces signal even in "HOLD" range
+        if spike_detected and spike_probability > 60 and signal == "HOLD":
+            if spike_direction == 'UP':
+                signal = "BUY"
+                bullish_reasons.append(f"⚡ Spike Override: {spike_probability:.0f}% UP probability")
+            elif spike_direction == 'DOWN':
+                signal = "SELL"
+                bearish_reasons.append(f"⚡ Spike Override: {spike_probability:.0f}% DOWN probability")
 
         # Calculate confidence
         confidence = min(abs(final_score) + 50, 100)
