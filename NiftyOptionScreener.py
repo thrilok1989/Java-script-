@@ -6056,11 +6056,13 @@ def render_nifty_option_screener():
             st.stop()
 
         expiry = st.selectbox("Select expiry", expiries, index=0, key="nifty_screener_expiry_selector")
-    
+        st.session_state['current_expiry'] = expiry  # Store for main dashboard
+
     with col2:
         if spot > 0:
             st.metric("NIFTY Spot", f"₹{spot:.2f}")
             st.metric("Expiry", expiry)
+            st.session_state['nifty_spot'] = spot  # Store for main dashboard
     
     # Calculate days to expiry
     try:

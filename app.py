@@ -1104,15 +1104,42 @@ if False and should_run_signal_check and (current_time - st.session_state.last_h
         # Silently fail - don't disrupt the app
         pass
 
-# Display market data
+# Display market data - Use session state fallbacks from NIFTY Option Screener
 col1, col2, col3, col4 = st.columns(4)
 
+# Get fallback values from session state (set by NIFTY Option Screener)
+fallback_spot = None
+fallback_atm = None
+fallback_expiry = None
+
+# Check nifty_spot directly from screener
+if 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
+    fallback_spot = st.session_state['nifty_spot']
+
+# Check overall_option_data for additional fallback
+if 'overall_option_data' in st.session_state:
+    option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+    if option_data.get('spot') and not fallback_spot:
+        fallback_spot = option_data['spot']
+    if option_data.get('atm_strike'):
+        fallback_atm = option_data['atm_strike']
+
+if 'atm_strike' in st.session_state and st.session_state['atm_strike']:
+    fallback_atm = st.session_state['atm_strike']
+
+if 'current_expiry' in st.session_state and st.session_state.get('current_expiry'):
+    fallback_expiry = st.session_state['current_expiry']
+
+# Determine actual values to display (prefer nifty_data, fallback to session state)
+display_spot = nifty_data.get('spot_price') if nifty_data.get('spot_price') not in [None, 0] else fallback_spot
+display_atm = nifty_data.get('atm_strike') if nifty_data.get('atm_strike') not in [None, 0] else fallback_atm
+display_expiry = nifty_data.get('current_expiry') if nifty_data.get('current_expiry') not in [None, 'N/A'] else fallback_expiry
+
 with col1:
-    # Handle None or 0 values for spot price
-    if nifty_data.get('spot_price') is not None and nifty_data['spot_price'] != 0:
+    if display_spot is not None and display_spot != 0:
         st.metric(
             "NIFTY Spot",
-            f"₹{nifty_data['spot_price']:,.2f}",
+            f"₹{display_spot:,.2f}",
             delta=None
         )
     else:
@@ -1125,11 +1152,10 @@ with col1:
             st.error(f"⚠️ {nifty_data['error']}")
 
 with col2:
-    # Handle None or 0 values for ATM strike
-    if nifty_data.get('atm_strike') is not None and nifty_data['atm_strike'] != 0:
+    if display_atm is not None and display_atm != 0:
         st.metric(
             "ATM Strike",
-            f"{nifty_data['atm_strike']}"
+            f"{display_atm}"
         )
     else:
         st.metric(
@@ -1140,7 +1166,7 @@ with col2:
 with col3:
     st.metric(
         "Current Expiry",
-        nifty_data.get('current_expiry', 'N/A')
+        display_expiry if display_expiry else 'N/A'
     )
 
 with col4:
