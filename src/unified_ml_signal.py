@@ -767,6 +767,117 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     else:
         st.caption("💡 Visit NIFTY Option Screener tab to activate spike detection")
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 📊 COMPREHENSIVE MARKET ASSESSMENT
+    # ═══════════════════════════════════════════════════════════════════
+    try:
+        option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+        if option_data:
+            # Get all the data
+            atm_bias_data = option_data.get('atm_bias', {})
+            atm_verdict = atm_bias_data.get('verdict', 'NEUTRAL')
+            atm_score = atm_bias_data.get('score', 0)
+
+            seller_bias = option_data.get('seller_bias', 'NEUTRAL')
+            seller_confidence = option_data.get('seller_confidence', 50)
+
+            pcr = option_data.get('pcr', 1.0)
+            total_ce_oi = option_data.get('total_ce_oi', 0)
+            total_pe_oi = option_data.get('total_pe_oi', 0)
+
+            support_data = option_data.get('support', {})
+            resistance_data = option_data.get('resistance', {})
+            support_strike = support_data.get('strike', 0)
+            resistance_strike = resistance_data.get('strike', 0)
+
+            max_pain = option_data.get('max_pain', 0)
+            spot = option_data.get('spot', 0)
+
+            # Get moment metrics
+            moment_score = option_data.get('moment_score', 0)
+            moment_verdict = option_data.get('moment_verdict', 'NEUTRAL')
+
+            # PCR interpretation
+            if pcr >= 1.5:
+                pcr_text = "STRONG BULLISH"
+                pcr_color = "#00ff00"
+            elif pcr >= 1.2:
+                pcr_text = "MILD BULLISH"
+                pcr_color = "#90ee90"
+            elif pcr <= 0.7:
+                pcr_text = "STRONG BEARISH"
+                pcr_color = "#ff4444"
+            elif pcr <= 0.9:
+                pcr_text = "MILD BEARISH"
+                pcr_color = "#ffa07a"
+            else:
+                pcr_text = "NEUTRAL"
+                pcr_color = "#ffaa00"
+
+            # Seller narrative
+            if seller_bias == 'BULLISH':
+                seller_narrative = "Sellers aggressively WRITING PUTS (bullish conviction). Expecting price to STAY ABOVE strikes."
+                game_plan = "Bullish breakout likely. Sellers confident in upside."
+            elif seller_bias == 'BEARISH':
+                seller_narrative = "Sellers aggressively WRITING CALLS (bearish conviction). Expecting price to STAY BELOW strikes."
+                game_plan = "Bearish breakdown likely. Sellers confident in downside."
+            else:
+                seller_narrative = "Sellers balanced on both sides. No clear directional conviction."
+                game_plan = "Range-bound action expected. Watch for breakout triggers."
+
+            # ATM Bias emoji
+            atm_emoji = "🐂" if atm_verdict == "BULLISH" else "🐻" if atm_verdict == "BEARISH" else "⚖️"
+
+            # Build the assessment HTML
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #1a1a2e, #16213e);
+                        border: 1px solid #0f3460;
+                        border-radius: 10px;
+                        padding: 15px;
+                        margin: 15px 0;">
+                <h4 style="color: #e94560; margin: 0 0 10px 0;">📊 FINAL ASSESSMENT (Seller + ATM Bias + Moment + OI/PCR)</h4>
+
+                <p style="color: #eee; margin: 8px 0;">
+                    <strong style="color: #00d9ff;">Market Makers are telling us:</strong> {seller_narrative}
+                </p>
+
+                <p style="color: #aaa; margin: 8px 0;">
+                    <strong>ATM Zone Analysis:</strong> ATM Bias: {atm_emoji} {atm_verdict} ({atm_score:.2f} score)
+                </p>
+
+                <p style="color: #ffd700; margin: 8px 0;">
+                    <strong>Their game plan:</strong> {game_plan}
+                </p>
+
+                <p style="color: #aaa; margin: 8px 0;">
+                    <strong>Moment Detector:</strong> Score: {moment_score:.0f}/100 | Verdict: {moment_verdict}
+                </p>
+
+                <p style="color: #aaa; margin: 8px 0;">
+                    <strong>OI/PCR Analysis:</strong>
+                    <span style="color: {pcr_color};">PCR: {pcr:.2f} ({pcr_text})</span> |
+                    CALL OI: {total_ce_oi:,.0f} | PUT OI: {total_pe_oi:,.0f}
+                </p>
+
+                <p style="color: #aaa; margin: 8px 0;">
+                    <strong>Expiry Context:</strong> Expiry in {signal.days_to_expiry:.1f} days
+                </p>
+
+                <p style="color: #aaa; margin: 8px 0;">
+                    <strong>Key defense levels:</strong>
+                    <span style="color: #00ff00;">₹{support_strike:,.0f} (Support)</span> |
+                    <span style="color: #ff4444;">₹{resistance_strike:,.0f} (Resistance)</span>
+                </p>
+
+                <p style="color: #aaa; margin: 8px 0;">
+                    <strong>Preferred price level:</strong>
+                    <span style="color: #ffd700;">₹{max_pain:,.0f} (Max Pain)</span>
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+    except Exception as e:
+        pass  # Silently fail if data not available
+
     # Show ATM Option Recommendation based on signal
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
         st.markdown(f"""
