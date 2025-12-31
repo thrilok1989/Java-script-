@@ -5816,8 +5816,13 @@ def load_option_screener_data_silently():
     Returns True on success, False on failure
     """
     try:
-        # Fetch spot price
-        spot = get_nifty_spot_price()
+        # Use shared spot price from session state if available (avoids redundant API calls)
+        spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
+
+        # If not available, fetch from API
+        if spot == 0 or spot is None:
+            spot = get_nifty_spot_price()
+
         if spot == 0.0:
             return False
 
@@ -6082,11 +6087,17 @@ def render_nifty_option_screener():
             st.cache_data.clear()
             st.rerun()
     
-    # Fetch data
+    # Fetch data - Use shared spot price from session state if available (avoids redundant API calls)
     col1, col2 = st.columns([1, 2])
     with col1:
-        with st.spinner("Fetching NIFTY spot..."):
-            spot = get_nifty_spot_price()
+        # First check if spot price is already in session state from main app
+        spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
+
+        # If not available, fetch from API (with caching)
+        if spot == 0 or spot is None:
+            with st.spinner("Fetching NIFTY spot..."):
+                spot = get_nifty_spot_price()
+
         if spot == 0.0:
             st.error("Unable to fetch NIFTY spot")
             st.stop()
