@@ -287,10 +287,28 @@ class UnifiedMLSignalGenerator:
                 df['ATR'] = 50  # Default ATR if columns missing
 
         # 1. ML Market Regime
+        regime_result = None
         if self.regime_detector:
             try:
                 regime_result = self.regime_detector.detect_regime(df)
                 regime_name = regime_result.regime
+
+                # Store full regime result in session state for display
+                st.session_state['ml_regime_result'] = {
+                    'regime': regime_result.regime,
+                    'confidence': regime_result.confidence,
+                    'trend_strength': regime_result.trend_strength,
+                    'volatility_state': regime_result.volatility_state,
+                    'market_phase': regime_result.market_phase,
+                    'recommended_strategy': regime_result.recommended_strategy,
+                    'optimal_timeframe': regime_result.optimal_timeframe,
+                    'signals': regime_result.signals if hasattr(regime_result, 'signals') else [],
+                    'trading_sentiment': getattr(regime_result, 'trading_sentiment', 'NEUTRAL'),
+                    'sentiment_confidence': getattr(regime_result, 'sentiment_confidence', 0),
+                    'sentiment_score': getattr(regime_result, 'sentiment_score', 0),
+                    'support_resistance': getattr(regime_result, 'support_resistance', {}),
+                    'entry_exit_signals': getattr(regime_result, 'entry_exit_signals', {})
+                }
 
                 # Convert regime to score (-100 to +100)
                 if 'Up' in regime_name or 'BULLISH' in regime_name.upper():
@@ -768,115 +786,117 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         st.caption("💡 Visit NIFTY Option Screener tab to activate spike detection")
 
     # ═══════════════════════════════════════════════════════════════════
-    # 📊 COMPREHENSIVE MARKET ASSESSMENT
+    # 📊 ML MARKET REGIME ASSESSMENT
     # ═══════════════════════════════════════════════════════════════════
     try:
-        option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
-        if option_data:
-            # Get all the data
-            atm_bias_data = option_data.get('atm_bias', {})
-            atm_verdict = atm_bias_data.get('verdict', 'NEUTRAL')
-            atm_score = atm_bias_data.get('score', 0)
+        regime_data = st.session_state.get('ml_regime_result', {})
+        if regime_data:
+            regime = regime_data.get('regime', 'Unknown')
+            confidence = regime_data.get('confidence', 0)
+            trend_strength = regime_data.get('trend_strength', 0)
+            volatility_state = regime_data.get('volatility_state', 'Normal')
+            market_phase = regime_data.get('market_phase', 'Unknown')
+            recommended_strategy = regime_data.get('recommended_strategy', '')
+            optimal_timeframe = regime_data.get('optimal_timeframe', 'Intraday')
+            signals = regime_data.get('signals', [])
+            trading_sentiment = regime_data.get('trading_sentiment', 'NEUTRAL')
+            sentiment_score = regime_data.get('sentiment_score', 0)
+            support_resistance = regime_data.get('support_resistance', {})
+            entry_exit = regime_data.get('entry_exit_signals', {})
 
-            seller_bias = option_data.get('seller_bias', 'NEUTRAL')
-            seller_confidence = option_data.get('seller_confidence', 50)
-
-            pcr = option_data.get('pcr', 1.0)
-            total_ce_oi = option_data.get('total_ce_oi', 0)
-            total_pe_oi = option_data.get('total_pe_oi', 0)
-
-            support_data = option_data.get('support', {})
-            resistance_data = option_data.get('resistance', {})
-            support_strike = support_data.get('strike', 0)
-            resistance_strike = resistance_data.get('strike', 0)
-
-            max_pain = option_data.get('max_pain', 0)
-            spot = option_data.get('spot', 0)
-
-            # Get moment metrics
-            moment_score = option_data.get('moment_score', 0)
-            moment_verdict = option_data.get('moment_verdict', 'NEUTRAL')
-
-            # PCR interpretation
-            if pcr >= 1.5:
-                pcr_text = "STRONG BULLISH"
-                pcr_color = "#00ff00"
-            elif pcr >= 1.2:
-                pcr_text = "MILD BULLISH"
-                pcr_color = "#90ee90"
-            elif pcr <= 0.7:
-                pcr_text = "STRONG BEARISH"
-                pcr_color = "#ff4444"
-            elif pcr <= 0.9:
-                pcr_text = "MILD BEARISH"
-                pcr_color = "#ffa07a"
+            # Regime color
+            if 'Up' in regime or 'Bullish' in regime:
+                regime_color = "#00ff00"
+                regime_emoji = "🐂"
+            elif 'Down' in regime or 'Bearish' in regime:
+                regime_color = "#ff4444"
+                regime_emoji = "🐻"
+            elif 'Breakout' in regime:
+                regime_color = "#ffa500"
+                regime_emoji = "🚀"
             else:
-                pcr_text = "NEUTRAL"
-                pcr_color = "#ffaa00"
+                regime_color = "#ffaa00"
+                regime_emoji = "↔️"
 
-            # Seller narrative
-            if seller_bias == 'BULLISH':
-                seller_narrative = "Sellers aggressively WRITING PUTS (bullish conviction). Expecting price to STAY ABOVE strikes."
-                game_plan = "Bullish breakout likely. Sellers confident in upside."
-            elif seller_bias == 'BEARISH':
-                seller_narrative = "Sellers aggressively WRITING CALLS (bearish conviction). Expecting price to STAY BELOW strikes."
-                game_plan = "Bearish breakdown likely. Sellers confident in downside."
+            # Sentiment color
+            if 'LONG' in trading_sentiment:
+                sent_color = "#00ff00"
+            elif 'SHORT' in trading_sentiment:
+                sent_color = "#ff4444"
             else:
-                seller_narrative = "Sellers balanced on both sides. No clear directional conviction."
-                game_plan = "Range-bound action expected. Watch for breakout triggers."
+                sent_color = "#ffaa00"
 
-            # ATM Bias emoji
-            atm_emoji = "🐂" if atm_verdict == "BULLISH" else "🐻" if atm_verdict == "BEARISH" else "⚖️"
+            # Market phase explanation
+            phase_explanations = {
+                'Accumulation': "Smart money buying. Expect upward breakout soon.",
+                'Markup': "Trending up. Follow the momentum, buy dips.",
+                'Distribution': "Smart money selling. Expect downward breakdown.",
+                'Markdown': "Trending down. Sell rallies, avoid longs.",
+                'Consolidation': "Range-bound. Trade the range or wait for breakout."
+            }
+            phase_explanation = phase_explanations.get(market_phase, "Market in transition phase.")
 
-            # Build the assessment HTML
+            # Support/Resistance
+            support = support_resistance.get('near_support', support_resistance.get('major_support', 0)) if support_resistance else 0
+            resistance = support_resistance.get('near_resistance', support_resistance.get('major_resistance', 0)) if support_resistance else 0
+
+            # Build signals text
+            signals_text = ""
+            if signals:
+                for sig in signals[:4]:  # Show max 4 signals
+                    sig_color = "#00ff00" if "bull" in sig.lower() or "buy" in sig.lower() or "up" in sig.lower() else "#ff4444" if "bear" in sig.lower() or "sell" in sig.lower() or "down" in sig.lower() else "#aaa"
+                    signals_text += f'<span style="color: {sig_color};">• {sig}</span><br>'
+
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #1a1a2e, #16213e);
                         border: 1px solid #0f3460;
                         border-radius: 10px;
                         padding: 15px;
                         margin: 15px 0;">
-                <h4 style="color: #e94560; margin: 0 0 10px 0;">📊 FINAL ASSESSMENT (Seller + ATM Bias + Moment + OI/PCR)</h4>
+                <h4 style="color: #e94560; margin: 0 0 10px 0;">📊 ML MARKET REGIME ASSESSMENT</h4>
+
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                    <div>
+                        <span style="color: #888;">Regime:</span>
+                        <span style="color: {regime_color}; font-weight: 700; font-size: 1.2rem;"> {regime_emoji} {regime}</span>
+                    </div>
+                    <div>
+                        <span style="color: #888;">Confidence:</span>
+                        <span style="color: {regime_color}; font-weight: 700;"> {confidence:.0f}%</span>
+                    </div>
+                </div>
 
                 <p style="color: #eee; margin: 8px 0;">
-                    <strong style="color: #00d9ff;">Market Makers are telling us:</strong> {seller_narrative}
+                    <strong style="color: #00d9ff;">Market Phase:</strong> {market_phase}
                 </p>
-
-                <p style="color: #aaa; margin: 8px 0;">
-                    <strong>ATM Zone Analysis:</strong> ATM Bias: {atm_emoji} {atm_verdict} ({atm_score:.2f} score)
-                </p>
-
                 <p style="color: #ffd700; margin: 8px 0;">
-                    <strong>Their game plan:</strong> {game_plan}
+                    <strong>What this means:</strong> {phase_explanation}
                 </p>
 
                 <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Moment Detector:</strong> Score: {moment_score:.0f}/100 | Verdict: {moment_verdict}
+                    <strong>Trading Sentiment:</strong>
+                    <span style="color: {sent_color}; font-weight: 700;"> {trading_sentiment}</span>
+                    <span style="color: #888;"> (Score: {sentiment_score:+.0f})</span>
                 </p>
 
                 <p style="color: #aaa; margin: 8px 0;">
-                    <strong>OI/PCR Analysis:</strong>
-                    <span style="color: {pcr_color};">PCR: {pcr:.2f} ({pcr_text})</span> |
-                    CALL OI: {total_ce_oi:,.0f} | PUT OI: {total_pe_oi:,.0f}
+                    <strong>Trend Strength:</strong> {trend_strength:.0f}% |
+                    <strong>Volatility:</strong> {volatility_state} |
+                    <strong>Timeframe:</strong> {optimal_timeframe}
                 </p>
 
                 <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Expiry Context:</strong> Expiry in {signal.days_to_expiry:.1f} days
+                    <strong>Recommended Strategy:</strong>
+                    <span style="color: #00d9ff;"> {recommended_strategy}</span>
                 </p>
 
-                <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Key defense levels:</strong>
-                    <span style="color: #00ff00;">₹{support_strike:,.0f} (Support)</span> |
-                    <span style="color: #ff4444;">₹{resistance_strike:,.0f} (Resistance)</span>
-                </p>
+                {f'<div style="margin: 10px 0;"><strong style="color: #aaa;">Key Levels:</strong> <span style="color: #00ff00;">Support: ₹{support:,.0f}</span> | <span style="color: #ff4444;">Resistance: ₹{resistance:,.0f}</span></div>' if support > 0 or resistance > 0 else ''}
 
-                <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Preferred price level:</strong>
-                    <span style="color: #ffd700;">₹{max_pain:,.0f} (Max Pain)</span>
-                </p>
+                {f'<div style="margin-top: 10px;"><strong style="color: #aaa;">Signals:</strong><br>{signals_text}</div>' if signals_text else ''}
             </div>
             """, unsafe_allow_html=True)
     except Exception as e:
-        pass  # Silently fail if data not available
+        logger.debug(f"Regime display error: {e}")
 
     # Show ATM Option Recommendation based on signal
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
