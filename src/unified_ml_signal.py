@@ -981,98 +981,83 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
             sig_color = "#00ff00" if "bull" in sig.lower() or "buy" in sig.lower() or "up" in sig.lower() else "#ff4444" if "bear" in sig.lower() or "sell" in sig.lower() or "down" in sig.lower() else "#aaa"
             signals_text += f'<span style="color: {sig_color};">• {sig}</span><br>'
 
-    st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #1a1a2e, #16213e);
-                border: 1px solid #0f3460;
-                border-radius: 10px;
-                padding: 15px;
-                margin: 15px 0;">
-        <h4 style="color: #e94560; margin: 0 0 10px 0;">📊 ML MARKET REGIME ASSESSMENT</h4>
+    # ═══════════════════════════════════════════════════════════════════
+    # ML MARKET REGIME ASSESSMENT - Using Streamlit Components
+    # ═══════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("📊 ML MARKET REGIME ASSESSMENT")
 
-        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-            <div>
-                <span style="color: #888;">Regime:</span>
-                <span style="color: {regime_color}; font-weight: 700; font-size: 1.2rem;"> {regime_emoji} {regime}</span>
-            </div>
-            <div>
-                <span style="color: #888;">Confidence:</span>
-                <span style="color: {regime_color}; font-weight: 700;"> {confidence:.0f}%</span>
-            </div>
-        </div>
+    # Row 1: Regime and Confidence
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(label="Market Regime", value=f"{regime_emoji} {regime}")
+    with col2:
+        st.metric(label="Confidence", value=f"{confidence:.0f}%")
 
-        <p style="color: #eee; margin: 8px 0;">
-            <strong style="color: #00d9ff;">Market Phase:</strong> {market_phase}
-        </p>
-        <p style="color: #ffd700; margin: 8px 0;">
-            <strong>What this means:</strong> {phase_explanation}
-        </p>
+    # Row 2: Market Phase and Sentiment
+    col3, col4 = st.columns(2)
+    with col3:
+        st.markdown(f"**Market Phase:** {market_phase}")
+        st.caption(f"💡 {phase_explanation}")
+    with col4:
+        sent_emoji = "🟢" if "LONG" in str(trading_sentiment) else "🔴" if "SHORT" in str(trading_sentiment) else "🟡"
+        st.markdown(f"**Trading Sentiment:** {sent_emoji} {trading_sentiment}")
+        st.caption(f"Score: {sentiment_score:+.0f}")
 
-        <p style="color: #aaa; margin: 8px 0;">
-            <strong>Trading Sentiment:</strong>
-            <span style="color: {sent_color}; font-weight: 700;"> {trading_sentiment}</span>
-            <span style="color: #888;"> (Score: {sentiment_score:+.0f})</span>
-        </p>
+    # Row 3: Technical Details
+    col5, col6, col7 = st.columns(3)
+    with col5:
+        st.markdown(f"**Trend Strength:** {trend_strength:.0f}%")
+    with col6:
+        st.markdown(f"**Volatility:** {volatility_state}")
+    with col7:
+        st.markdown(f"**Timeframe:** {optimal_timeframe}")
 
-        <p style="color: #aaa; margin: 8px 0;">
-            <strong>Trend Strength:</strong> {trend_strength:.0f}% |
-            <strong>Volatility:</strong> {volatility_state} |
-            <strong>Timeframe:</strong> {optimal_timeframe}
-        </p>
+    # Recommended Strategy
+    st.info(f"📌 **Recommended Strategy:** {recommended_strategy}")
 
-        <p style="color: #aaa; margin: 8px 0;">
-            <strong>Recommended Strategy:</strong>
-            <span style="color: #00d9ff;"> {recommended_strategy}</span>
-        </p>
-
-        {f'<div style="margin-top: 10px;"><strong style="color: #aaa;">Signals:</strong><br>{signals_text}</div>' if signals_text else ''}
-    </div>
-    """, unsafe_allow_html=True)
+    # Signals list
+    if signals_list:
+        with st.expander("📡 Active Signals", expanded=False):
+            for sig in signals_list[:4]:
+                if "bull" in sig.lower() or "buy" in sig.lower() or "up" in sig.lower():
+                    st.success(f"• {sig}")
+                elif "bear" in sig.lower() or "sell" in sig.lower() or "down" in sig.lower():
+                    st.error(f"• {sig}")
+                else:
+                    st.write(f"• {sig}")
 
     # ═══════════════════════════════════════════════════════════════════
-    # 📊 COMPREHENSIVE SUPPORT/RESISTANCE DISPLAY
+    # 📊 COMPREHENSIVE SUPPORT/RESISTANCE DISPLAY - Python Components
     # ═══════════════════════════════════════════════════════════════════
     if merged_supports or merged_resistances:
-        # Build support zones HTML
-        support_html = ""
-        for i, s in enumerate(merged_supports[:3]):
-            strength_bars = "█" * min(s['strength'], 5)
-            sources = " + ".join(s['sources'])
-            zone_range = f"₹{s['range'][0]:,.0f} - ₹{s['range'][1]:,.0f}" if s['range'][0] != s['range'][1] else f"₹{s['price']:,.0f}"
-            color = "#00ff00" if i == 0 else "#90ee90" if i == 1 else "#a8e6a8"
-            support_html += f'<div style="margin: 3px 0;"><span style="color: {color};">S{i+1}: {zone_range}</span> <span style="color: #888; font-size: 0.8rem;">({sources}) {strength_bars}</span></div>'
+        st.markdown("---")
+        st.subheader("📊 SUPPORT & RESISTANCE ZONES")
+        st.caption("Chart + OI Aligned | More █ = Stronger confluence")
 
-        # Build resistance zones HTML
-        resistance_html = ""
-        for i, r in enumerate(merged_resistances[:3]):
-            strength_bars = "█" * min(r['strength'], 5)
-            sources = " + ".join(r['sources'])
-            zone_range = f"₹{r['range'][0]:,.0f} - ₹{r['range'][1]:,.0f}" if r['range'][0] != r['range'][1] else f"₹{r['price']:,.0f}"
-            color = "#ff4444" if i == 0 else "#ff6b6b" if i == 1 else "#ff8a8a"
-            resistance_html += f'<div style="margin: 3px 0;"><span style="color: {color};">R{i+1}: {zone_range}</span> <span style="color: #888; font-size: 0.8rem;">({sources}) {strength_bars}</span></div>'
+        col_s, col_r = st.columns(2)
 
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #0d1117, #161b22);
-                    border: 1px solid #30363d;
-                    border-radius: 8px;
-                    padding: 12px;
-                    margin: 10px 0;">
-            <h5 style="color: #58a6ff; margin: 0 0 10px 0;">📊 SUPPORT & RESISTANCE ZONES (Chart + OI Aligned)</h5>
-            <div style="display: flex; gap: 20px;">
-                <div style="flex: 1;">
-                    <div style="color: #00ff00; font-weight: 700; margin-bottom: 5px;">🛡️ SUPPORT ZONES</div>
-                    {support_html if support_html else '<span style="color: #888;">No support levels detected</span>'}
-                </div>
-                <div style="flex: 1;">
-                    <div style="color: #ff4444; font-weight: 700; margin-bottom: 5px;">🧱 RESISTANCE ZONES</div>
-                    {resistance_html if resistance_html else '<span style="color: #888;">No resistance levels detected</span>'}
-                </div>
-            </div>
-            <div style="color: #888; font-size: 0.75rem; margin-top: 8px;">
-                Sources: Chart (Price Action) | OI (Option Chain) | OI-Wall (Max OI Strike) | MaxPain (Pin Level)
-                <br>More █ = Stronger confluence (multiple sources agree)
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        with col_s:
+            st.markdown("**🛡️ SUPPORT ZONES**")
+            if merged_supports:
+                for i, s in enumerate(merged_supports[:3]):
+                    strength_bars = "█" * min(s['strength'], 5)
+                    sources = " + ".join(s['sources'])
+                    zone_range = f"₹{s['range'][0]:,.0f} - ₹{s['range'][1]:,.0f}" if s['range'][0] != s['range'][1] else f"₹{s['price']:,.0f}"
+                    st.success(f"S{i+1}: {zone_range} ({sources}) {strength_bars}")
+            else:
+                st.caption("No support levels detected")
+
+        with col_r:
+            st.markdown("**🧱 RESISTANCE ZONES**")
+            if merged_resistances:
+                for i, r in enumerate(merged_resistances[:3]):
+                    strength_bars = "█" * min(r['strength'], 5)
+                    sources = " + ".join(r['sources'])
+                    zone_range = f"₹{r['range'][0]:,.0f} - ₹{r['range'][1]:,.0f}" if r['range'][0] != r['range'][1] else f"₹{r['price']:,.0f}"
+                    st.error(f"R{i+1}: {zone_range} ({sources}) {strength_bars}")
+            else:
+                st.caption("No resistance levels detected")
 
     # ═══════════════════════════════════════════════════════════════════
     # 🎯 FINAL ASSESSMENT - Clear Directional Call
@@ -1134,71 +1119,67 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         reversal_text = f"🚀 Breakout Watch: Above ₹{primary_resistance:,.0f} = BULLISH | Below ₹{primary_support:,.0f} = BEARISH"
 
     if primary_support > 0 or primary_resistance > 0:
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, {direction_color}15, {direction_color}25);
-                    border: 2px solid {direction_color};
-                    border-radius: 10px;
-                    padding: 15px;
-                    margin: 15px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h4 style="color: {direction_color}; margin: 0;">🎯 FINAL ASSESSMENT</h4>
-                <span style="background: {direction_color}; color: #000; padding: 3px 10px; border-radius: 5px; font-weight: 700;">
-                    {direction_emoji} {direction_text}
-                </span>
-            </div>
+        st.markdown("---")
+        st.subheader("🎯 FINAL ASSESSMENT")
 
-            <p style="color: #fff; font-size: 1.1rem; margin: 10px 0; font-weight: 500;">
-                {assessment_text}
-            </p>
+        # Direction badge
+        col_dir, col_badge = st.columns([3, 1])
+        with col_dir:
+            st.markdown(f"**Direction:** {direction_emoji} **{direction_text}**")
+        with col_badge:
+            if is_bullish:
+                st.success(f"{direction_emoji} {direction_text}")
+            elif is_bearish:
+                st.error(f"{direction_emoji} {direction_text}")
+            else:
+                st.warning(f"{direction_emoji} {direction_text}")
 
-            <p style="color: #ddd; margin: 8px 0;">
-                <strong>📊 {move_text}</strong>
-            </p>
+        # Assessment text
+        if is_bullish:
+            if near_resistance:
+                st.warning(assessment_text)
+            else:
+                st.success(assessment_text)
+        elif is_bearish:
+            if near_support:
+                st.warning(assessment_text)
+            else:
+                st.error(assessment_text)
+        else:
+            st.info(assessment_text)
 
-            <p style="color: #aaa; margin: 8px 0; font-size: 0.9rem;">
-                {reversal_text}
-            </p>
+        # Move and Reversal
+        st.markdown(f"**📊 {move_text}**")
+        st.caption(reversal_text)
 
-            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid {direction_color}44;">
-                <span style="color: #888;">Current: </span>
-                <span style="color: #fff; font-weight: 700;">₹{current_price:,.0f}</span>
-                <span style="color: #888;"> | To Support: </span>
-                <span style="color: #00ff00;">{dist_to_support:,.0f} pts</span>
-                <span style="color: #888;"> | To Resistance: </span>
-                <span style="color: #ff4444;">{dist_to_resistance:,.0f} pts</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Distance metrics
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            st.metric("Current Price", f"₹{current_price:,.0f}")
+        with col_p2:
+            st.metric("To Support", f"{dist_to_support:,.0f} pts", delta=None)
+        with col_p3:
+            st.metric("To Resistance", f"{dist_to_resistance:,.0f} pts", delta=None)
 
     # Show ATM Option Recommendation based on signal
+    st.markdown("---")
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #00FF0022, #00FF0044);
-                    border: 2px solid #00FF00;
-                    border-radius: 10px;
-                    padding: 15px;
-                    text-align: center;
-                    margin-bottom: 15px;">
-            <h3 style="color: #00FF00; margin: 0;">📈 BUY ATM CALL @ ₹{signal.atm_strike:,.0f}</h3>
-            <p style="color: #90EE90; margin: 5px 0 0 0; font-size: 1.5rem; font-weight: bold;">
-                LTP: ₹{signal.atm_call_ltp:,.2f}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.subheader("📈 BUY ATM CALL")
+        col_atm1, col_atm2 = st.columns(2)
+        with col_atm1:
+            st.metric("Strike", f"₹{signal.atm_strike:,.0f}")
+        with col_atm2:
+            st.metric("LTP", f"₹{signal.atm_call_ltp:,.2f}")
+        st.success(f"**RECOMMENDATION:** BUY {signal.atm_strike:.0f} CE @ ₹{signal.atm_call_ltp:.2f}")
+
     elif signal.signal in ['STRONG SELL', 'SELL'] and signal.atm_put_ltp > 0:
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #FF000022, #FF000044);
-                    border: 2px solid #FF0000;
-                    border-radius: 10px;
-                    padding: 15px;
-                    text-align: center;
-                    margin-bottom: 15px;">
-            <h3 style="color: #FF6347; margin: 0;">📉 BUY ATM PUT @ ₹{signal.atm_strike:,.0f}</h3>
-            <p style="color: #FFA07A; margin: 5px 0 0 0; font-size: 1.5rem; font-weight: bold;">
-                LTP: ₹{signal.atm_put_ltp:,.2f}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.subheader("📉 BUY ATM PUT")
+        col_atm1, col_atm2 = st.columns(2)
+        with col_atm1:
+            st.metric("Strike", f"₹{signal.atm_strike:,.0f}")
+        with col_atm2:
+            st.metric("LTP", f"₹{signal.atm_put_ltp:,.2f}")
+        st.error(f"**RECOMMENDATION:** BUY {signal.atm_strike:.0f} PE @ ₹{signal.atm_put_ltp:.2f}")
 
     # Send to Telegram for BUY/SELL signals (with auto-send option)
     if signal.signal in ['STRONG BUY', 'BUY', 'STRONG SELL', 'SELL']:
