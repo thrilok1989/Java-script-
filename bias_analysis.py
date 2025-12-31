@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import yfinance as yf
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz
 import requests
 warnings.filterwarnings('ignore')
@@ -103,9 +102,6 @@ class BiasAnalysisPro:
             # Price ROC
             'price_roc_length': 12,
 
-            # Market Breadth
-            'breadth_threshold': 60,
-
             # Divergence
             'divergence_lookback': 30,
             'rsi_overbought': 70,
@@ -126,21 +122,7 @@ class BiasAnalysisPro:
             'normal_slow_weight': 5.0,
             'reversal_fast_weight': 5.0,
             'reversal_medium_weight': 3.0,
-            'reversal_slow_weight': 2.0,
-
-            # Stocks with weights
-            'stocks': {
-                '^NSEBANK': 10.0,  # BANKNIFTY Index
-                'RELIANCE.NS': 9.98,
-                'HDFCBANK.NS': 9.67,
-                'BHARTIARTL.NS': 9.97,
-                'TCS.NS': 8.54,
-                'ICICIBANK.NS': 8.01,
-                'INFY.NS': 8.55,
-                'HINDUNILVR.NS': 1.98,
-                'ITC.NS': 2.44,
-                'MARUTI.NS': 0.0
-            }
+            'reversal_slow_weight': 2.0
         }
 
     # =========================================================================
@@ -620,70 +602,6 @@ class BiasAnalysisPro:
                                   rsi_series.iloc[-1] > self.config['rsi_overbought'])
 
         return bullish_rsi_divergence, bearish_rsi_divergence
-
-    # =========================================================================
-    # MARKET BREADTH & STOCKS ANALYSIS
-    # =========================================================================
-
-    def _fetch_stock_data(self, symbol: str, weight: float):
-        """Helper function to fetch single stock data for parallel processing"""
-        try:
-            # Use 5d period with 5m interval (Yahoo Finance limitation for intraday data)
-            df = self.fetch_data(symbol, period='5d', interval='5m')
-            if df.empty or len(df) < 2:
-                return None
-
-            cols = self._get_column_names(df)
-            current_price = df[cols['close']].iloc[-1]
-            prev_price = df[cols['close']].iloc[0]
-            change_pct = ((current_price - prev_price) / prev_price) * 100
-
-            return {
-                'symbol': symbol.replace('.NS', ''),
-                'change_pct': change_pct,
-                'weight': weight,
-                'is_bullish': change_pct > 0
-            }
-        except Exception as e:
-            print(f"Error processing {symbol}: {e}")
-            return None
-
-    def calculate_market_breadth(self):
-        """Calculate market breadth from top stocks (optimized with parallel processing)"""
-        bullish_stocks = 0
-        total_stocks = 0
-        stock_data = []
-
-        # Optimize: Use ThreadPoolExecutor for parallel API calls
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            # Submit all tasks
-            future_to_stock = {
-                executor.submit(self._fetch_stock_data, symbol, weight): (symbol, weight)
-                for symbol, weight in self.config['stocks'].items()
-            }
-
-            # Collect results as they complete
-            for future in as_completed(future_to_stock):
-                result = future.result()
-                if result:
-                    stock_data.append({
-                        'symbol': result['symbol'],
-                        'change_pct': result['change_pct'],
-                        'weight': result['weight']
-                    })
-                    if result['is_bullish']:
-                        bullish_stocks += 1
-                    total_stocks += 1
-
-        if total_stocks > 0:
-            market_breadth = (bullish_stocks / total_stocks) * 100
-        else:
-            market_breadth = 50
-
-        breadth_bullish = market_breadth > self.config['breadth_threshold']
-        breadth_bearish = market_breadth < (100 - self.config['breadth_threshold'])
-
-        return market_breadth, breadth_bullish, breadth_bearish, bullish_stocks, total_stocks, stock_data
 
     # =========================================================================
     # COMPREHENSIVE BIAS ANALYSIS

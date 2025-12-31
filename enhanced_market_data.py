@@ -458,9 +458,9 @@ class EnhancedMarketData:
         print("  - Analyzing Gamma Squeeze...")
         result['gamma_squeeze'] = self.detect_gamma_squeeze('NIFTY')
 
-        # 6. Analyze Sector Rotation
+        # 6. Analyze Sector Rotation (pass already-fetched sectors to avoid duplicate API call)
         print("  - Analyzing Sector Rotation...")
-        result['sector_rotation'] = self.analyze_sector_rotation()
+        result['sector_rotation'] = self.analyze_sector_rotation(sectors=result['sector_indices'])
 
         # 7. Analyze Intraday Seasonality
         print("  - Analyzing Intraday Seasonality...")
@@ -647,14 +647,20 @@ class EnhancedMarketData:
     # SECTOR ROTATION MODEL
     # =========================================================================
 
-    def analyze_sector_rotation(self) -> Dict[str, Any]:
+    def analyze_sector_rotation(self, sectors: list = None) -> Dict[str, Any]:
         """
         Analyze sector rotation to identify market leadership changes
+
+        Args:
+            sectors: Optional list of sector data. If not provided, will fetch from API.
+                    Pass pre-fetched data to avoid duplicate API calls.
 
         Returns:
             Dict with sector rotation analysis
         """
-        sectors = self.fetch_sector_indices()
+        # Use provided sectors or fetch if not available (avoids duplicate API calls)
+        if sectors is None:
+            sectors = self.fetch_sector_indices()
 
         if not sectors:
             return {'success': False, 'error': 'No sector data available'}

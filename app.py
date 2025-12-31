@@ -3671,22 +3671,6 @@ with tab6:
                         with col2:
                             st.metric("Score", f"{market_context['technical_indicators_score']:.1f}")
 
-                        # Market Breadth
-                        st.markdown("### 🔍 Market Breadth")
-                        col1, col2 = st.columns(2)
-
-                        with col1:
-                            bias = market_context['market_breadth_bias']
-                            if bias == 'BULLISH':
-                                st.success(f"🐂 **{bias}**")
-                            elif bias == 'BEARISH':
-                                st.error(f"🐻 **{bias}**")
-                            else:
-                                st.info(f"⚖️ **{bias}**")
-
-                        with col2:
-                            st.metric("Breadth %", f"{market_context['market_breadth_pct']:.1f}%")
-
                         # PCR Analysis
                         st.markdown("### 📉 PCR Analysis (Put-Call Ratio)")
                         col1, col2 = st.columns(2)

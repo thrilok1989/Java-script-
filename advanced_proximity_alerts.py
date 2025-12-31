@@ -277,8 +277,6 @@ class AdvancedProximityAlertSystem:
         context = {
             'overall_sentiment': 'N/A',
             'overall_score': 0,
-            'market_breadth_bias': 'N/A',
-            'market_breadth_pct': 0,
             'technical_indicators_bias': 'N/A',
             'technical_indicators_score': 0,
             'pcr_analysis_bias': 'N/A',
@@ -293,22 +291,7 @@ class AdvancedProximityAlertSystem:
             analysis = st.session_state.bias_analysis_results
 
             if analysis.get('success'):
-                # 1. Market Breadth (Stock Performance)
-                stock_data = analysis.get('stock_data', [])
-                if stock_data:
-                    bullish_stocks = sum(1 for s in stock_data if s.get('change_pct', 0) > 0.5)
-                    total_stocks = len(stock_data)
-                    breadth_pct = (bullish_stocks / total_stocks * 100) if total_stocks > 0 else 50
-
-                    context['market_breadth_pct'] = breadth_pct
-                    if breadth_pct > 60:
-                        context['market_breadth_bias'] = 'BULLISH'
-                    elif breadth_pct < 40:
-                        context['market_breadth_bias'] = 'BEARISH'
-                    else:
-                        context['market_breadth_bias'] = 'NEUTRAL'
-
-                # 2. Technical Indicators
+                # Technical Indicators
                 bias_results = analysis.get('bias_results', [])
                 if bias_results:
                     bullish_count = sum(1 for r in bias_results if 'BULLISH' in r.get('bias', ''))
@@ -437,7 +420,6 @@ class AdvancedProximityAlertSystem:
         # This is a calculated metric from all the above
         # Calculate simple average of all biases
         biases = [
-            context['market_breadth_bias'],
             context['technical_indicators_bias'],
             context['pcr_analysis_bias'],
             context['option_chain_bias']
@@ -521,14 +503,6 @@ class AdvancedProximityAlertSystem:
             "",
             f"<b>Overall Sentiment:</b> {self._format_bias(market_context['overall_sentiment'])}",
             f"<b>Overall Score:</b> {market_context['overall_score']:.1f}",
-            "",
-            f"<b>📈 Enhanced Market Analysis:</b>",
-            f"  • Bias: {self._format_bias(market_context['technical_indicators_bias'])}",
-            f"  • Score: {market_context['technical_indicators_score']:.1f}",
-            "",
-            f"<b>🔍 Market Breadth:</b>",
-            f"  • Bias: {self._format_bias(market_context['market_breadth_bias'])}",
-            f"  • Breadth: {market_context['market_breadth_pct']:.1f}%",
             "",
             f"<b>📊 Technical Indicators:</b>",
             f"  • Bias: {self._format_bias(market_context['technical_indicators_bias'])}",

@@ -690,16 +690,7 @@ def calculate_overall_sentiment():
     # Initialize sentiment sources
     sentiment_sources = {}
 
-    # 1. Stock Performance Sentiment
-    if 'bias_analysis_results' in st.session_state and st.session_state.bias_analysis_results:
-        analysis = st.session_state.bias_analysis_results
-        if analysis.get('success'):
-            stock_data = analysis.get('stock_data', [])
-            stock_sentiment = calculate_stock_performance_sentiment(stock_data)
-            if stock_sentiment:
-                sentiment_sources['Stock Performance'] = stock_sentiment
-
-    # 2. Technical Indicators Sentiment
+    # 1. Technical Indicators Sentiment
     if 'bias_analysis_results' in st.session_state and st.session_state.bias_analysis_results:
         analysis = st.session_state.bias_analysis_results
         if analysis.get('success'):
@@ -744,7 +735,6 @@ def calculate_overall_sentiment():
 
     # Calculate weighted overall sentiment
     source_weights = {
-        'Stock Performance': 2.0,
         'Technical Indicators': 3.0,
         'ATM Strike Verdict': 3.5,      # ATM ±2 strikes analysis
         'PCR/OI Analysis': 2.5,          # PCR sentiment from Tab 0
@@ -1886,85 +1876,8 @@ Loading current price and entry zones. Please wait...
 
         sources = result['sources']
 
-        # ─────────────────────────────────────────────────────────────────
-        # 1. STOCK PERFORMANCE TABLE
-        # ─────────────────────────────────────────────────────────────────
-        if 'Stock Performance' in sources:
-            source_data = sources['Stock Performance']
-            st.markdown("#### 📊 Stock Performance (Market Breadth)")
-            bias = source_data.get('bias', 'NEUTRAL')
-            score = source_data.get('score', 0)
-            confidence = source_data.get('confidence', 0)
-
-            # Color based on bias
-            if bias == 'BULLISH':
-                bg_color = '#00ff88'
-                text_color = 'black'
-                icon = '🐂'
-            elif bias == 'BEARISH':
-                bg_color = '#ff4444'
-                text_color = 'white'
-                icon = '🐻'
-            else:
-                bg_color = '#ffa500'
-                text_color = 'white'
-                icon = '⚖️'
-
-            # Display source card
-            col1, col2, col3 = st.columns([2, 1, 1])
-
-            with col1:
-                st.markdown(f"""
-                <div style='background: {bg_color}; padding: 15px; border-radius: 10px;'>
-                    <h3 style='margin: 0; color: {text_color};'>{icon} {bias}</h3>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with col2:
-                st.metric("Score", f"{score:+.1f}")
-
-            with col3:
-                st.metric("Confidence", f"{confidence:.1f}%")
-
-            st.markdown(f"""
-            **Market Breadth:** {source_data.get('breadth_pct', 0):.1f}%
-            **Avg Weighted Change:** {source_data.get('avg_change', 0):+.2f}%
-            **Bullish Stocks:** {source_data.get('bullish_stocks', 0)} | **Bearish:** {source_data.get('bearish_stocks', 0)} | **Neutral:** {source_data.get('neutral_stocks', 0)}
-            """)
-
-            # Stock Performance Table
-            stock_details = source_data.get('stock_details', [])
-            if stock_details:
-                # Create DataFrame
-                stock_df = pd.DataFrame(stock_details)
-                stock_df['symbol'] = stock_df['symbol'].str.replace('.NS', '')
-                stock_df['change_pct'] = stock_df['change_pct'].apply(lambda x: f"{x:.2f}%")
-                stock_df['weight'] = stock_df['weight'].apply(lambda x: f"{x:.2f}%")
-
-                # Add bias column
-                def get_stock_bias(row):
-                    change = float(row['change_pct'].replace('%', ''))
-                    if change > 0.5:
-                        return "🐂 BULLISH"
-                    elif change < -0.5:
-                        return "🐻 BEARISH"
-                    else:
-                        return "⚖️ NEUTRAL"
-
-                stock_df['bias'] = stock_df.apply(get_stock_bias, axis=1)
-
-                # Rename columns
-                stock_df = stock_df.rename(columns={
-                    'symbol': 'Symbol',
-                    'change_pct': 'Change %',
-                    'weight': 'Weight',
-                    'bias': 'Bias'
-                })
-
-                st.dataframe(stock_df, use_container_width=True, hide_index=True)
-
     # ─────────────────────────────────────────────────────────────────
-    # 2. TECHNICAL INDICATORS TABLE
+    # 1. TECHNICAL INDICATORS TABLE
     # ─────────────────────────────────────────────────────────────────
     if 'Technical Indicators' in sources:
         source_data = sources['Technical Indicators']
