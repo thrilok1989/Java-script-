@@ -34,8 +34,6 @@ from data_cache_manager import (
     get_cached_sensex_data,
     get_cached_bias_analysis_results
 )
-from vob_signal_generator import VOBSignalGenerator
-from htf_sr_signal_generator import HTFSRSignalGenerator
 from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
 
 # Configure logging
@@ -247,8 +245,6 @@ async def run_ai_market_analysis():
         
         # Calculate module biases from various indicators
         module_biases = {
-            "htf_sr": 0.5,  # Default neutral
-            "vob": 0.5,
             "overall_sentiment": 0.5,
             "option_chain": 0.5,
             "proximity_alerts": 0.5,
@@ -345,38 +341,6 @@ def check_and_run_ai_analysis():
 
 if 'signal_manager' not in st.session_state:
     st.session_state.signal_manager = SignalManager()
-
-if 'vob_signal_generator' not in st.session_state:
-    st.session_state.vob_signal_generator = VOBSignalGenerator(proximity_threshold=8.0)
-
-if 'active_vob_signals' not in st.session_state:
-    st.session_state.active_vob_signals = []
-
-if 'last_vob_check_time' not in st.session_state:
-    st.session_state.last_vob_check_time = 0
-
-if 'htf_sr_signal_generator' not in st.session_state:
-    st.session_state.htf_sr_signal_generator = HTFSRSignalGenerator(proximity_threshold=8.0)
-
-if 'active_htf_sr_signals' not in st.session_state:
-    st.session_state.active_htf_sr_signals = []
-
-if 'last_htf_sr_check_time' not in st.session_state:
-    st.session_state.last_htf_sr_check_time = 0
-
-
-# VOB and HTF data storage
-if 'vob_data_nifty' not in st.session_state:
-    st.session_state.vob_data_nifty = None
-
-if 'vob_data_sensex' not in st.session_state:
-    st.session_state.vob_data_sensex = None
-
-if 'htf_data_nifty' not in st.session_state:
-    st.session_state.htf_data_nifty = None
-
-if 'htf_data_sensex' not in st.session_state:
-    st.session_state.htf_data_sensex = None
 
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
@@ -743,21 +707,6 @@ def get_cached_chart_data(symbol, period, interval):
     return chart_analyzer.fetch_intraday_data(symbol, period=period, interval=interval)
 
 @st.cache_data(ttl=60, show_spinner=False)  # 60 seconds (1 minute)
-def calculate_vob_indicators(df_key, sensitivity=5):
-    """Cached VOB calculation - reduces redundant computations"""
-    from indicators.volume_order_blocks import VolumeOrderBlocks
-
-    # Get dataframe from cache
-    cache_manager = get_cache_manager()
-    df = cache_manager.get(df_key)
-
-    if df is None or len(df) == 0:
-        return None
-
-    vob_indicator = VolumeOrderBlocks(sensitivity=sensitivity)
-    return vob_indicator.calculate(df)
-
-@st.cache_data(ttl=60, show_spinner=False)  # 60 seconds (1 minute)
 def calculate_sentiment():
     """Cached sentiment calculation"""
     try:
@@ -766,7 +715,7 @@ def calculate_sentiment():
         return None
 
 # ═══════════════════════════════════════════════════════════════════════
-# VOB-BASED SIGNAL MONITORING (Optimized)
+# SENTIMENT CACHE (Optimized)
 # ═══════════════════════════════════════════════════════════════════════
 # Initialize sentiment cache in session state
 if 'cached_sentiment' not in st.session_state:
@@ -783,343 +732,9 @@ if current_time - st.session_state.sentiment_cache_time > 120:
         st.session_state.sentiment_cache_time = current_time
 
 # ═══════════════════════════════════════════════════════════════════════
-# PERFORMANCE OPTIMIZATION: Only run expensive signal checks during market hours
-# and increase check interval to reduce load (60 seconds instead of 30)
+# MARKET STATUS
 # ═══════════════════════════════════════════════════════════════════════
 market_status = get_market_status()
-should_run_signal_check = market_status.get('open', False)
-
-# VOB SIGNAL MONITORING - DISABLED FOR PERFORMANCE
-# Check for VOB signals every 60 seconds (increased from 30s for better performance)
-# Only run during market hours to reduce unnecessary processing
-if False and should_run_signal_check and (current_time - st.session_state.last_vob_check_time > 60):
-    st.session_state.last_vob_check_time = current_time
-
-    try:
-        # Use cached sentiment (calculated once per minute to avoid redundancy)
-        if st.session_state.cached_sentiment:
-            overall_sentiment = st.session_state.cached_sentiment.get('overall_sentiment', 'NEUTRAL')
-        else:
-            overall_sentiment = 'NEUTRAL'
-
-        # Optimize: Create single VOB indicator instance for reuse
-        from indicators.volume_order_blocks import VolumeOrderBlocks
-        vob_indicator = VolumeOrderBlocks(sensitivity=5)
-
-        # Fetch chart data and calculate VOB for NIFTY (using cached function)
-        df = get_cached_chart_data('^NSEI', '1d', '1m')
-
-        if df is not None and len(df) > 0:
-            # Calculate VOB blocks (reusing indicator instance)
-            vob_data = vob_indicator.calculate(df)
-
-            # Store VOB data in session state for display
-            st.session_state.vob_data_nifty = vob_data
-
-            # Check for NIFTY signal - with safe spot price handling
-            nifty_spot_for_signal = None
-            if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
-                try:
-                    nifty_spot_for_signal = float(nifty_data['spot_price'])
-                except (TypeError, ValueError):
-                    nifty_spot_for_signal = None
-
-            nifty_signal = None
-            if nifty_spot_for_signal is not None:
-                nifty_signal = st.session_state.vob_signal_generator.check_for_signal(
-                    spot_price=nifty_spot_for_signal,
-                    market_sentiment=overall_sentiment,
-                    bullish_blocks=vob_data['bullish_blocks'],
-                    bearish_blocks=vob_data['bearish_blocks'],
-                    index='NIFTY',
-                    df=df  # Pass dataframe for strength analysis
-                )
-
-            if nifty_signal:
-                # Check if this is a new signal (not already in active signals)
-                is_new = True
-                for existing_signal in st.session_state.active_vob_signals:
-                    if (existing_signal['index'] == nifty_signal['index'] and
-                        existing_signal['direction'] == nifty_signal['direction'] and
-                        abs(existing_signal['entry_price'] - nifty_signal['entry_price']) < 5):
-                        is_new = False
-                        break
-
-                if is_new:
-                    # Add to active signals
-                    st.session_state.active_vob_signals.append(nifty_signal)
-
-                    # VOB Telegram notification disabled
-                    # telegram_bot = TelegramBot()
-                    # telegram_bot.send_vob_entry_signal(nifty_signal)
-
-        # Fetch chart data and calculate VOB for SENSEX (using cached function)
-        df_sensex = get_cached_chart_data('^BSESN', '1d', '1m')
-
-        if df_sensex is not None and len(df_sensex) > 0:
-            # Calculate VOB blocks for SENSEX (reusing indicator instance)
-            vob_data_sensex = vob_indicator.calculate(df_sensex)
-
-            # Store VOB data in session state for display
-            st.session_state.vob_data_sensex = vob_data_sensex
-
-            # Get SENSEX spot price
-            sensex_data = get_cached_sensex_data()
-            if sensex_data:
-                # Safe handling for SENSEX spot price in signal check
-                sensex_spot_for_signal = None
-                if sensex_data.get('spot_price') and sensex_data['spot_price'] not in [None, 0, 'N/A']:
-                    try:
-                        sensex_spot_for_signal = float(sensex_data['spot_price'])
-                    except (TypeError, ValueError):
-                        sensex_spot_for_signal = None
-
-                sensex_signal = None
-                if sensex_spot_for_signal is not None:
-                    sensex_signal = st.session_state.vob_signal_generator.check_for_signal(
-                        spot_price=sensex_spot_for_signal,
-                        market_sentiment=overall_sentiment,
-                        bullish_blocks=vob_data_sensex['bullish_blocks'],
-                        bearish_blocks=vob_data_sensex['bearish_blocks'],
-                        index='SENSEX',
-                        df=df_sensex  # Pass dataframe for strength analysis
-                    )
-            else:
-                sensex_signal = None
-
-                if sensex_signal:
-                    # Check if this is a new signal
-                    is_new = True
-                    for existing_signal in st.session_state.active_vob_signals:
-                        if (existing_signal['index'] == sensex_signal['index'] and
-                            existing_signal['direction'] == sensex_signal['direction'] and
-                            abs(existing_signal['entry_price'] - sensex_signal['entry_price']) < 5):
-                            is_new = False
-                            break
-
-                    if is_new:
-                        # Add to active signals
-                        st.session_state.active_vob_signals.append(sensex_signal)
-
-                        # VOB Telegram notification disabled
-                        # telegram_bot = TelegramBot()
-                        # telegram_bot.send_vob_entry_signal(sensex_signal)
-
-        # Clean up old signals (older than 30 minutes)
-        st.session_state.active_vob_signals = [
-            sig for sig in st.session_state.active_vob_signals
-            if (current_time - sig['timestamp'].timestamp()) < 1800
-        ]
-
-        # ═══════════════════════════════════════════════════════════════
-        # PROXIMITY ALERTS - Check if price is near VOB levels
-        # ═══════════════════════════════════════════════════════════════
-        try:
-            proximity_system = get_proximity_alert_system(cooldown_minutes=10)
-
-            # Check NIFTY VOB proximity
-            if st.session_state.vob_data_nifty and nifty_data:
-                # Safe handling for NIFTY spot price
-                nifty_price = None
-                if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
-                    try:
-                        nifty_price = float(nifty_data['spot_price'])
-                    except (TypeError, ValueError):
-                        nifty_price = None
-
-                if nifty_price is not None:
-                    # Convert HTF data to list format expected by proximity system
-                    htf_data_list = []
-                    if st.session_state.htf_data_nifty:
-                        # htf_data_nifty is already a list, iterate directly
-                        for level_data in st.session_state.htf_data_nifty:
-                            if level_data:
-                                htf_data_list.append({
-                                    'timeframe': level_data.get('timeframe'),
-                                    'pivot_high': level_data.get('pivot_high'),
-                                    'pivot_low': level_data.get('pivot_low')
-                                })
-
-                    # Process proximity alerts for NIFTY
-                    nifty_alerts, nifty_notifications = proximity_system.process_market_data(
-                        symbol='NIFTY',
-                        current_price=nifty_price,
-                        vob_data=st.session_state.vob_data_nifty,
-                        htf_data=htf_data_list
-                    )
-
-            # Check SENSEX VOB proximity
-            if st.session_state.vob_data_sensex and sensex_data:
-                # Safe handling for SENSEX spot price
-                sensex_price = None
-                if sensex_data.get('spot_price') and sensex_data['spot_price'] not in [None, 0, 'N/A']:
-                    try:
-                        sensex_price = float(sensex_data['spot_price'])
-                    except (TypeError, ValueError):
-                        sensex_price = None
-
-                if sensex_price is not None:
-                    # Convert HTF data to list format
-                    htf_data_list_sensex = []
-                    if st.session_state.htf_data_sensex:
-                        # htf_data_sensex is already a list, iterate directly
-                        for level_data in st.session_state.htf_data_sensex:
-                            if level_data:
-                                htf_data_list_sensex.append({
-                                    'timeframe': level_data.get('timeframe'),
-                                    'pivot_high': level_data.get('pivot_high'),
-                                    'pivot_low': level_data.get('pivot_low')
-                                })
-
-                    # Process proximity alerts for SENSEX
-                    sensex_alerts, sensex_notifications = proximity_system.process_market_data(
-                        symbol='SENSEX',
-                        current_price=sensex_price,
-                        vob_data=st.session_state.vob_data_sensex,
-                        htf_data=htf_data_list_sensex
-                    )
-
-        except Exception as prox_e:
-            # Silently fail proximity alerts
-            pass
-
-
-    except Exception as e:
-        # Silently fail - don't disrupt the app
-        pass
-
-# ═══════════════════════════════════════════════════════════════════════
-# HTF SUPPORT/RESISTANCE SIGNAL MONITORING - DISABLED FOR PERFORMANCE
-# ═══════════════════════════════════════════════════════════════════════
-# Check for HTF S/R signals every 60 seconds (increased from 30s for better performance)
-# Only run during market hours to reduce unnecessary processing
-if False and should_run_signal_check and (current_time - st.session_state.last_htf_sr_check_time > 60):
-    st.session_state.last_htf_sr_check_time = current_time
-
-    try:
-        # Use cached sentiment (calculated once per minute to avoid redundancy)
-        if st.session_state.cached_sentiment:
-            overall_sentiment = st.session_state.cached_sentiment.get('overall_sentiment', 'NEUTRAL')
-        else:
-            overall_sentiment = 'NEUTRAL'
-
-        # Only check if market sentiment is BULLISH or BEARISH
-        if overall_sentiment in ['BULLISH', 'BEARISH']:
-            # Optimize: Create single HTF S/R indicator instance for reuse
-            from indicators.htf_support_resistance import HTFSupportResistance
-            htf_sr = HTFSupportResistance()
-            levels_config = [
-                {'timeframe': '5T', 'length': 5},
-                {'timeframe': '10T', 'length': 5},
-                {'timeframe': '15T', 'length': 5}
-            ]
-
-            # Fetch chart data for NIFTY (using cached function)
-            df_nifty = get_cached_chart_data('^NSEI', '7d', '1m')
-
-            if df_nifty is not None and len(df_nifty) > 0:
-                # Calculate HTF S/R levels (reusing indicator instance)
-                htf_levels = htf_sr.calculate_multi_timeframe(df_nifty, levels_config)
-
-                # Store HTF data in session state for display
-                st.session_state.htf_data_nifty = htf_levels
-
-                # Check for NIFTY signal - with safe spot price handling
-                nifty_spot_htf = None
-                if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
-                    try:
-                        nifty_spot_htf = float(nifty_data['spot_price'])
-                    except (TypeError, ValueError):
-                        nifty_spot_htf = None
-
-                nifty_htf_signal = None
-                if nifty_spot_htf is not None:
-                    nifty_htf_signal = st.session_state.htf_sr_signal_generator.check_for_signal(
-                        spot_price=nifty_spot_htf,
-                        market_sentiment=overall_sentiment,
-                        htf_levels=htf_levels,
-                        index='NIFTY',
-                        df=df_nifty  # Pass dataframe for strength analysis
-                    )
-
-                if nifty_htf_signal:
-                    # Check if this is a new signal (not already in active signals)
-                    is_new = True
-                    for existing_signal in st.session_state.active_htf_sr_signals:
-                        if (existing_signal['index'] == nifty_htf_signal['index'] and
-                            existing_signal['direction'] == nifty_htf_signal['direction'] and
-                            abs(existing_signal['entry_price'] - nifty_htf_signal['entry_price']) < 5):
-                            is_new = False
-                            break
-
-                    if is_new:
-                        # Add to active signals
-                        st.session_state.active_htf_sr_signals.append(nifty_htf_signal)
-
-                        # Send telegram notification
-                        telegram_bot = TelegramBot()
-                        telegram_bot.send_htf_sr_entry_signal(nifty_htf_signal)
-
-            # Fetch chart data for SENSEX (using cached function)
-            df_sensex = get_cached_chart_data('^BSESN', '7d', '1m')
-
-            if df_sensex is not None and len(df_sensex) > 0:
-                # Calculate HTF S/R levels for SENSEX (reusing indicator instance)
-                htf_levels_sensex = htf_sr.calculate_multi_timeframe(df_sensex, levels_config)
-
-                # Store HTF data in session state for display
-                st.session_state.htf_data_sensex = htf_levels_sensex
-
-                # Get SENSEX spot price
-                sensex_data = get_cached_sensex_data()
-                if sensex_data:
-                    # Safe handling for SENSEX spot price in HTF signal check
-                    sensex_spot_htf = None
-                    if sensex_data.get('spot_price') and sensex_data['spot_price'] not in [None, 0, 'N/A']:
-                        try:
-                            sensex_spot_htf = float(sensex_data['spot_price'])
-                        except (TypeError, ValueError):
-                            sensex_spot_htf = None
-
-                    sensex_htf_signal = None
-                    if sensex_spot_htf is not None:
-                        sensex_htf_signal = st.session_state.htf_sr_signal_generator.check_for_signal(
-                            spot_price=sensex_spot_htf,
-                            market_sentiment=overall_sentiment,
-                            htf_levels=htf_levels_sensex,
-                            index='SENSEX',
-                            df=df_sensex  # Pass dataframe for strength analysis
-                        )
-                else:
-                    sensex_htf_signal = None
-
-                if sensex_htf_signal:
-                    # Check if this is a new signal
-                    is_new = True
-                    for existing_signal in st.session_state.active_htf_sr_signals:
-                        if (existing_signal['index'] == sensex_htf_signal['index'] and
-                            existing_signal['direction'] == sensex_htf_signal['direction'] and
-                            abs(existing_signal['entry_price'] - sensex_htf_signal['entry_price']) < 5):
-                            is_new = False
-                            break
-
-                    if is_new:
-                        # Add to active signals
-                        st.session_state.active_htf_sr_signals.append(sensex_htf_signal)
-
-                        # Send telegram notification
-                        telegram_bot = TelegramBot()
-                        telegram_bot.send_htf_sr_entry_signal(sensex_htf_signal)
-
-            # Clean up old HTF S/R signals (older than 30 minutes)
-            st.session_state.active_htf_sr_signals = [
-                sig for sig in st.session_state.active_htf_sr_signals
-                if (current_time - sig['timestamp'].timestamp()) < 1800
-            ]
-
-    except Exception as e:
-        # Silently fail - don't disrupt the app
-        pass
 
 # Display market data - Use session state fallbacks from NIFTY Option Screener
 col1, col2, col3, col4 = st.columns(4)
@@ -1465,7 +1080,7 @@ with tab2:
             default_support = 25000.0
 
         vob_support = st.number_input(
-            "VOB Support Level",
+            "Support Level",
             min_value=0.0,
             value=default_support,
             step=10.0,
@@ -1480,7 +1095,7 @@ with tab2:
             default_resistance = 25100.0
 
         vob_resistance = st.number_input(
-            "VOB Resistance Level",
+            "Resistance Level",
             min_value=0.0,
             value=default_resistance,
             step=10.0,
@@ -2504,18 +2119,13 @@ with tab6:
     # Indicator toggles
     st.subheader("🔧 Indicator Settings")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
-        show_vob = st.checkbox("📦 Volume Order Blocks", value=True, key="show_vob")
-        show_htf_sr = st.checkbox("📊 HTF Support/Resistance", value=True, key="show_htf_sr")
+        show_rsi = st.checkbox("📈 Ultimate RSI", value=True, key="show_rsi")
+        show_volume = st.checkbox("📊 Volume Bars", value=True, key="show_volume")
 
     with col2:
-        show_footprint = st.checkbox("👣 Volume Footprint", value=True, key="show_footprint")
-        show_rsi = st.checkbox("📈 Ultimate RSI", value=True, key="show_rsi")
-
-    with col3:
-        show_volume = st.checkbox("📊 Volume Bars", value=True, key="show_volume")
         show_om = st.checkbox("🎯 OM Indicator", value=True, key="show_om")
 
     # Volume Profile Indicators
@@ -2559,77 +2169,6 @@ with tab6:
     # Indicator Configuration Section
     st.subheader("⚙️ Indicator Configuration")
     st.caption("Configure each indicator's parameters below")
-
-    # Volume Order Blocks Settings
-    if show_vob:
-        with st.expander("📦 Volume Order Blocks Settings", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                vob_sensitivity = st.slider(
-                    "Sensitivity",
-                    min_value=3,
-                    max_value=15,
-                    value=5,
-                    step=1,
-                    help="Detection sensitivity for order blocks",
-                    key="vob_sensitivity"
-                )
-            with col2:
-                vob_mid_line = st.checkbox("Show Mid Line", value=True, key="vob_mid_line")
-                vob_trend_shadow = st.checkbox("Show Trend Shadow", value=True, key="vob_trend_shadow")
-
-    # HTF Support/Resistance Settings
-    if show_htf_sr:
-        with st.expander("📊 HTF Support/Resistance Settings", expanded=False):
-            st.markdown("**Timeframe Configuration**")
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                htf_3min_enabled = st.checkbox("3min", value=True, key="htf_3min_enabled")
-                htf_3min_length = st.number_input("3min Length", min_value=2, max_value=10, value=4, step=1, key="htf_3min_length")
-
-            with col2:
-                htf_5min_enabled = st.checkbox("5min", value=True, key="htf_5min_enabled")
-                htf_5min_length = st.number_input("5min Length", min_value=2, max_value=10, value=5, step=1, key="htf_5min_length")
-
-            with col3:
-                htf_10min_enabled = st.checkbox("10min", value=True, key="htf_10min_enabled")
-                htf_10min_length = st.number_input("10min Length", min_value=2, max_value=10, value=5, step=1, key="htf_10min_length")
-
-            with col4:
-                htf_15min_enabled = st.checkbox("15min", value=True, key="htf_15min_enabled")
-                htf_15min_length = st.number_input("15min Length", min_value=2, max_value=10, value=5, step=1, key="htf_15min_length")
-
-    # Volume Footprint Settings
-    if show_footprint:
-        with st.expander("👣 Volume Footprint Settings", expanded=False):
-            col1, col2 = st.columns(2)
-
-            with col1:
-                footprint_bins = st.slider(
-                    "Number of Bins",
-                    min_value=5,
-                    max_value=30,
-                    value=10,
-                    step=1,
-                    help="Number of price bins for volume distribution",
-                    key="footprint_bins"
-                )
-                footprint_timeframe = st.selectbox(
-                    "Timeframe",
-                    options=["D", "W", "2W", "M"],
-                    index=0,
-                    help="Higher timeframe for footprint analysis",
-                    key="footprint_timeframe"
-                )
-
-            with col2:
-                footprint_dynamic_poc = st.checkbox(
-                    "Dynamic POC",
-                    value=True,
-                    help="Show dynamic Point of Control",
-                    key="footprint_dynamic_poc"
-                )
 
     # Ultimate RSI Settings
     if show_rsi:
@@ -2757,18 +2296,6 @@ with tab6:
     # OM Indicator Settings
     if show_om:
         with st.expander("🎯 OM Indicator Settings", expanded=False):
-            st.markdown("**Volume Order Blocks (VOB) Module**")
-            col1, col2 = st.columns(2)
-            with col1:
-                om_vob_sensitivity = st.slider(
-                    "VOB Sensitivity",
-                    min_value=3,
-                    max_value=15,
-                    value=5,
-                    step=1,
-                    key="om_vob_sensitivity"
-                )
-
             st.markdown("**High Volume Pivots (HVP) Module**")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -2998,31 +2525,6 @@ with tab6:
         try:
             with st.spinner("Rendering chart with indicators..."):
                 # Prepare indicator parameters
-                vob_params = {
-                    'sensitivity': vob_sensitivity if show_vob else 5,
-                    'mid_line': vob_mid_line if show_vob else True,
-                    'trend_shadow': vob_trend_shadow if show_vob else True
-                } if show_vob else None
-
-                htf_params = {
-                    'levels_config': []
-                }
-                if show_htf_sr:
-                    if htf_3min_enabled:
-                        htf_params['levels_config'].append({'timeframe': '3T', 'length': htf_3min_length, 'style': 'Solid', 'color': '#26a69a'})
-                    if htf_5min_enabled:
-                        htf_params['levels_config'].append({'timeframe': '5T', 'length': htf_5min_length, 'style': 'Solid', 'color': '#2196f3'})
-                    if htf_10min_enabled:
-                        htf_params['levels_config'].append({'timeframe': '10T', 'length': htf_10min_length, 'style': 'Solid', 'color': '#9c27b0'})
-                    if htf_15min_enabled:
-                        htf_params['levels_config'].append({'timeframe': '15T', 'length': htf_15min_length, 'style': 'Solid', 'color': '#ff9800'})
-
-                footprint_params = {
-                    'bins': footprint_bins if show_footprint else 10,
-                    'timeframe': footprint_timeframe if show_footprint else '1D',
-                    'show_dynamic_poc': footprint_dynamic_poc if show_footprint else True
-                } if show_footprint else None
-
                 rsi_params = {
                     'length': rsi_length if show_rsi else 14,
                     'smooth': rsi_smooth if show_rsi else 14,
@@ -3033,7 +2535,6 @@ with tab6:
                 } if show_rsi else None
 
                 om_params = {
-                    'vob_sensitivity': om_vob_sensitivity if show_om else 5,
                     'hvp_left_bars': om_hvp_left_bars if show_om else 15,
                     'hvp_right_bars': om_hvp_right_bars if show_om else 15,
                     'hvp_volume_filter': om_hvp_volume_filter if show_om else 2.0,
@@ -3094,9 +2595,9 @@ with tab6:
                 fig = chart_analyzer.create_advanced_chart(
                     st.session_state.chart_data,
                     symbol_code,
-                    show_vob=show_vob,
-                    show_htf_sr=show_htf_sr,
-                    show_footprint=show_footprint,
+                    show_vob=False,
+                    show_htf_sr=False,
+                    show_footprint=False,
                     show_rsi=show_rsi,
                     show_om=show_om,
                     show_volume=show_volume,
@@ -3108,9 +2609,9 @@ with tab6:
                     show_fibonacci=show_fibonacci,
                     show_patterns=show_patterns,
                     show_reversal_zones=show_reversal_zones,
-                    vob_params=vob_params,
-                    htf_params=htf_params,
-                    footprint_params=footprint_params,
+                    vob_params=None,
+                    htf_params=None,
+                    footprint_params=None,
                     rsi_params=rsi_params,
                     om_params=om_params,
                     liquidity_params=liquidity_params,
@@ -3156,12 +2657,6 @@ with tab6:
                 indicator_tabs = []
                 # Always show Market Regime tab
                 indicator_tabs.append("🎯 Market Regime")
-                if show_vob:
-                    indicator_tabs.append("📦 Volume Order Blocks")
-                if show_htf_sr:
-                    indicator_tabs.append("📊 HTF Support/Resistance")
-                if show_footprint:
-                    indicator_tabs.append("👣 Volume Footprint")
                 if show_rsi:
                     indicator_tabs.append("📈 Ultimate RSI")
                 if show_om:
@@ -3203,12 +2698,6 @@ with tab6:
                             regime_indicator_data['bos'] = []
                             regime_indicator_data['choch'] = []
 
-                        # Order Blocks data
-                        if show_vob:
-                            from indicators.volume_order_blocks import VolumeOrderBlocks
-                            vob_for_regime = VolumeOrderBlocks(**vob_params) if vob_params else VolumeOrderBlocks()
-                            regime_indicator_data['order_blocks'] = vob_for_regime.calculate(df_stats)
-
                         # RSI data
                         if show_rsi:
                             from indicators.ultimate_rsi import UltimateRSI
@@ -3233,13 +2722,6 @@ with tab6:
                             from indicators.reversal_probability_zones import ReversalProbabilityZones
                             rpz_for_regime = ReversalProbabilityZones(**reversal_zones_params) if reversal_zones_params else ReversalProbabilityZones()
                             reversal_zones_result = rpz_for_regime.calculate(df_stats)
-
-                        # HTF Volume Footprint data
-                        volume_footprint_result = None
-                        if show_footprint:
-                            from indicators.htf_volume_footprint import HTFVolumeFootprint
-                            footprint_for_regime = HTFVolumeFootprint(**footprint_params) if footprint_params else HTFVolumeFootprint()
-                            volume_footprint_result = footprint_for_regime.get_signals(df_stats)
 
                         # Fetch additional data sources
                         with st.spinner("Fetching comprehensive market data..."):
@@ -3273,7 +2755,7 @@ with tab6:
                             gamma_squeeze_data=gamma_squeeze_data,
                             advanced_chart_indicators=regime_indicator_data,
                             reversal_zones_data=reversal_zones_result,
-                            volume_footprint_data=volume_footprint_result
+                            volume_footprint_data=None
                         )
 
                         # ═══════════════════════════════════════════════════════════════
@@ -3562,117 +3044,6 @@ with tab6:
                                     st.markdown(f"• {signal}")
 
                     tab_idx += 1
-
-                    # Volume Order Blocks Data
-                    if show_vob:
-                        with tabs[tab_idx]:
-                            from indicators.volume_order_blocks import VolumeOrderBlocks
-                            vob_indicator = VolumeOrderBlocks(**vob_params) if vob_params else VolumeOrderBlocks()
-                            vob_data = vob_indicator.calculate(df_stats)
-
-                            col1, col2 = st.columns(2)
-
-                            with col1:
-                                st.markdown("#### 🟢 Bullish Order Blocks")
-                                if vob_data['bullish_blocks']:
-                                    bullish_data = []
-                                    for i, block in enumerate(vob_data['bullish_blocks']):
-                                        bullish_data.append({
-                                            'Block #': i + 1,
-                                            'Lower': f"₹{block['lower']:.2f}",
-                                            'Upper': f"₹{block['upper']:.2f}",
-                                            'Mid': f"₹{block['mid']:.2f}",
-                                            'Volume': f"{block['volume']:,.0f}",
-                                            'Active': '✅' if block['active'] else '❌'
-                                        })
-                                    st.dataframe(pd.DataFrame(bullish_data), use_container_width=True, hide_index=True)
-                                else:
-                                    st.info("No bullish order blocks detected")
-
-                            with col2:
-                                st.markdown("#### 🔴 Bearish Order Blocks")
-                                if vob_data['bearish_blocks']:
-                                    bearish_data = []
-                                    for i, block in enumerate(vob_data['bearish_blocks']):
-                                        bearish_data.append({
-                                            'Block #': i + 1,
-                                            'Lower': f"₹{block['lower']:.2f}",
-                                            'Upper': f"₹{block['upper']:.2f}",
-                                            'Mid': f"₹{block['mid']:.2f}",
-                                            'Volume': f"{block['volume']:,.0f}",
-                                            'Active': '✅' if block['active'] else '❌'
-                                        })
-                                    st.dataframe(pd.DataFrame(bearish_data), use_container_width=True, hide_index=True)
-                                else:
-                                    st.info("No bearish order blocks detected")
-                        tab_idx += 1
-
-                    # HTF Support/Resistance Data
-                    if show_htf_sr:
-                        with tabs[tab_idx]:
-                            st.markdown("#### 📊 Higher Timeframe Levels")
-                            if htf_params and htf_params.get('levels_config'):
-                                from indicators.htf_support_resistance import HTFSupportResistance
-
-                                for level_config in htf_params['levels_config']:
-                                    htf_indicator = HTFSupportResistance(
-                                        timeframes=[level_config['timeframe']],
-                                        pivot_length=level_config['length']
-                                    )
-                                    levels = htf_indicator.calculate_levels(df_stats)
-
-                                    if levels:
-                                        st.markdown(f"**{level_config['timeframe']} Timeframe** (Length: {level_config['length']})")
-                                        levels_data = []
-                                        for level in levels:
-                                            levels_data.append({
-                                                'Type': level['type'].upper(),
-                                                'Price': f"₹{level['price']:.2f}",
-                                                'Timeframe': level['timeframe'],
-                                                'Strength': '🔴' * int(level.get('strength', 1))
-                                            })
-                                        st.dataframe(pd.DataFrame(levels_data), use_container_width=True, hide_index=True)
-                                        st.divider()
-                            else:
-                                st.info("No HTF levels configured")
-                        tab_idx += 1
-
-                    # Volume Footprint Data
-                    if show_footprint:
-                        with tabs[tab_idx]:
-                            from indicators.htf_volume_footprint import HTFVolumeFootprint
-                            footprint_indicator = HTFVolumeFootprint(**footprint_params) if footprint_params else HTFVolumeFootprint()
-                            footprint_data = footprint_indicator.calculate(df_stats)
-
-                            st.markdown("#### 👣 Volume Footprint Analysis")
-
-                            # Recent bars analysis
-                            recent_bars = df_stats.tail(10).copy()
-                            footprint_table = []
-
-                            for idx in range(len(recent_bars)):
-                                row_idx = recent_bars.index[idx]
-                                bar_data = {
-                                    'Time': recent_bars.index[idx].strftime('%H:%M') if hasattr(recent_bars.index[idx], 'strftime') else str(recent_bars.index[idx]),
-                                    'Open': f"₹{recent_bars['open'].iloc[idx]:.2f}",
-                                    'High': f"₹{recent_bars['high'].iloc[idx]:.2f}",
-                                    'Low': f"₹{recent_bars['low'].iloc[idx]:.2f}",
-                                    'Close': f"₹{recent_bars['close'].iloc[idx]:.2f}",
-                                    'Volume': f"{recent_bars['volume'].iloc[idx]:,.0f}",
-                                }
-
-                                # Add footprint data if available
-                                if 'buy_volume' in footprint_data:
-                                    buy_vol = footprint_data['buy_volume'][row_idx] if row_idx in footprint_data['buy_volume'].index else 0
-                                    sell_vol = footprint_data['sell_volume'][row_idx] if row_idx in footprint_data['sell_volume'].index else 0
-                                    bar_data['Buy Vol'] = f"{buy_vol:,.0f}"
-                                    bar_data['Sell Vol'] = f"{sell_vol:,.0f}"
-                                    bar_data['Delta'] = f"{buy_vol - sell_vol:,.0f}"
-
-                                footprint_table.append(bar_data)
-
-                            st.dataframe(pd.DataFrame(footprint_table), use_container_width=True, hide_index=True)
-                        tab_idx += 1
 
                     # Ultimate RSI Data
                     if show_rsi:
@@ -4299,34 +3670,8 @@ with tab6:
                         else:
                             st.info("⏸ **NEUTRAL** - No clear signal")
 
-                if show_vob:
-                    from indicators.volume_order_blocks import VolumeOrderBlocks
-                    vob_indicator = VolumeOrderBlocks(**vob_params) if vob_params else VolumeOrderBlocks()
-                    vob_data = vob_indicator.calculate(df_stats)
-
-                    st.divider()
-                    st.markdown("**Volume Order Blocks**")
-
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.write(f"🟢 **Bullish OBs:** {len([b for b in vob_data['bullish_blocks'] if b['active']])}")
-                        if len(vob_data['bullish_blocks']) > 0:
-                            for i, block in enumerate(vob_data['bullish_blocks'][-3:]):
-                                if block['active']:
-                                    st.write(f"  - Support: {block['lower']:.2f} - {block['upper']:.2f}")
-
-                    with col2:
-                        st.write(f"🔴 **Bearish OBs:** {len([b for b in vob_data['bearish_blocks'] if b['active']])}")
-                        if len(vob_data['bearish_blocks']) > 0:
-                            for i, block in enumerate(vob_data['bearish_blocks'][-3:]):
-                                if block['active']:
-                                    st.write(f"  - Resistance: {block['lower']:.2f} - {block['upper']:.2f}")
-
-                # Proximity Alerts Section
+                # Market Context Section
                 st.divider()
-                st.markdown("**🔔 Proximity Alerts**")
-                st.caption("Automatic Telegram notifications when price is near key levels (Rate limited: 10 minutes)")
 
                 try:
                     # Get proximity alert system
@@ -4338,41 +3683,8 @@ with tab6:
                     # Determine symbol for alerts
                     alert_symbol = "NIFTY" if "NSEI" in symbol_code else "SENSEX" if "BSESN" in symbol_code else symbol_code
 
-                    # Get HTF data if enabled
-                    htf_data = []
-                    if show_htf_sr and htf_params and htf_params.get('levels_config'):
-                        from indicators.htf_support_resistance import HTFSupportResistance
-                        for level_config in htf_params['levels_config']:
-                            htf_indicator = HTFSupportResistance(
-                                timeframes=[level_config['timeframe']],
-                                pivot_length=level_config['length']
-                            )
-                            levels = htf_indicator.calculate_levels(df_stats)
-                            htf_data.extend(levels)
-
-                    # Process proximity alerts
-                    all_alerts, notifications_sent = proximity_system.process_market_data(
-                        symbol=alert_symbol,
-                        current_price=current_price,
-                        vob_data=vob_data if show_vob else {},
-                        htf_data=htf_data
-                    )
-
-                    # Display alert summary
-                    col1, col2, col3 = st.columns(3)
-
-                    with col1:
-                        st.metric("Current Price", f"₹{current_price:,.2f}")
-
-                    with col2:
-                        vob_alert_count = len([a for a in all_alerts if a.alert_type == 'VOB'])
-                        st.metric("VOB Alerts", vob_alert_count,
-                                 delta="Within 7 pts" if vob_alert_count > 0 else None)
-
-                    with col3:
-                        htf_alert_count = len([a for a in all_alerts if a.alert_type == 'HTF'])
-                        st.metric("HTF Alerts", htf_alert_count,
-                                 delta="Within 5 pts" if htf_alert_count > 0 else None)
+                    # Display current price
+                    st.metric("Current Price", f"₹{current_price:,.2f}")
 
                     # Gather and display comprehensive market context
                     market_context = proximity_system._gather_market_context()

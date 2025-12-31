@@ -56,13 +56,13 @@ class TelegramBot:
     def send_signal_ready(self, setup: dict):
         """Send signal ready alert"""
         message = f"""
-🎯 <b>SIGNAL READY - 3/3 Received</b>
+🎯 <b>SIGNAL READY</b>
 
 <b>Index:</b> {setup['index']}
 <b>Direction:</b> {setup['direction']}
 
-<b>VOB Support:</b> {setup['vob_support']}
-<b>VOB Resistance:</b> {setup['vob_resistance']}
+<b>Support:</b> {setup.get('vob_support', 'N/A')}
+<b>Resistance:</b> {setup.get('vob_resistance', 'N/A')}
 
 <b>Status:</b> ✅ Ready to Trade
 <b>Time (IST):</b> {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')}
@@ -70,29 +70,8 @@ class TelegramBot:
 📱 Open app to execute trade
         """
         return self.send_message(message.strip())
-    
-    def send_vob_touch_alert(self, setup: dict, current_price: float):
-        """Send VOB touch alert"""
-        vob_level = setup['vob_support'] if setup['direction'] == 'CALL' else setup['vob_resistance']
-        vob_type = "Support" if setup['direction'] == 'CALL' else "Resistance"
-        
-        message = f"""
-🔥 <b>VOB TOUCHED - ENTRY SIGNAL!</b>
 
-<b>Index:</b> {setup['index']}
-<b>Direction:</b> {setup['direction']}
-
-<b>Current Price:</b> {current_price}
-<b>VOB {vob_type}:</b> {vob_level}
-
-<b>Status:</b> 🚀 Ready to Execute
-<b>Time (IST):</b> {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')}
-
-⚡ Execute trade NOW!
-        """
-        return self.send_message(message.strip())
-    
-    def send_order_placed(self, setup: dict, order_id: str, strike: int, 
+    def send_order_placed(self, setup: dict, order_id: str, strike: int,
                          sl: float, target: float):
         """Send order placed confirmation"""
         message = f"""
@@ -139,79 +118,6 @@ class TelegramBot:
 <b>P&L:</b> ₹{pnl:,.2f}
 
 <b>Time (IST):</b> {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')}
-        """
-        return self.send_message(message.strip())
-
-    def send_vob_entry_signal(self, signal: dict):
-        """Send VOB-based entry signal alert"""
-        signal_emoji = "🟢" if signal['direction'] == 'CALL' else "🔴"
-        direction_label = "BULLISH" if signal['direction'] == 'CALL' else "BEARISH"
-
-        message = f"""
-{signal_emoji} <b>VOB ENTRY SIGNAL - {direction_label}</b>
-
-<b>Index:</b> {signal['index']}
-<b>Direction:</b> {signal['direction']}
-<b>Market Sentiment:</b> {signal['market_sentiment']}
-
-💰 <b>ENTRY LEVELS</b>
-<b>Entry Price:</b> {signal['entry_price']}
-<b>Stop Loss:</b> {signal['stop_loss']}
-<b>Target:</b> {signal['target']}
-<b>Risk:Reward:</b> {signal['risk_reward']}
-
-📊 <b>VOB DETAILS</b>
-<b>VOB Level:</b> {signal['vob_level']}
-<b>Distance from VOB:</b> {signal['distance_from_vob']} points
-<b>VOB Volume:</b> {signal['vob_volume']:,.0f}
-
-<b>Time:</b> {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
-
-⚡ <b>Execute trade NOW!</b>
-        """
-        return self.send_message(message.strip())
-
-    def send_htf_sr_entry_signal(self, signal: dict):
-        """Send HTF Support/Resistance entry signal alert"""
-        signal_emoji = "🟢" if signal['direction'] == 'CALL' else "🔴"
-        direction_label = "BULLISH" if signal['direction'] == 'CALL' else "BEARISH"
-
-        # Format timeframe for display
-        timeframe_display = {
-            '5T': '5 Min',
-            '10T': '10 Min',
-            '15T': '15 Min'
-        }.get(signal.get('timeframe', ''), signal.get('timeframe', 'N/A'))
-
-        # Determine if it's support or resistance signal
-        if signal['direction'] == 'CALL':
-            level_type = "Support"
-            level_value = signal['support_level']
-        else:
-            level_type = "Resistance"
-            level_value = signal['resistance_level']
-
-        message = f"""
-{signal_emoji} <b>HTF S/R ENTRY SIGNAL - {direction_label}</b>
-
-<b>Index:</b> {signal['index']}
-<b>Direction:</b> {signal['direction']}
-<b>Market Sentiment:</b> {signal['market_sentiment']}
-
-💰 <b>ENTRY LEVELS</b>
-<b>Entry Price:</b> {signal['entry_price']}
-<b>Stop Loss:</b> {signal['stop_loss']}
-<b>Target:</b> {signal['target']}
-<b>Risk:Reward:</b> {signal['risk_reward']}
-
-📊 <b>HTF S/R DETAILS</b>
-<b>Timeframe:</b> {timeframe_display}
-<b>{level_type} Level:</b> {level_value}
-<b>Distance from Level:</b> {signal['distance_from_level']} points
-
-<b>Time:</b> {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
-
-⚡ <b>Execute trade NOW!</b>
         """
         return self.send_message(message.strip())
 
@@ -510,125 +416,6 @@ class TelegramBot:
 Sellers/buyers absorbing all pressure
         """
         return self.send_message(message.strip())
-
-    def send_vob_status_summary(self, nifty_data: dict, sensex_data: dict):
-        """Send VOB status summary for both NIFTY and SENSEX"""
-
-        def format_vob_block(symbol: str, vob_type: str, block_data: dict):
-            """Format a single VOB block display"""
-            emoji = "🟢" if vob_type == "Bullish" else "🔴"
-            strength = block_data.get('strength_score', 0)
-            trend = block_data.get('trend', 'STABLE')
-            lower = block_data.get('lower', 0)
-            upper = block_data.get('upper', 0)
-
-            # Determine trend emoji
-            if trend == "STRENGTHENING":
-                trend_emoji = "🔺"
-                trend_text = "STRENGTHENING"
-            elif trend == "WEAKENING":
-                trend_emoji = "🔻"
-                trend_text = "WEAKENING"
-            else:
-                trend_emoji = "➖"
-                trend_text = "STABLE"
-
-            return f"""
-{emoji} <b>{vob_type} VOB:</b> ₹{lower:.2f} - ₹{upper:.2f}
-
-<b>Strength:</b> {strength:.1f}/100 {trend_emoji} {trend_text}"""
-
-        message_parts = [
-            "<b>📊 Volume Order Block Status</b>",
-            "",
-            "<b>NIFTY VOB</b>"
-        ]
-
-        # Add NIFTY VOB data
-        if nifty_data.get('bullish'):
-            message_parts.append(format_vob_block("NIFTY", "Bullish", nifty_data['bullish']))
-        else:
-            message_parts.append("🟢 <b>Bullish VOB:</b> No data available")
-
-        if nifty_data.get('bearish'):
-            message_parts.append(format_vob_block("NIFTY", "Bearish", nifty_data['bearish']))
-        else:
-            message_parts.append("🔴 <b>Bearish VOB:</b> No data available")
-
-        message_parts.extend(["", "<b>SENSEX VOB</b>"])
-
-        # Add SENSEX VOB data
-        if sensex_data.get('bullish'):
-            message_parts.append(format_vob_block("SENSEX", "Bullish", sensex_data['bullish']))
-        else:
-            message_parts.append("🟢 <b>Bullish VOB:</b> No data available")
-
-        if sensex_data.get('bearish'):
-            message_parts.append(format_vob_block("SENSEX", "Bearish", sensex_data['bearish']))
-        else:
-            message_parts.append("🔴 <b>Bearish VOB:</b> No data available")
-
-        message_parts.extend([
-            "",
-            f"<i>Updated (IST): {get_current_time_ist().strftime('%I:%M:%S %p %Z')}</i>"
-        ])
-
-        message = "\n".join(message_parts)
-        return self.send_message(message)
-
-    def send_htf_sr_status_summary(self, nifty_htf: dict, sensex_htf: dict):
-        """Send HTF Support/Resistance status summary"""
-
-        def format_htf_levels(symbol: str, htf_data: dict):
-            """Format HTF S/R levels for display"""
-            lines = [f"<b>{symbol}</b>"]
-
-            for timeframe, levels in htf_data.items():
-                if not levels:
-                    continue
-
-                # Format timeframe for display
-                tf_display = timeframe.replace('T', 'min')
-
-                support = levels.get('support')
-                resistance = levels.get('resistance')
-                support_strength = levels.get('support_strength', {})
-                resistance_strength = levels.get('resistance_strength', {})
-
-                if support:
-                    s_score = support_strength.get('strength_score', 0)
-                    s_trend = support_strength.get('trend', 'STABLE')
-                    s_emoji = "🔺" if s_trend == "STRENGTHENING" else "🔻" if s_trend == "WEAKENING" else "➖"
-                    lines.append(f"  🟢 {tf_display} Support: ₹{support:.2f} ({s_score:.1f}/100 {s_emoji})")
-
-                if resistance:
-                    r_score = resistance_strength.get('strength_score', 0)
-                    r_trend = resistance_strength.get('trend', 'STABLE')
-                    r_emoji = "🔺" if r_trend == "STRENGTHENING" else "🔻" if r_trend == "WEAKENING" else "➖"
-                    lines.append(f"  🔴 {tf_display} Resistance: ₹{resistance:.2f} ({r_score:.1f}/100 {r_emoji})")
-
-            return "\n".join(lines) if len(lines) > 1 else f"<b>{symbol}</b>\n  No HTF data available"
-
-        message_parts = [
-            "<b>📊 HTF Support/Resistance Status</b>",
-            "<b>5min, 10min, 15min Timeframes</b>",
-            ""
-        ]
-
-        # Add NIFTY HTF data
-        message_parts.append(format_htf_levels("NIFTY", nifty_htf))
-        message_parts.append("")
-
-        # Add SENSEX HTF data
-        message_parts.append(format_htf_levels("SENSEX", sensex_htf))
-
-        message_parts.extend([
-            "",
-            f"<i>Updated (IST): {get_current_time_ist().strftime('%I:%M:%S %p %Z')}</i>"
-        ])
-
-        message = "\n".join(message_parts)
-        return self.send_message(message)
 
     async def send_ai_market_alert(self, report: Dict[str, Any], confidence_thresh: float = 0.60) -> bool:
         """
