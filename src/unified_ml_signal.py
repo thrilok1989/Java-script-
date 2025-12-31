@@ -861,205 +861,186 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     phase_explanation = phase_explanations.get(market_phase, "Market in transition phase.")
 
     # ═══════════════════════════════════════════════════════════════════
-    # COMPREHENSIVE SUPPORT/RESISTANCE (Option Chain Strike-Based + Chart)
+    # COMPREHENSIVE S/R: Fib + Option Chain + HTF + Price Action
     # ═══════════════════════════════════════════════════════════════════
-    # PRIMARY: Option Chain Strike prices (50-point intervals)
-    # SECONDARY: Chart-based levels that confirm/align with strikes
-
     support_levels = []
     resistance_levels = []
 
-    # Get ATM Strike (primary reference)
-    atm = signal.atm_strike if signal.atm_strike and signal.atm_strike > 0 else 0
-    if not atm and spot_price:
-        atm = round(spot_price / 50) * 50  # Round to nearest 50
+    # ═══════════════════════════════════════════════════════════════════
+    # 1. FIBONACCI LEVELS (from Swing High/Low)
+    # ═══════════════════════════════════════════════════════════════════
+    swing_high = None
+    swing_low = None
+
+    if support_resistance:
+        # Get swing high/low from ML regime data
+        all_res = support_resistance.get('all_resistances', [])
+        all_sup = support_resistance.get('all_supports', [])
+        swing_high = max([r for r in all_res if r and isinstance(r, (int, float))]) if all_res else None
+        swing_low = min([s for s in all_sup if s and isinstance(s, (int, float))]) if all_sup else None
+
+        if not swing_high:
+            swing_high = support_resistance.get('major_resistance') or support_resistance.get('near_resistance')
+        if not swing_low:
+            swing_low = support_resistance.get('major_support') or support_resistance.get('near_support')
+
+    # Calculate Fibonacci retracement levels
+    if swing_high and swing_low and swing_high > swing_low and spot_price:
+        fib_range = swing_high - swing_low
+        fib_ratios = {'0.236': 0.236, '0.382': 0.382, '0.5': 0.5, '0.618': 0.618, '0.786': 0.786}
+
+        for name, ratio in fib_ratios.items():
+            fib_level = swing_high - (fib_range * ratio)
+            if fib_level < spot_price:
+                support_levels.append({'price': fib_level, 'source': 'Fib', 'type': name})
+            elif fib_level > spot_price:
+                resistance_levels.append({'price': fib_level, 'source': 'Fib', 'type': name})
+
+        # Swing high/low as key levels
+        if swing_high > spot_price:
+            resistance_levels.append({'price': swing_high, 'source': 'Swing', 'type': 'High'})
+        if swing_low < spot_price:
+            support_levels.append({'price': swing_low, 'source': 'Swing', 'type': 'Low'})
 
     # ═══════════════════════════════════════════════════════════════════
-    # 1. PRIMARY: Option Chain Strike-Based S/R (50-point intervals)
-    # ═══════════════════════════════════════════════════════════════════
-    if atm and spot_price:
-        # Support strikes below spot (ATM-50, ATM-100, ATM-150, ATM-200)
-        for offset in [50, 100, 150, 200]:
-            strike = atm - offset
-            if strike < spot_price:
-                support_levels.append({'price': strike, 'source': 'Strike', 'type': f'CE-{offset}', 'priority': 1})
-
-        # Resistance strikes above spot (ATM+50, ATM+100, ATM+150, ATM+200)
-        for offset in [50, 100, 150, 200]:
-            strike = atm + offset
-            if strike > spot_price:
-                resistance_levels.append({'price': strike, 'source': 'Strike', 'type': f'PE+{offset}', 'priority': 1})
-
-        # ATM itself can be S or R
-        if atm < spot_price:
-            support_levels.append({'price': atm, 'source': 'ATM', 'type': 'ATM', 'priority': 1})
-        elif atm > spot_price:
-            resistance_levels.append({'price': atm, 'source': 'ATM', 'type': 'ATM', 'priority': 1})
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 2. Option Chain OI Data (Max OI strikes, Max Pain)
+    # 2. OPTION CHAIN (Max Pain, OI Walls)
     # ═══════════════════════════════════════════════════════════════════
     option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
-    if option_data:
-        # Max OI PUT strike = Strong Support
-        supp_data = option_data.get('support', {})
-        if supp_data.get('strike'):
-            strike = supp_data['strike']
-            # Round to nearest 50 if not already
-            strike = round(strike / 50) * 50
-            if strike < spot_price:
-                support_levels.append({'price': strike, 'source': 'OI-Wall', 'type': 'MaxPUT-OI', 'priority': 1})
-
-        # Max OI CALL strike = Strong Resistance
-        res_data = option_data.get('resistance', {})
-        if res_data.get('strike'):
-            strike = res_data['strike']
-            strike = round(strike / 50) * 50
-            if strike > spot_price:
-                resistance_levels.append({'price': strike, 'source': 'OI-Wall', 'type': 'MaxCALL-OI', 'priority': 1})
-
+    if option_data and spot_price:
         # Max Pain
         max_pain = option_data.get('max_pain')
         if max_pain and isinstance(max_pain, (int, float)):
-            mp = round(max_pain / 50) * 50
-            if mp < spot_price:
-                support_levels.append({'price': mp, 'source': 'MaxPain', 'type': 'Target', 'priority': 1})
+            if max_pain < spot_price:
+                support_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
             else:
-                resistance_levels.append({'price': mp, 'source': 'MaxPain', 'type': 'Target', 'priority': 1})
+                resistance_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
 
-    # From Spike Detector (OI-based)
-    if spike_data and spike_data.get('key_levels'):
+        # OI Walls
+        supp_data = option_data.get('support', {})
+        if supp_data.get('strike') and supp_data['strike'] < spot_price:
+            support_levels.append({'price': supp_data['strike'], 'source': 'OI-Wall', 'type': 'PUT'})
+
+        res_data = option_data.get('resistance', {})
+        if res_data.get('strike') and res_data['strike'] > spot_price:
+            resistance_levels.append({'price': res_data['strike'], 'source': 'OI-Wall', 'type': 'CALL'})
+
+    # From Spike Detector
+    if spike_data and spike_data.get('key_levels') and spot_price:
         key_levels = spike_data.get('key_levels', {})
-        if key_levels.get('support'):
-            strike = round(key_levels['support'] / 50) * 50
-            if strike < spot_price:
-                support_levels.append({'price': strike, 'source': 'OI-Spike', 'type': 'Strike', 'priority': 1})
-        if key_levels.get('resistance'):
-            strike = round(key_levels['resistance'] / 50) * 50
-            if strike > spot_price:
-                resistance_levels.append({'price': strike, 'source': 'OI-Spike', 'type': 'Strike', 'priority': 1})
+        if key_levels.get('support') and key_levels['support'] < spot_price:
+            support_levels.append({'price': key_levels['support'], 'source': 'Spike', 'type': 'OI'})
+        if key_levels.get('resistance') and key_levels['resistance'] > spot_price:
+            resistance_levels.append({'price': key_levels['resistance'], 'source': 'Spike', 'type': 'OI'})
 
     # ═══════════════════════════════════════════════════════════════════
-    # 3. SECONDARY: Chart-based S/R (aligned to 50-point strikes)
+    # 3. HTF S/R (Higher Timeframe from session state)
     # ═══════════════════════════════════════════════════════════════════
-    if support_resistance:
-        # Near Support/Resistance
-        for key, src_type in [('near_support', 'Support'), ('major_support', 'Support'),
-                               ('near_resistance', 'Resistance'), ('major_resistance', 'Resistance')]:
-            value = support_resistance.get(key)
-            if value and isinstance(value, (int, float)):
-                # Align to nearest 50
-                aligned = round(value / 50) * 50
-                if 'support' in key.lower() and aligned < spot_price:
-                    support_levels.append({'price': aligned, 'source': 'Chart', 'type': key.replace('_', '-'), 'priority': 2})
-                elif 'resistance' in key.lower() and aligned > spot_price:
-                    resistance_levels.append({'price': aligned, 'source': 'Chart', 'type': key.replace('_', '-'), 'priority': 2})
+    htf_data = st.session_state.get('htf_sr_levels', {})
+    if htf_data and spot_price:
+        for tf, levels in htf_data.items():
+            if isinstance(levels, dict):
+                if levels.get('support') and levels['support'] < spot_price:
+                    support_levels.append({'price': levels['support'], 'source': 'HTF', 'type': tf})
+                if levels.get('resistance') and levels['resistance'] > spot_price:
+                    resistance_levels.append({'price': levels['resistance'], 'source': 'HTF', 'type': tf})
 
-        # All swing supports/resistances
+    # ═══════════════════════════════════════════════════════════════════
+    # 4. SWING HIGHS/LOWS (Price Action from Chart)
+    # ═══════════════════════════════════════════════════════════════════
+    if support_resistance and spot_price:
         for s in support_resistance.get('all_supports', []):
-            if s and isinstance(s, (int, float)):
-                aligned = round(s / 50) * 50
-                if aligned < spot_price:
-                    support_levels.append({'price': aligned, 'source': 'Chart', 'type': 'Swing', 'priority': 2})
+            if s and isinstance(s, (int, float)) and s < spot_price:
+                support_levels.append({'price': s, 'source': 'Chart', 'type': 'Swing'})
         for r in support_resistance.get('all_resistances', []):
-            if r and isinstance(r, (int, float)):
-                aligned = round(r / 50) * 50
-                if aligned > spot_price:
-                    resistance_levels.append({'price': aligned, 'source': 'Chart', 'type': 'Swing', 'priority': 2})
+            if r and isinstance(r, (int, float)) and r > spot_price:
+                resistance_levels.append({'price': r, 'source': 'Chart', 'type': 'Swing'})
 
     # ═══════════════════════════════════════════════════════════════════
-    # 4. ML Signal levels (aligned to 50-point strikes)
+    # 5. ROUND NUMBERS (Psychological)
     # ═══════════════════════════════════════════════════════════════════
-    if signal.stop_loss and signal.stop_loss > 0:
-        aligned = round(signal.stop_loss / 50) * 50
-        if aligned < spot_price:
-            support_levels.append({'price': aligned, 'source': 'ML', 'type': 'StopLoss', 'priority': 2})
-
-    if signal.targets:
-        for i, tgt in enumerate(signal.targets[:2]):
-            if tgt and tgt > 0:
-                aligned = round(tgt / 50) * 50
-                if aligned > spot_price:
-                    resistance_levels.append({'price': aligned, 'source': 'ML', 'type': f'Target{i+1}', 'priority': 2})
+    if spot_price:
+        base = int(spot_price / 100) * 100
+        for lvl in [base - 100, base, base + 100, base + 200]:
+            if lvl < spot_price:
+                support_levels.append({'price': lvl, 'source': 'Round', 'type': '100'})
+            elif lvl > spot_price:
+                resistance_levels.append({'price': lvl, 'source': 'Round', 'type': '100'})
 
     # ═══════════════════════════════════════════════════════════════════
-    # 5. Merge and consolidate levels at same strike (within 25 points)
+    # 6. VWAP (Volume Weighted Average Price)
     # ═══════════════════════════════════════════════════════════════════
-    def merge_sr_levels(levels, merge_threshold=25):
-        """Merge levels within threshold. Since all levels are 50-point aligned,
-        threshold of 25 will only merge exact matches."""
+    vwap = st.session_state.get('vwap_level') or st.session_state.get('nifty_vwap')
+    if vwap and isinstance(vwap, (int, float)) and spot_price:
+        if vwap < spot_price:
+            support_levels.append({'price': vwap, 'source': 'VWAP', 'type': 'Daily'})
+        else:
+            resistance_levels.append({'price': vwap, 'source': 'VWAP', 'type': 'Daily'})
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 7. Volume Order Blocks (VOB) from session state
+    # ═══════════════════════════════════════════════════════════════════
+    vob_data = st.session_state.get('vob_levels', {})
+    if vob_data and spot_price:
+        for block in vob_data.get('bullish_blocks', []):
+            if block.get('mid') and block['mid'] < spot_price:
+                support_levels.append({'price': block['mid'], 'source': 'VOB', 'type': 'Bull'})
+        for block in vob_data.get('bearish_blocks', []):
+            if block.get('mid') and block['mid'] > spot_price:
+                resistance_levels.append({'price': block['mid'], 'source': 'VOB', 'type': 'Bear'})
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 8. Merge levels using Fibonacci tolerance (not fixed threshold)
+    # ═══════════════════════════════════════════════════════════════════
+    def merge_sr_levels_fib(levels):
+        """Merge levels using 0.382% tolerance (Fib-based confluence)"""
         if not levels:
             return []
 
-        # Sort by price
         sorted_levels = sorted(levels, key=lambda x: x['price'])
         merged = []
-        current_zone = None
+        # Tolerance: 0.382% of spot (Fib ratio) ≈ 100 points for 26000
+        tolerance = spot_price * 0.00382 if spot_price else 100
 
+        current_zone = None
         for lvl in sorted_levels:
             if current_zone is None:
-                current_zone = {
-                    'prices': [lvl['price']],
-                    'sources': [lvl['source']],
-                    'types': [lvl.get('type', 'Unknown')],
-                    'priority': lvl.get('priority', 2)
-                }
-            elif abs(lvl['price'] - current_zone['prices'][-1]) <= merge_threshold:
-                # Same strike - merge and count confluence
+                current_zone = {'prices': [lvl['price']], 'sources': [lvl['source']]}
+            elif abs(lvl['price'] - sum(current_zone['prices'])/len(current_zone['prices'])) <= tolerance:
                 current_zone['prices'].append(lvl['price'])
                 if lvl['source'] not in current_zone['sources']:
                     current_zone['sources'].append(lvl['source'])
-                if lvl.get('type') and lvl['type'] not in current_zone['types']:
-                    current_zone['types'].append(lvl['type'])
-                # Keep highest priority (lower number = higher priority)
-                current_zone['priority'] = min(current_zone['priority'], lvl.get('priority', 2))
             else:
-                # New strike level
-                avg_price = round(sum(current_zone['prices']) / len(current_zone['prices']) / 50) * 50
+                avg = sum(current_zone['prices']) / len(current_zone['prices'])
                 merged.append({
-                    'price': avg_price,
+                    'price': avg,
                     'range': (min(current_zone['prices']), max(current_zone['prices'])),
                     'sources': current_zone['sources'],
-                    'strength': len(current_zone['sources']),  # Confluence count
-                    'priority': current_zone['priority']
+                    'strength': len(current_zone['sources'])
                 })
-                current_zone = {
-                    'prices': [lvl['price']],
-                    'sources': [lvl['source']],
-                    'types': [lvl.get('type', 'Unknown')],
-                    'priority': lvl.get('priority', 2)
-                }
+                current_zone = {'prices': [lvl['price']], 'sources': [lvl['source']]}
 
-        # Don't forget last zone
         if current_zone:
-            avg_price = round(sum(current_zone['prices']) / len(current_zone['prices']) / 50) * 50
+            avg = sum(current_zone['prices']) / len(current_zone['prices'])
             merged.append({
-                'price': avg_price,
+                'price': avg,
                 'range': (min(current_zone['prices']), max(current_zone['prices'])),
                 'sources': current_zone['sources'],
-                'strength': len(current_zone['sources']),
-                'priority': current_zone['priority']
+                'strength': len(current_zone['sources'])
             })
         return merged
 
-    merged_supports = merge_sr_levels(support_levels)
-    merged_resistances = merge_sr_levels(resistance_levels)
+    merged_supports = merge_sr_levels_fib(support_levels)
+    merged_resistances = merge_sr_levels_fib(resistance_levels)
 
-    # Sort by: 1) Priority (Option Chain first), 2) Strength (confluence), 3) Proximity to spot
+    # Sort by confluence strength, then proximity
     if spot_price:
-        merged_supports = sorted(merged_supports,
-            key=lambda x: (x.get('priority', 2), -x['strength'], spot_price - x['price']))[:3]
-        merged_resistances = sorted(merged_resistances,
-            key=lambda x: (x.get('priority', 2), -x['strength'], x['price'] - spot_price))[:3]
+        merged_supports = sorted(merged_supports, key=lambda x: (-x['strength'], spot_price - x['price']))[:3]
+        merged_resistances = sorted(merged_resistances, key=lambda x: (-x['strength'], x['price'] - spot_price))[:3]
 
-    # FALLBACK: If still no S/R, calculate from spot price
-    if not merged_supports and spot_price and spot_price > 0:
-        # Use round numbers as support
-        base = int(spot_price / 50) * 50  # Round to nearest 50
-        merged_supports = [
-            {'price': base - 50, 'range': (base - 50, base - 50), 'sources': ['Calculated'], 'strength': 1},
-            {'price': base - 100, 'range': (base - 100, base - 100), 'sources': ['Calculated'], 'strength': 1}
-        ]
+    # FALLBACK
+    if not merged_supports and spot_price:
+        base = int(spot_price / 100) * 100
+        merged_supports = [{'price': base - 100, 'range': (base-100, base-100), 'sources': ['Round'], 'strength': 1}]
     if not merged_resistances and spot_price and spot_price > 0:
         base = int(spot_price / 50) * 50  # Round to nearest 50
         merged_resistances = [
