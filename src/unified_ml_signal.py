@@ -184,10 +184,16 @@ class UnifiedMLSignalGenerator:
         trap_warning = "None"
         strategy = "Wait for confirmation"
 
-        # Ensure ATR column exists
+        # Ensure ATR column exists (handle both 'High'/'Low' and 'high'/'low' columns)
         if 'ATR' not in df.columns:
             df = df.copy()
-            df['ATR'] = df['High'] - df['Low']
+            # Check for column names (could be 'High' or 'high')
+            high_col = 'High' if 'High' in df.columns else 'high' if 'high' in df.columns else None
+            low_col = 'Low' if 'Low' in df.columns else 'low' if 'low' in df.columns else None
+            if high_col and low_col:
+                df['ATR'] = df[high_col] - df[low_col]
+            else:
+                df['ATR'] = 50  # Default ATR if columns missing
 
         # 1. ML Market Regime
         if self.regime_detector:
@@ -378,7 +384,16 @@ class UnifiedMLSignalGenerator:
 
         # Calculate entry/exit levels
         current_price = spot_price or (df['Close'].iloc[-1] if 'Close' in df.columns else df['close'].iloc[-1])
-        atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else (df['High'].iloc[-1] - df['Low'].iloc[-1])
+        # Handle both 'High'/'high' and 'Low'/'low' column names
+        if 'ATR' in df.columns:
+            atr = df['ATR'].iloc[-1]
+        else:
+            high_col = 'High' if 'High' in df.columns else 'high' if 'high' in df.columns else None
+            low_col = 'Low' if 'Low' in df.columns else 'low' if 'low' in df.columns else None
+            if high_col and low_col:
+                atr = df[high_col].iloc[-1] - df[low_col].iloc[-1]
+            else:
+                atr = 50  # Default ATR if columns missing
 
         if 'BUY' in signal:
             entry_zone = (current_price - atr * 0.5, current_price)
