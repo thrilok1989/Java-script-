@@ -404,23 +404,6 @@ if 'bias_analysis_results' not in st.session_state:
 if 'chart_data' not in st.session_state:
     st.session_state.chart_data = None
 
-# ═══════════════════════════════════════════════════════════════════════
-# LAZY TAB LOADING - Track which tabs have been loaded to improve performance
-# ═══════════════════════════════════════════════════════════════════════
-# This prevents ALL tabs from loading on every rerun - only active tab loads
-if 'tab1_loaded' not in st.session_state:
-    st.session_state.tab1_loaded = False
-if 'tab7_loaded' not in st.session_state:
-    st.session_state.tab7_loaded = False
-if 'tab1_data' not in st.session_state:
-    st.session_state.tab1_data = None
-if 'tab7_data' not in st.session_state:
-    st.session_state.tab7_data = None
-if 'tab1_last_load' not in st.session_state:
-    st.session_state.tab1_last_load = 0
-if 'tab7_last_load' not in st.session_state:
-    st.session_state.tab7_last_load = 0
-
 # Initialize background data loading
 if 'data_preloaded' not in st.session_state:
     st.session_state.data_preloaded = False
@@ -1386,49 +1369,11 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 1: OVERALL MARKET SENTIMENT (LAZY LOADED - BUTTON TRIGGERED)
+# TAB 1: OVERALL MARKET SENTIMENT (AUTO-LOAD WITH SMART CACHING)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab1:
-    # LAZY LOADING: Only render when user explicitly requests
-    # This prevents heavy computation on every app rerun
-
-    # Control buttons
-    col1, col2, col3 = st.columns([1, 1, 2])
-    with col1:
-        load_sentiment = st.button("📊 Load Dashboard", key="load_tab1", type="primary", use_container_width=True)
-    with col2:
-        if st.button("🔄 Refresh", key="refresh_tab1", use_container_width=True):
-            st.session_state.tab1_loaded = False
-            load_sentiment = True
-    with col3:
-        if st.session_state.tab1_loaded:
-            st.success(f"✅ Loaded at {datetime.fromtimestamp(st.session_state.tab1_last_load).strftime('%H:%M:%S')}")
-        else:
-            st.info("👆 Click 'Load Dashboard' to view market sentiment")
-
-    # Only load when user clicks button or data was previously loaded
-    if load_sentiment or st.session_state.tab1_loaded:
-        with st.spinner("Loading market sentiment data..."):
-            try:
-                render_overall_market_sentiment(NSE_INSTRUMENTS)
-                st.session_state.tab1_loaded = True
-                st.session_state.tab1_last_load = time.time()
-            except Exception as e:
-                st.error(f"Error loading sentiment: {e}")
-    else:
-        # Show placeholder when not loaded
-        st.markdown("---")
-        st.markdown("""
-        ### 📋 Market Sentiment Dashboard Features:
-        - **Current Position & Action**: Immediate trade recommendations
-        - **Support/Resistance Levels**: Key price levels from multiple sources
-        - **Technical Indicators**: RSI, MACD, Bollinger Bands analysis
-        - **PCR Analysis**: Put-Call Ratio sentiment
-        - **Sector Rotation**: Market sector performance
-
-        *Click 'Load Dashboard' above to view live market sentiment.*
-        """)
+    render_overall_market_sentiment(NSE_INSTRUMENTS)
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 2: TRADE SETUP
@@ -4738,56 +4683,23 @@ with tab6:
         st.error(f"Error loading multi-timeframe analysis: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 7: NIFTY OPTION SCREENER V7.0 (LAZY LOADED - BUTTON TRIGGERED)
+# TAB 7: NIFTY OPTION SCREENER V7.0 (AUTO-LOAD WITH SMART CACHING)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab7:
     st.header("🎯 NIFTY Option Screener v7.0")
     st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
 
-    # LAZY LOADING: Only load when user explicitly clicks the button
-    # This is a heavy tab with API calls and Greeks calculations
-
-    col1, col2, col3 = st.columns([1, 1, 2])
-    with col1:
-        load_screener = st.button("📊 Load Option Chain", key="load_tab7", type="primary", use_container_width=True)
-    with col2:
-        if st.button("🔄 Refresh Data", key="refresh_tab7", use_container_width=True):
-            st.session_state.tab7_loaded = False
-            load_screener = True
-    with col3:
-        if st.session_state.tab7_loaded:
-            st.success(f"✅ Data loaded at {datetime.fromtimestamp(st.session_state.tab7_last_load).strftime('%H:%M:%S')}")
-        else:
-            st.info("👆 Click 'Load Option Chain' to fetch live data")
-
-    # Only load when user clicks button or data was previously loaded
-    if load_screener or st.session_state.tab7_loaded:
-        try:
-            from NiftyOptionScreener import render_nifty_option_screener
-            with st.spinner("Fetching option chain data... This may take a few seconds."):
-                render_nifty_option_screener()
-            st.session_state.tab7_loaded = True
-            st.session_state.tab7_last_load = time.time()
-        except ImportError as e:
-            st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
-            st.info("Please ensure NiftyOptionScreener.py is in the project directory")
-        except Exception as e:
-            st.error(f"❌ Error rendering Nifty Option Screener: {e}")
-            st.exception(e)
-    else:
-        # Show placeholder when not loaded
-        st.markdown("---")
-        st.markdown("""
-        ### 📋 Option Screener Features:
-        - **ATM Bias Analyzer**: Determine market bias from option data
-        - **Greeks Calculator**: Delta, Gamma, Theta, Vega for all strikes
-        - **OI/PCR Analytics**: Open Interest and Put-Call Ratio analysis
-        - **Moment Detector**: Identify key market moments
-        - **Expiry Spike Detector**: Detect unusual activity near expiry
-
-        *Click 'Load Option Chain' above to start analyzing.*
-        """)
+    # Auto-load the Option Screener
+    try:
+        from NiftyOptionScreener import render_nifty_option_screener
+        render_nifty_option_screener()
+    except ImportError as e:
+        st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
+        st.info("Please ensure NiftyOptionScreener.py is in the project directory")
+    except Exception as e:
+        st.error(f"❌ Error rendering Nifty Option Screener: {e}")
+        st.exception(e)
 
     # Force clean tab completion to ensure tabs 8 & 9 render
     st.write("")

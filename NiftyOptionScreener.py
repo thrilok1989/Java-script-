@@ -5645,7 +5645,7 @@ def rank_support_resistance_seller(pcr_df):
 # -----------------------
 # DHAN API
 # -----------------------
-@st.cache_data(ttl=10)  # 10 seconds for real-time spot price updates
+@st.cache_data(ttl=2)  # 2 seconds - real-time spot price updates
 def get_nifty_spot_price():
     """Fetch NIFTY spot price with retry logic and rate limiting"""
     max_retries = 3
@@ -5718,7 +5718,7 @@ def get_expiry_list():
         st.warning(f"Expiry list failed: {e}")
         return []
 
-@st.cache_data(ttl=60)  # 60 seconds (1 minute) to reduce API calls
+@st.cache_data(ttl=45)  # 45 seconds - faster refresh for option chain data
 def fetch_dhan_option_chain(expiry_date):
     """Fetch option chain with retry logic and rate limiting"""
     max_retries = 3
