@@ -1,5 +1,8 @@
 """
-Nifty Option Screener v7.0 — 100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
+Option Screener v7.0 — 100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS
+
+SUPPORTS: NIFTY and SENSEX
+
 EVERYTHING interpreted from Option Seller/Market Maker viewpoint
 CALL building = BEARISH (sellers selling calls, expecting price to stay below)
 PUT building = BULLISH (sellers selling puts, expecting price to stay above)
@@ -16,6 +19,7 @@ NEW FEATURES ADDED:
 9. Telegram Signal Generation
 10. Expiry Spike Detector
 11. Enhanced OI/PCR Analytics
+12. Multi-index support (NIFTY and SENSEX)
 """
 
 import streamlit as st
@@ -224,6 +228,34 @@ except Exception as e:
     supabase = None
 
 DHAN_BASE_URL = "https://api.dhan.co"
+
+# -----------------------
+#  INDEX CONFIGURATION
+# -----------------------
+# Configuration for supported indices
+INDEX_CONFIG = {
+    "NIFTY": {
+        "security_id": 13,
+        "segment": "IDX_I",
+        "lot_size": 75,
+        "strike_interval": 50,
+        "display_name": "NIFTY 50",
+        "currency_symbol": "₹"
+    },
+    "SENSEX": {
+        "security_id": 51,
+        "segment": "IDX_I",
+        "lot_size": 30,
+        "strike_interval": 100,
+        "display_name": "SENSEX",
+        "currency_symbol": "₹"
+    }
+}
+
+# Default index (for backward compatibility)
+DEFAULT_INDEX = "NIFTY"
+
+# Legacy constants (for backward compatibility)
 NIFTY_UNDERLYING_SCRIP = "13"
 NIFTY_UNDERLYING_SEG = "IDX_I"
 
@@ -5646,15 +5678,26 @@ def rank_support_resistance_seller(pcr_df):
 # DHAN API
 # -----------------------
 @st.cache_data(ttl=10)  # 10 seconds for real-time spot price updates
-def get_nifty_spot_price():
-    """Fetch NIFTY spot price with retry logic and rate limiting"""
+def get_spot_price(index_name="NIFTY"):
+    """Fetch spot price for specified index with retry logic and rate limiting
+
+    Args:
+        index_name: "NIFTY" or "SENSEX"
+
+    Returns:
+        float: Spot price or 0.0 on failure
+    """
+    config = INDEX_CONFIG.get(index_name, INDEX_CONFIG["NIFTY"])
+    security_id = config["security_id"]
+    segment = config["segment"]
+
     max_retries = 3
     retry_delays = [2, 4, 8]  # Exponential backoff: 2s, 4s, 8s
 
     for attempt in range(max_retries):
         try:
             url = f"{DHAN_BASE_URL}/v2/marketfeed/ltp"
-            payload = {"IDX_I": [13]}
+            payload = {segment: [security_id]}
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -5676,9 +5719,9 @@ def get_nifty_spot_price():
             response.raise_for_status()
             data = response.json()
             if data.get("status") == "success":
-                idx_data = data.get("data", {}).get("IDX_I", {})
-                nifty_data = idx_data.get("13", {})
-                ltp = nifty_data.get("last_price", 0.0)
+                idx_data = data.get("data", {}).get(segment, {})
+                index_data = idx_data.get(str(security_id), {})
+                ltp = index_data.get("last_price", 0.0)
                 return float(ltp)
             return 0.0
         except requests.exceptions.HTTPError as e:
@@ -5686,22 +5729,39 @@ def get_nifty_spot_price():
                 wait_time = retry_delays[attempt]
                 time.sleep(wait_time)
                 continue
-            st.warning(f"⚠️ Dhan LTP failed: {e}")
+            st.warning(f"⚠️ Dhan LTP failed for {index_name}: {e}")
             return 0.0
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(retry_delays[attempt])
                 continue
-            st.warning(f"⚠️ Dhan LTP failed: {e}")
+            st.warning(f"⚠️ Dhan LTP failed for {index_name}: {e}")
             return 0.0
 
     return 0.0
 
+# Backward compatible wrapper
+def get_nifty_spot_price():
+    """Backward compatible wrapper for get_spot_price"""
+    return get_spot_price("NIFTY")
+
 @st.cache_data(ttl=60)
-def get_expiry_list():
+def get_expiry_list_for_index(index_name="NIFTY"):
+    """Fetch expiry list for specified index
+
+    Args:
+        index_name: "NIFTY" or "SENSEX"
+
+    Returns:
+        list: List of expiry dates
+    """
+    config = INDEX_CONFIG.get(index_name, INDEX_CONFIG["NIFTY"])
+    security_id = config["security_id"]
+    segment = config["segment"]
+
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain/expirylist"
-        payload = {"UnderlyingScrip":13,"UnderlyingSeg":"IDX_I"}
+        payload = {"UnderlyingScrip": security_id, "UnderlyingSeg": segment}
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -5711,23 +5771,40 @@ def get_expiry_list():
         r = requests.post(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
-        if data.get("status")=="success":
-            return data.get("data",[])
+        if data.get("status") == "success":
+            return data.get("data", [])
         return []
     except Exception as e:
-        st.warning(f"Expiry list failed: {e}")
+        st.warning(f"Expiry list failed for {index_name}: {e}")
         return []
 
+# Backward compatible wrapper
+def get_expiry_list():
+    """Backward compatible wrapper for get_expiry_list_for_index"""
+    return get_expiry_list_for_index("NIFTY")
+
 @st.cache_data(ttl=60)  # 60 seconds (1 minute) to reduce API calls
-def fetch_dhan_option_chain(expiry_date):
-    """Fetch option chain with retry logic and rate limiting"""
+def fetch_option_chain_for_index(index_name, expiry_date):
+    """Fetch option chain for specified index with retry logic and rate limiting
+
+    Args:
+        index_name: "NIFTY" or "SENSEX"
+        expiry_date: Expiry date string
+
+    Returns:
+        dict: Option chain data or None on failure
+    """
+    config = INDEX_CONFIG.get(index_name, INDEX_CONFIG["NIFTY"])
+    security_id = config["security_id"]
+    segment = config["segment"]
+
     max_retries = 3
     retry_delays = [2, 4, 8]  # Exponential backoff: 2s, 4s, 8s
 
     for attempt in range(max_retries):
         try:
             url = f"{DHAN_BASE_URL}/v2/optionchain"
-            payload = {"UnderlyingScrip":13,"UnderlyingSeg":"IDX_I","Expiry":expiry_date}
+            payload = {"UnderlyingScrip": security_id, "UnderlyingSeg": segment, "Expiry": expiry_date}
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -5749,8 +5826,8 @@ def fetch_dhan_option_chain(expiry_date):
 
             r.raise_for_status()
             data = r.json()
-            if data.get("status")=="success":
-                return data.get("data",{})
+            if data.get("status") == "success":
+                return data.get("data", {})
             return None
         except requests.exceptions.HTTPError as e:
             if attempt < max_retries - 1 and e.response.status_code == 429:
@@ -5758,16 +5835,21 @@ def fetch_dhan_option_chain(expiry_date):
                 st.info(f"⏳ Rate limit hit. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
                 continue
-            st.warning(f"⚠️ Option chain failed: {e}")
+            st.warning(f"⚠️ Option chain failed for {index_name}: {e}")
             return None
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(retry_delays[attempt])
                 continue
-            st.warning(f"⚠️ Option chain failed: {e}")
+            st.warning(f"⚠️ Option chain failed for {index_name}: {e}")
             return None
 
     return None
+
+# Backward compatible wrapper
+def fetch_dhan_option_chain(expiry_date):
+    """Backward compatible wrapper for fetch_option_chain_for_index"""
+    return fetch_option_chain_for_index("NIFTY", expiry_date)
 
 def parse_dhan_option_chain(chain_data):
     if not chain_data:
@@ -5974,7 +6056,8 @@ def load_option_screener_data_silently():
 
 def render_nifty_option_screener():
     """
-    Renders the complete Nifty Option Screener v7.0 with:
+    Renders the complete Option Screener v7.0 with:
+    - Support for NIFTY and SENSEX
     - 100% Seller's Perspective
     - ATM Bias Analyzer (12 metrics)
     - Moment Detector
@@ -5988,7 +6071,26 @@ def render_nifty_option_screener():
         <span class='ist-time'>🕐 IST: {current_ist}</span>
     </div>
     """, unsafe_allow_html=True)
-    
+
+    # Index Selection - Add at the top of the page
+    st.markdown("### 📊 Select Index")
+    index_col1, index_col2 = st.columns([1, 3])
+    with index_col1:
+        selected_index = st.selectbox(
+            "Index",
+            options=list(INDEX_CONFIG.keys()),
+            index=0,
+            key="option_screener_index_selector",
+            help="Select NIFTY or SENSEX for option analysis"
+        )
+    with index_col2:
+        index_config = INDEX_CONFIG[selected_index]
+        st.markdown(f"""
+        **{index_config['display_name']}** | Lot Size: **{index_config['lot_size']}** | Strike Interval: **{index_config['strike_interval']}**
+        """)
+
+    st.markdown("---")
+
     # Sidebar
     with st.sidebar:
         st.markdown("""
@@ -6082,28 +6184,33 @@ def render_nifty_option_screener():
             st.cache_data.clear()
             st.rerun()
     
-    # Fetch data
+    # Fetch data for selected index
+    index_config = INDEX_CONFIG[selected_index]
     col1, col2 = st.columns([1, 2])
     with col1:
-        with st.spinner("Fetching NIFTY spot..."):
-            spot = get_nifty_spot_price()
+        with st.spinner(f"Fetching {selected_index} spot..."):
+            spot = get_spot_price(selected_index)
         if spot == 0.0:
-            st.error("Unable to fetch NIFTY spot")
-            st.stop()
-        
-        expiries = get_expiry_list()
-        if not expiries:
-            st.error("Unable to fetch expiry list")
+            st.error(f"Unable to fetch {selected_index} spot")
             st.stop()
 
-        expiry = st.selectbox("Select expiry", expiries, index=0, key="nifty_screener_expiry_selector")
+        expiries = get_expiry_list_for_index(selected_index)
+        if not expiries:
+            st.error(f"Unable to fetch expiry list for {selected_index}")
+            st.stop()
+
+        expiry = st.selectbox("Select expiry", expiries, index=0, key=f"{selected_index.lower()}_screener_expiry_selector")
         st.session_state['current_expiry'] = expiry  # Store for main dashboard
+        st.session_state['selected_index'] = selected_index  # Store selected index
 
     with col2:
         if spot > 0:
-            st.metric("NIFTY Spot", f"₹{spot:.2f}")
+            st.metric(f"{selected_index} Spot", f"{index_config['currency_symbol']}{spot:.2f}")
             st.metric("Expiry", expiry)
-            st.session_state['nifty_spot'] = spot  # Store for main dashboard
+            # Store for main dashboard (use index-specific keys)
+            st.session_state[f'{selected_index.lower()}_spot'] = spot
+            if selected_index == "NIFTY":
+                st.session_state['nifty_spot'] = spot  # Backward compatibility
     
     # Calculate days to expiry
     try:
@@ -6129,10 +6236,10 @@ def render_nifty_option_screener():
         st.markdown(f"**Date:** {get_ist_date_str()}")
     
     # Fetch option chain
-    with st.spinner("Fetching option chain..."):
-        chain = fetch_dhan_option_chain(expiry)
+    with st.spinner(f"Fetching {selected_index} option chain..."):
+        chain = fetch_option_chain_for_index(selected_index, expiry)
     if chain is None:
-        st.error("Failed to fetch option chain")
+        st.error(f"Failed to fetch {selected_index} option chain")
         st.stop()
     
     df_ce, df_pe = parse_dhan_option_chain(chain)
@@ -6143,7 +6250,9 @@ def render_nifty_option_screener():
     # Filter ATM window
     strike_gap = strike_gap_from_series(df_ce["strikePrice"])
     atm_strike = min(df_ce["strikePrice"].tolist(), key=lambda x: abs(x - spot))
-    st.session_state['atm_strike'] = atm_strike  # Store for ML signal
+    # Store with index-specific key and generic key for backward compatibility
+    st.session_state[f'{selected_index.lower()}_atm_strike'] = atm_strike
+    st.session_state['atm_strike'] = atm_strike  # Backward compatibility for ML signal
     lower = atm_strike - (ATM_STRIKE_WINDOW * strike_gap)
     upper = atm_strike + (ATM_STRIKE_WINDOW * strike_gap)
 
@@ -6152,7 +6261,9 @@ def render_nifty_option_screener():
 
     merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
     merged["strikePrice"] = merged["strikePrice"].astype(int)
-    st.session_state['merged_df'] = merged  # Store for ML signal
+    # Store with index-specific key and generic key for backward compatibility
+    st.session_state[f'{selected_index.lower()}_merged_df'] = merged
+    st.session_state['merged_df'] = merged  # Backward compatibility for ML signal
 
     # Session storage for prev LTP/IV
     if "prev_ltps_seller" not in st.session_state:
@@ -6231,10 +6342,11 @@ def render_nifty_option_screener():
         merged.at[i,"Vega_PE"] = vega_pe
         merged.at[i,"Theta_PE"] = theta_pe
     
-        # GEX calculation (SELLER exposure)
+        # GEX calculation (SELLER exposure) - use index-specific lot size
         oi_ce = safe_int(row.get("OI_CE",0))
         oi_pe = safe_int(row.get("OI_PE",0))
-        notional = LOT_SIZE * spot
+        lot_size = index_config['lot_size']
+        notional = lot_size * spot
         gex_ce = gamma_ce * notional * oi_ce
         gex_pe = gamma_pe * notional * oi_pe
         merged.at[i,"GEX_CE"] = gex_ce
@@ -6692,8 +6804,11 @@ def render_nifty_option_screener():
     overall_bias = calculate_overall_bias(atm_bias, support_bias, resistance_bias, seller_bias_result)
 
     # Store all market sentiment data in session state for access from Overall Market Sentiment tab
-    st.session_state.nifty_option_screener_data = {
-        'spot_price': spot,  # Current NIFTY spot price
+    # Include selected index information for downstream consumers
+    option_screener_data = {
+        'index': selected_index,  # Which index is being analyzed
+        'index_config': index_config,  # Index configuration (lot size, strike interval, etc.)
+        'spot_price': spot,  # Current spot price for selected index
         'overall_bias': overall_bias,
         'atm_bias': atm_bias,
         'seller_max_pain': seller_max_pain,
@@ -6709,6 +6824,10 @@ def render_nifty_option_screener():
         'days_to_expiry': days_to_expiry,
         'last_updated': datetime.now()
     }
+    # Store in both index-specific key and generic key for backward compatibility
+    st.session_state[f'{selected_index.lower()}_option_screener_data'] = option_screener_data
+    st.session_state.nifty_option_screener_data = option_screener_data  # Backward compatibility
+    st.session_state.option_screener_data = option_screener_data  # Generic key
 
     # Display the reorganized Overall Market Sentiment Summary Dashboard
     display_overall_market_sentiment_summary(
