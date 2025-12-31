@@ -788,115 +788,387 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     # ═══════════════════════════════════════════════════════════════════
     # 📊 ML MARKET REGIME ASSESSMENT
     # ═══════════════════════════════════════════════════════════════════
-    try:
-        regime_data = st.session_state.get('ml_regime_result', {})
-        if regime_data:
-            regime = regime_data.get('regime', 'Unknown')
-            confidence = regime_data.get('confidence', 0)
-            trend_strength = regime_data.get('trend_strength', 0)
-            volatility_state = regime_data.get('volatility_state', 'Normal')
-            market_phase = regime_data.get('market_phase', 'Unknown')
-            recommended_strategy = regime_data.get('recommended_strategy', '')
-            optimal_timeframe = regime_data.get('optimal_timeframe', 'Intraday')
-            signals = regime_data.get('signals', [])
-            trading_sentiment = regime_data.get('trading_sentiment', 'NEUTRAL')
-            sentiment_score = regime_data.get('sentiment_score', 0)
-            support_resistance = regime_data.get('support_resistance', {})
-            entry_exit = regime_data.get('entry_exit_signals', {})
+    # Always show regime info using signal data
+    regime_data = st.session_state.get('ml_regime_result', {})
 
-            # Regime color
-            if 'Up' in regime or 'Bullish' in regime:
-                regime_color = "#00ff00"
-                regime_emoji = "🐂"
-            elif 'Down' in regime or 'Bearish' in regime:
-                regime_color = "#ff4444"
-                regime_emoji = "🐻"
-            elif 'Breakout' in regime:
-                regime_color = "#ffa500"
-                regime_emoji = "🚀"
+    # Use signal data as fallback
+    regime = regime_data.get('regime', signal.regime) if regime_data else signal.regime
+    confidence = regime_data.get('confidence', signal.confidence) if regime_data else signal.confidence
+    trend_strength = regime_data.get('trend_strength', 50) if regime_data else 50
+    volatility_state = regime_data.get('volatility_state', signal.volatility_state) if regime_data else signal.volatility_state
+    market_phase = regime_data.get('market_phase', 'Unknown') if regime_data else 'Unknown'
+    recommended_strategy = regime_data.get('recommended_strategy', signal.recommended_strategy) if regime_data else signal.recommended_strategy
+    optimal_timeframe = regime_data.get('optimal_timeframe', 'Intraday') if regime_data else 'Intraday'
+    signals_list = regime_data.get('signals', []) if regime_data else []
+    trading_sentiment = regime_data.get('trading_sentiment', 'NEUTRAL') if regime_data else 'NEUTRAL'
+    sentiment_score = regime_data.get('sentiment_score', 0) if regime_data else 0
+    support_resistance = regime_data.get('support_resistance', {}) if regime_data else {}
+
+    # Determine market phase from regime if not available
+    if market_phase == 'Unknown':
+        if 'Up' in regime or 'Bullish' in regime.upper() if regime else False:
+            market_phase = 'Markup'
+        elif 'Down' in regime or 'Bearish' in regime.upper() if regime else False:
+            market_phase = 'Markdown'
+        elif 'Range' in regime or 'Consolidation' in regime if regime else False:
+            market_phase = 'Consolidation'
+        elif 'Breakout' in regime if regime else False:
+            market_phase = 'Breakout'
+
+    # Regime color
+    if regime and ('Up' in regime or 'Bullish' in str(regime).upper()):
+        regime_color = "#00ff00"
+        regime_emoji = "🐂"
+    elif regime and ('Down' in regime or 'Bearish' in str(regime).upper()):
+        regime_color = "#ff4444"
+        regime_emoji = "🐻"
+    elif regime and 'Breakout' in regime:
+        regime_color = "#ffa500"
+        regime_emoji = "🚀"
+    else:
+        regime_color = "#ffaa00"
+        regime_emoji = "↔️"
+
+    # Sentiment from spike if available
+    if spike_data:
+        spike_dir = spike_data.get('dominant_direction', 'NEUTRAL')
+        spike_prob = spike_data.get('overall_spike_probability', 0)
+        if spike_dir == 'UP' and spike_prob > 50:
+            trading_sentiment = 'LONG' if spike_prob < 70 else 'STRONG LONG'
+            sentiment_score = spike_prob
+        elif spike_dir == 'DOWN' and spike_prob > 50:
+            trading_sentiment = 'SHORT' if spike_prob < 70 else 'STRONG SHORT'
+            sentiment_score = -spike_prob
+
+    # Sentiment color
+    if 'LONG' in trading_sentiment:
+        sent_color = "#00ff00"
+    elif 'SHORT' in trading_sentiment:
+        sent_color = "#ff4444"
+    else:
+        sent_color = "#ffaa00"
+
+    # Market phase explanation
+    phase_explanations = {
+        'Accumulation': "Smart money buying. Expect upward breakout soon.",
+        'Markup': "Trending up. Follow the momentum, buy dips.",
+        'Distribution': "Smart money selling. Expect downward breakdown.",
+        'Markdown': "Trending down. Sell rallies, avoid longs.",
+        'Consolidation': "Range-bound. Trade the range or wait for breakout.",
+        'Breakout': "Breakout in progress. Follow the direction with momentum.",
+        'Unknown': "Market in transition. Wait for clarity."
+    }
+    phase_explanation = phase_explanations.get(market_phase, "Market in transition phase.")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # COMPREHENSIVE SUPPORT/RESISTANCE (Option Chain + Chart + Multi-TF)
+    # ═══════════════════════════════════════════════════════════════════
+    support_levels = []
+    resistance_levels = []
+
+    # 1. From ML Regime (chart-based S/R)
+    if support_resistance:
+        if support_resistance.get('near_support'):
+            support_levels.append({'price': support_resistance['near_support'], 'source': 'Chart', 'type': 'Near'})
+        if support_resistance.get('major_support'):
+            support_levels.append({'price': support_resistance['major_support'], 'source': 'Chart', 'type': 'Major'})
+        if support_resistance.get('near_resistance'):
+            resistance_levels.append({'price': support_resistance['near_resistance'], 'source': 'Chart', 'type': 'Near'})
+        if support_resistance.get('major_resistance'):
+            resistance_levels.append({'price': support_resistance['major_resistance'], 'source': 'Chart', 'type': 'Major'})
+        # All supports/resistances
+        for s in support_resistance.get('all_supports', []):
+            if s and {'price': s, 'source': 'Chart', 'type': 'Swing'} not in support_levels:
+                support_levels.append({'price': s, 'source': 'Chart', 'type': 'Swing'})
+        for r in support_resistance.get('all_resistances', []):
+            if r and {'price': r, 'source': 'Chart', 'type': 'Swing'} not in resistance_levels:
+                resistance_levels.append({'price': r, 'source': 'Chart', 'type': 'Swing'})
+
+    # 2. From Spike Detector (OI-based S/R)
+    if spike_data and spike_data.get('key_levels'):
+        key_levels = spike_data.get('key_levels', {})
+        if key_levels.get('support'):
+            support_levels.append({'price': key_levels['support'], 'source': 'OI', 'type': 'Strike'})
+        if key_levels.get('resistance'):
+            resistance_levels.append({'price': key_levels['resistance'], 'source': 'OI', 'type': 'Strike'})
+        if key_levels.get('max_pain'):
+            mp = key_levels['max_pain']
+            if spot_price and mp < spot_price:
+                support_levels.append({'price': mp, 'source': 'MaxPain', 'type': 'Magnet'})
+            elif spot_price:
+                resistance_levels.append({'price': mp, 'source': 'MaxPain', 'type': 'Magnet'})
+
+    # 3. From Option Chain (NIFTY Option Screener data)
+    option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+    if option_data:
+        supp_data = option_data.get('support', {})
+        res_data = option_data.get('resistance', {})
+        if supp_data.get('strike'):
+            support_levels.append({'price': supp_data['strike'], 'source': 'OI-Wall', 'type': supp_data.get('strength', 'Strike')})
+        if res_data.get('strike'):
+            resistance_levels.append({'price': res_data['strike'], 'source': 'OI-Wall', 'type': res_data.get('strength', 'Strike')})
+        # Max Pain from option chain
+        max_pain = option_data.get('max_pain')
+        if max_pain and isinstance(max_pain, (int, float)):
+            if spot_price and max_pain < spot_price:
+                support_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
+            elif spot_price:
+                resistance_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
+
+    # 4. Align and merge nearby levels (within 50 points = same zone)
+    def merge_sr_levels(levels, merge_threshold=50):
+        if not levels:
+            return []
+        # Sort by price
+        sorted_levels = sorted(levels, key=lambda x: x['price'])
+        merged = []
+        current_zone = None
+
+        for lvl in sorted_levels:
+            if current_zone is None:
+                current_zone = {
+                    'prices': [lvl['price']],
+                    'sources': [lvl['source']],
+                    'types': [lvl['type']]
+                }
+            elif abs(lvl['price'] - current_zone['prices'][-1]) <= merge_threshold:
+                # Same zone - merge
+                current_zone['prices'].append(lvl['price'])
+                if lvl['source'] not in current_zone['sources']:
+                    current_zone['sources'].append(lvl['source'])
+                if lvl['type'] not in current_zone['types']:
+                    current_zone['types'].append(lvl['type'])
             else:
-                regime_color = "#ffaa00"
-                regime_emoji = "↔️"
+                # New zone
+                merged.append({
+                    'price': sum(current_zone['prices']) / len(current_zone['prices']),
+                    'range': (min(current_zone['prices']), max(current_zone['prices'])),
+                    'sources': current_zone['sources'],
+                    'strength': len(current_zone['prices'])  # More sources = stronger
+                })
+                current_zone = {
+                    'prices': [lvl['price']],
+                    'sources': [lvl['source']],
+                    'types': [lvl['type']]
+                }
 
-            # Sentiment color
-            if 'LONG' in trading_sentiment:
-                sent_color = "#00ff00"
-            elif 'SHORT' in trading_sentiment:
-                sent_color = "#ff4444"
-            else:
-                sent_color = "#ffaa00"
+        # Don't forget last zone
+        if current_zone:
+            merged.append({
+                'price': sum(current_zone['prices']) / len(current_zone['prices']),
+                'range': (min(current_zone['prices']), max(current_zone['prices'])),
+                'sources': current_zone['sources'],
+                'strength': len(current_zone['prices'])
+            })
+        return merged
 
-            # Market phase explanation
-            phase_explanations = {
-                'Accumulation': "Smart money buying. Expect upward breakout soon.",
-                'Markup': "Trending up. Follow the momentum, buy dips.",
-                'Distribution': "Smart money selling. Expect downward breakdown.",
-                'Markdown': "Trending down. Sell rallies, avoid longs.",
-                'Consolidation': "Range-bound. Trade the range or wait for breakout."
-            }
-            phase_explanation = phase_explanations.get(market_phase, "Market in transition phase.")
+    merged_supports = merge_sr_levels(support_levels)
+    merged_resistances = merge_sr_levels(resistance_levels)
 
-            # Support/Resistance
-            support = support_resistance.get('near_support', support_resistance.get('major_support', 0)) if support_resistance else 0
-            resistance = support_resistance.get('near_resistance', support_resistance.get('major_resistance', 0)) if support_resistance else 0
+    # Sort by strength (strongest first) and proximity to spot
+    if spot_price:
+        merged_supports = sorted(merged_supports, key=lambda x: (-x['strength'], spot_price - x['price']))[:3]
+        merged_resistances = sorted(merged_resistances, key=lambda x: (-x['strength'], x['price'] - spot_price))[:3]
 
-            # Build signals text
-            signals_text = ""
-            if signals:
-                for sig in signals[:4]:  # Show max 4 signals
-                    sig_color = "#00ff00" if "bull" in sig.lower() or "buy" in sig.lower() or "up" in sig.lower() else "#ff4444" if "bear" in sig.lower() or "sell" in sig.lower() or "down" in sig.lower() else "#aaa"
-                    signals_text += f'<span style="color: {sig_color};">• {sig}</span><br>'
+    # Get primary S/R for display
+    support = merged_supports[0]['price'] if merged_supports else 0
+    resistance = merged_resistances[0]['price'] if merged_resistances else 0
 
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #1a1a2e, #16213e);
-                        border: 1px solid #0f3460;
-                        border-radius: 10px;
-                        padding: 15px;
-                        margin: 15px 0;">
-                <h4 style="color: #e94560; margin: 0 0 10px 0;">📊 ML MARKET REGIME ASSESSMENT</h4>
+    # Build signals text
+    signals_text = ""
+    if signals_list:
+        for sig in signals_list[:4]:
+            sig_color = "#00ff00" if "bull" in sig.lower() or "buy" in sig.lower() or "up" in sig.lower() else "#ff4444" if "bear" in sig.lower() or "sell" in sig.lower() or "down" in sig.lower() else "#aaa"
+            signals_text += f'<span style="color: {sig_color};">• {sig}</span><br>'
 
-                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                    <div>
-                        <span style="color: #888;">Regime:</span>
-                        <span style="color: {regime_color}; font-weight: 700; font-size: 1.2rem;"> {regime_emoji} {regime}</span>
-                    </div>
-                    <div>
-                        <span style="color: #888;">Confidence:</span>
-                        <span style="color: {regime_color}; font-weight: 700;"> {confidence:.0f}%</span>
-                    </div>
-                </div>
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #1a1a2e, #16213e);
+                border: 1px solid #0f3460;
+                border-radius: 10px;
+                padding: 15px;
+                margin: 15px 0;">
+        <h4 style="color: #e94560; margin: 0 0 10px 0;">📊 ML MARKET REGIME ASSESSMENT</h4>
 
-                <p style="color: #eee; margin: 8px 0;">
-                    <strong style="color: #00d9ff;">Market Phase:</strong> {market_phase}
-                </p>
-                <p style="color: #ffd700; margin: 8px 0;">
-                    <strong>What this means:</strong> {phase_explanation}
-                </p>
-
-                <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Trading Sentiment:</strong>
-                    <span style="color: {sent_color}; font-weight: 700;"> {trading_sentiment}</span>
-                    <span style="color: #888;"> (Score: {sentiment_score:+.0f})</span>
-                </p>
-
-                <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Trend Strength:</strong> {trend_strength:.0f}% |
-                    <strong>Volatility:</strong> {volatility_state} |
-                    <strong>Timeframe:</strong> {optimal_timeframe}
-                </p>
-
-                <p style="color: #aaa; margin: 8px 0;">
-                    <strong>Recommended Strategy:</strong>
-                    <span style="color: #00d9ff;"> {recommended_strategy}</span>
-                </p>
-
-                {f'<div style="margin: 10px 0;"><strong style="color: #aaa;">Key Levels:</strong> <span style="color: #00ff00;">Support: ₹{support:,.0f}</span> | <span style="color: #ff4444;">Resistance: ₹{resistance:,.0f}</span></div>' if support > 0 or resistance > 0 else ''}
-
-                {f'<div style="margin-top: 10px;"><strong style="color: #aaa;">Signals:</strong><br>{signals_text}</div>' if signals_text else ''}
+        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <div>
+                <span style="color: #888;">Regime:</span>
+                <span style="color: {regime_color}; font-weight: 700; font-size: 1.2rem;"> {regime_emoji} {regime}</span>
             </div>
-            """, unsafe_allow_html=True)
-    except Exception as e:
-        logger.debug(f"Regime display error: {e}")
+            <div>
+                <span style="color: #888;">Confidence:</span>
+                <span style="color: {regime_color}; font-weight: 700;"> {confidence:.0f}%</span>
+            </div>
+        </div>
+
+        <p style="color: #eee; margin: 8px 0;">
+            <strong style="color: #00d9ff;">Market Phase:</strong> {market_phase}
+        </p>
+        <p style="color: #ffd700; margin: 8px 0;">
+            <strong>What this means:</strong> {phase_explanation}
+        </p>
+
+        <p style="color: #aaa; margin: 8px 0;">
+            <strong>Trading Sentiment:</strong>
+            <span style="color: {sent_color}; font-weight: 700;"> {trading_sentiment}</span>
+            <span style="color: #888;"> (Score: {sentiment_score:+.0f})</span>
+        </p>
+
+        <p style="color: #aaa; margin: 8px 0;">
+            <strong>Trend Strength:</strong> {trend_strength:.0f}% |
+            <strong>Volatility:</strong> {volatility_state} |
+            <strong>Timeframe:</strong> {optimal_timeframe}
+        </p>
+
+        <p style="color: #aaa; margin: 8px 0;">
+            <strong>Recommended Strategy:</strong>
+            <span style="color: #00d9ff;"> {recommended_strategy}</span>
+        </p>
+
+        {f'<div style="margin-top: 10px;"><strong style="color: #aaa;">Signals:</strong><br>{signals_text}</div>' if signals_text else ''}
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 📊 COMPREHENSIVE SUPPORT/RESISTANCE DISPLAY
+    # ═══════════════════════════════════════════════════════════════════
+    if merged_supports or merged_resistances:
+        # Build support zones HTML
+        support_html = ""
+        for i, s in enumerate(merged_supports[:3]):
+            strength_bars = "█" * min(s['strength'], 5)
+            sources = " + ".join(s['sources'])
+            zone_range = f"₹{s['range'][0]:,.0f} - ₹{s['range'][1]:,.0f}" if s['range'][0] != s['range'][1] else f"₹{s['price']:,.0f}"
+            color = "#00ff00" if i == 0 else "#90ee90" if i == 1 else "#a8e6a8"
+            support_html += f'<div style="margin: 3px 0;"><span style="color: {color};">S{i+1}: {zone_range}</span> <span style="color: #888; font-size: 0.8rem;">({sources}) {strength_bars}</span></div>'
+
+        # Build resistance zones HTML
+        resistance_html = ""
+        for i, r in enumerate(merged_resistances[:3]):
+            strength_bars = "█" * min(r['strength'], 5)
+            sources = " + ".join(r['sources'])
+            zone_range = f"₹{r['range'][0]:,.0f} - ₹{r['range'][1]:,.0f}" if r['range'][0] != r['range'][1] else f"₹{r['price']:,.0f}"
+            color = "#ff4444" if i == 0 else "#ff6b6b" if i == 1 else "#ff8a8a"
+            resistance_html += f'<div style="margin: 3px 0;"><span style="color: {color};">R{i+1}: {zone_range}</span> <span style="color: #888; font-size: 0.8rem;">({sources}) {strength_bars}</span></div>'
+
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #0d1117, #161b22);
+                    border: 1px solid #30363d;
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 10px 0;">
+            <h5 style="color: #58a6ff; margin: 0 0 10px 0;">📊 SUPPORT & RESISTANCE ZONES (Chart + OI Aligned)</h5>
+            <div style="display: flex; gap: 20px;">
+                <div style="flex: 1;">
+                    <div style="color: #00ff00; font-weight: 700; margin-bottom: 5px;">🛡️ SUPPORT ZONES</div>
+                    {support_html if support_html else '<span style="color: #888;">No support levels detected</span>'}
+                </div>
+                <div style="flex: 1;">
+                    <div style="color: #ff4444; font-weight: 700; margin-bottom: 5px;">🧱 RESISTANCE ZONES</div>
+                    {resistance_html if resistance_html else '<span style="color: #888;">No resistance levels detected</span>'}
+                </div>
+            </div>
+            <div style="color: #888; font-size: 0.75rem; margin-top: 8px;">
+                Sources: Chart (Price Action) | OI (Option Chain) | OI-Wall (Max OI Strike) | MaxPain (Pin Level)
+                <br>More █ = Stronger confluence (multiple sources agree)
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 🎯 FINAL ASSESSMENT - Clear Directional Call
+    # ═══════════════════════════════════════════════════════════════════
+    # Determine overall market direction
+    is_bullish = signal.signal in ['STRONG BUY', 'BUY'] or (trading_sentiment and 'LONG' in trading_sentiment)
+    is_bearish = signal.signal in ['STRONG SELL', 'SELL'] or (trading_sentiment and 'SHORT' in trading_sentiment)
+
+    # Get key levels
+    primary_support = merged_supports[0]['price'] if merged_supports else 0
+    primary_resistance = merged_resistances[0]['price'] if merged_resistances else 0
+    current_price = spot_price or 0
+
+    # Calculate distances
+    dist_to_support = abs(current_price - primary_support) if primary_support and current_price else 999
+    dist_to_resistance = abs(primary_resistance - current_price) if primary_resistance and current_price else 999
+
+    # Determine if near key level (within 30 points)
+    near_support = dist_to_support < 30
+    near_resistance = dist_to_resistance < 30
+
+    # Build assessment
+    if is_bullish:
+        direction_color = "#00ff00"
+        direction_emoji = "🐂"
+        direction_text = "BULLISH"
+
+        if near_resistance:
+            # Bullish but near resistance - potential reversal
+            assessment_text = f"⚠️ CAUTION: Market is BULLISH but approaching RESISTANCE at ₹{primary_resistance:,.0f}. Watch for reversal or breakout."
+            move_text = f"If breakout above ₹{primary_resistance:,.0f} → Next target: ₹{primary_resistance + 100:,.0f}"
+            reversal_text = f"If rejection at ₹{primary_resistance:,.0f} → Pullback to ₹{primary_support:,.0f}"
+        else:
+            assessment_text = f"📈 Market will RISE from Support ₹{primary_support:,.0f} towards Resistance ₹{primary_resistance:,.0f}"
+            move_text = f"Expected Move: ₹{primary_support:,.0f} → ₹{primary_resistance:,.0f} ({primary_resistance - primary_support:,.0f} points)"
+            reversal_text = f"🔄 Reversal Zone: If price falls below ₹{primary_support:,.0f}, trend may reverse to BEARISH"
+
+    elif is_bearish:
+        direction_color = "#ff4444"
+        direction_emoji = "🐻"
+        direction_text = "BEARISH"
+
+        if near_support:
+            # Bearish but near support - potential reversal
+            assessment_text = f"⚠️ CAUTION: Market is BEARISH but approaching SUPPORT at ₹{primary_support:,.0f}. Watch for reversal or breakdown."
+            move_text = f"If breakdown below ₹{primary_support:,.0f} → Next target: ₹{primary_support - 100:,.0f}"
+            reversal_text = f"If bounce from ₹{primary_support:,.0f} → Rally to ₹{primary_resistance:,.0f}"
+        else:
+            assessment_text = f"📉 Market will FALL from Resistance ₹{primary_resistance:,.0f} towards Support ₹{primary_support:,.0f}"
+            move_text = f"Expected Move: ₹{primary_resistance:,.0f} → ₹{primary_support:,.0f} ({primary_resistance - primary_support:,.0f} points)"
+            reversal_text = f"🔄 Reversal Zone: If price rises above ₹{primary_resistance:,.0f}, trend may reverse to BULLISH"
+
+    else:
+        direction_color = "#ffaa00"
+        direction_emoji = "↔️"
+        direction_text = "NEUTRAL/RANGE"
+        assessment_text = f"↔️ Market is RANGE-BOUND between ₹{primary_support:,.0f} and ₹{primary_resistance:,.0f}"
+        move_text = f"Trade the Range: BUY near ₹{primary_support:,.0f} | SELL near ₹{primary_resistance:,.0f}"
+        reversal_text = f"🚀 Breakout Watch: Above ₹{primary_resistance:,.0f} = BULLISH | Below ₹{primary_support:,.0f} = BEARISH"
+
+    if primary_support > 0 or primary_resistance > 0:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {direction_color}15, {direction_color}25);
+                    border: 2px solid {direction_color};
+                    border-radius: 10px;
+                    padding: 15px;
+                    margin: 15px 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4 style="color: {direction_color}; margin: 0;">🎯 FINAL ASSESSMENT</h4>
+                <span style="background: {direction_color}; color: #000; padding: 3px 10px; border-radius: 5px; font-weight: 700;">
+                    {direction_emoji} {direction_text}
+                </span>
+            </div>
+
+            <p style="color: #fff; font-size: 1.1rem; margin: 10px 0; font-weight: 500;">
+                {assessment_text}
+            </p>
+
+            <p style="color: #ddd; margin: 8px 0;">
+                <strong>📊 {move_text}</strong>
+            </p>
+
+            <p style="color: #aaa; margin: 8px 0; font-size: 0.9rem;">
+                {reversal_text}
+            </p>
+
+            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid {direction_color}44;">
+                <span style="color: #888;">Current: </span>
+                <span style="color: #fff; font-weight: 700;">₹{current_price:,.0f}</span>
+                <span style="color: #888;"> | To Support: </span>
+                <span style="color: #00ff00;">{dist_to_support:,.0f} pts</span>
+                <span style="color: #888;"> | To Resistance: </span>
+                <span style="color: #ff4444;">{dist_to_resistance:,.0f} pts</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Show ATM Option Recommendation based on signal
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
