@@ -1074,6 +1074,102 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         </div>
         """, unsafe_allow_html=True)
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 🎯 FINAL ASSESSMENT - Clear Directional Call
+    # ═══════════════════════════════════════════════════════════════════
+    # Determine overall market direction
+    is_bullish = signal.signal in ['STRONG BUY', 'BUY'] or (trading_sentiment and 'LONG' in trading_sentiment)
+    is_bearish = signal.signal in ['STRONG SELL', 'SELL'] or (trading_sentiment and 'SHORT' in trading_sentiment)
+
+    # Get key levels
+    primary_support = merged_supports[0]['price'] if merged_supports else 0
+    primary_resistance = merged_resistances[0]['price'] if merged_resistances else 0
+    current_price = spot_price or 0
+
+    # Calculate distances
+    dist_to_support = abs(current_price - primary_support) if primary_support and current_price else 999
+    dist_to_resistance = abs(primary_resistance - current_price) if primary_resistance and current_price else 999
+
+    # Determine if near key level (within 30 points)
+    near_support = dist_to_support < 30
+    near_resistance = dist_to_resistance < 30
+
+    # Build assessment
+    if is_bullish:
+        direction_color = "#00ff00"
+        direction_emoji = "🐂"
+        direction_text = "BULLISH"
+
+        if near_resistance:
+            # Bullish but near resistance - potential reversal
+            assessment_text = f"⚠️ CAUTION: Market is BULLISH but approaching RESISTANCE at ₹{primary_resistance:,.0f}. Watch for reversal or breakout."
+            move_text = f"If breakout above ₹{primary_resistance:,.0f} → Next target: ₹{primary_resistance + 100:,.0f}"
+            reversal_text = f"If rejection at ₹{primary_resistance:,.0f} → Pullback to ₹{primary_support:,.0f}"
+        else:
+            assessment_text = f"📈 Market will RISE from Support ₹{primary_support:,.0f} towards Resistance ₹{primary_resistance:,.0f}"
+            move_text = f"Expected Move: ₹{primary_support:,.0f} → ₹{primary_resistance:,.0f} ({primary_resistance - primary_support:,.0f} points)"
+            reversal_text = f"🔄 Reversal Zone: If price falls below ₹{primary_support:,.0f}, trend may reverse to BEARISH"
+
+    elif is_bearish:
+        direction_color = "#ff4444"
+        direction_emoji = "🐻"
+        direction_text = "BEARISH"
+
+        if near_support:
+            # Bearish but near support - potential reversal
+            assessment_text = f"⚠️ CAUTION: Market is BEARISH but approaching SUPPORT at ₹{primary_support:,.0f}. Watch for reversal or breakdown."
+            move_text = f"If breakdown below ₹{primary_support:,.0f} → Next target: ₹{primary_support - 100:,.0f}"
+            reversal_text = f"If bounce from ₹{primary_support:,.0f} → Rally to ₹{primary_resistance:,.0f}"
+        else:
+            assessment_text = f"📉 Market will FALL from Resistance ₹{primary_resistance:,.0f} towards Support ₹{primary_support:,.0f}"
+            move_text = f"Expected Move: ₹{primary_resistance:,.0f} → ₹{primary_support:,.0f} ({primary_resistance - primary_support:,.0f} points)"
+            reversal_text = f"🔄 Reversal Zone: If price rises above ₹{primary_resistance:,.0f}, trend may reverse to BULLISH"
+
+    else:
+        direction_color = "#ffaa00"
+        direction_emoji = "↔️"
+        direction_text = "NEUTRAL/RANGE"
+        assessment_text = f"↔️ Market is RANGE-BOUND between ₹{primary_support:,.0f} and ₹{primary_resistance:,.0f}"
+        move_text = f"Trade the Range: BUY near ₹{primary_support:,.0f} | SELL near ₹{primary_resistance:,.0f}"
+        reversal_text = f"🚀 Breakout Watch: Above ₹{primary_resistance:,.0f} = BULLISH | Below ₹{primary_support:,.0f} = BEARISH"
+
+    if primary_support > 0 or primary_resistance > 0:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {direction_color}15, {direction_color}25);
+                    border: 2px solid {direction_color};
+                    border-radius: 10px;
+                    padding: 15px;
+                    margin: 15px 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4 style="color: {direction_color}; margin: 0;">🎯 FINAL ASSESSMENT</h4>
+                <span style="background: {direction_color}; color: #000; padding: 3px 10px; border-radius: 5px; font-weight: 700;">
+                    {direction_emoji} {direction_text}
+                </span>
+            </div>
+
+            <p style="color: #fff; font-size: 1.1rem; margin: 10px 0; font-weight: 500;">
+                {assessment_text}
+            </p>
+
+            <p style="color: #ddd; margin: 8px 0;">
+                <strong>📊 {move_text}</strong>
+            </p>
+
+            <p style="color: #aaa; margin: 8px 0; font-size: 0.9rem;">
+                {reversal_text}
+            </p>
+
+            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid {direction_color}44;">
+                <span style="color: #888;">Current: </span>
+                <span style="color: #fff; font-weight: 700;">₹{current_price:,.0f}</span>
+                <span style="color: #888;"> | To Support: </span>
+                <span style="color: #00ff00;">{dist_to_support:,.0f} pts</span>
+                <span style="color: #888;"> | To Resistance: </span>
+                <span style="color: #ff4444;">{dist_to_resistance:,.0f} pts</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
     # Show ATM Option Recommendation based on signal
     if signal.signal in ['STRONG BUY', 'BUY'] and signal.atm_call_ltp > 0:
         st.markdown(f"""
