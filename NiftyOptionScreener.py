@@ -5826,8 +5826,12 @@ def load_option_screener_data_silently():
         if spot == 0.0:
             return False
 
-        # Get expiries
-        expiries = get_expiry_list()
+        # Get expiries - use session state if available to avoid redundant API calls
+        expiries = st.session_state.get('expiry_list', None)
+        if not expiries:
+            expiries = get_expiry_list()
+            if expiries:
+                st.session_state['expiry_list'] = expiries
         if not expiries:
             return False
 
@@ -5844,8 +5848,13 @@ def load_option_screener_data_silently():
             tau = 7.0/365.0
             days_to_expiry = 7.0
 
-        # Fetch option chain
-        chain = fetch_dhan_option_chain(expiry)
+        # Fetch option chain - use session state if available for same expiry
+        chain_cache_key = f'option_chain_{expiry}'
+        chain = st.session_state.get(chain_cache_key, None)
+        if chain is None:
+            chain = fetch_dhan_option_chain(expiry)
+            if chain:
+                st.session_state[chain_cache_key] = chain
         if chain is None:
             return False
 
@@ -6101,8 +6110,13 @@ def render_nifty_option_screener():
         if spot == 0.0:
             st.error("Unable to fetch NIFTY spot")
             st.stop()
-        
-        expiries = get_expiry_list()
+
+        # Get expiries - use session state if available to avoid redundant API calls
+        expiries = st.session_state.get('expiry_list', None)
+        if not expiries:
+            expiries = get_expiry_list()
+            if expiries:
+                st.session_state['expiry_list'] = expiries
         if not expiries:
             st.error("Unable to fetch expiry list")
             st.stop()
@@ -6139,9 +6153,14 @@ def render_nifty_option_screener():
         st.markdown(f"**Current IST:** {get_ist_time_str()}")
         st.markdown(f"**Date:** {get_ist_date_str()}")
     
-    # Fetch option chain
-    with st.spinner("Fetching option chain..."):
-        chain = fetch_dhan_option_chain(expiry)
+    # Fetch option chain - use session state if available for same expiry
+    chain_cache_key = f'option_chain_{expiry}'
+    chain = st.session_state.get(chain_cache_key, None)
+    if chain is None:
+        with st.spinner("Fetching option chain..."):
+            chain = fetch_dhan_option_chain(expiry)
+            if chain:
+                st.session_state[chain_cache_key] = chain
     if chain is None:
         st.error("Failed to fetch option chain")
         st.stop()
