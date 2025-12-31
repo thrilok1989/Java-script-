@@ -866,6 +866,37 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     support_levels = []
     resistance_levels = []
 
+    # 0. From Signal's own calculated levels (ALWAYS available)
+    if signal.stop_loss and signal.stop_loss > 0:
+        support_levels.append({'price': signal.stop_loss, 'source': 'ML', 'type': 'StopLoss'})
+    if signal.entry_zone and signal.entry_zone[0] > 0:
+        # Entry zone lower bound = support, upper bound can be resistance if above spot
+        if spot_price and signal.entry_zone[0] < spot_price:
+            support_levels.append({'price': signal.entry_zone[0], 'source': 'ML', 'type': 'Entry'})
+        if spot_price and signal.entry_zone[1] > spot_price:
+            resistance_levels.append({'price': signal.entry_zone[1], 'source': 'ML', 'type': 'Entry'})
+    if signal.targets:
+        for i, tgt in enumerate(signal.targets[:3]):
+            if tgt and tgt > 0:
+                if spot_price and tgt > spot_price:
+                    resistance_levels.append({'price': tgt, 'source': 'ML', 'type': f'Target{i+1}'})
+                elif spot_price:
+                    support_levels.append({'price': tgt, 'source': 'ML', 'type': f'Target{i+1}'})
+
+    # ATM-based S/R (using option strikes)
+    if signal.atm_strike and signal.atm_strike > 0:
+        atm = signal.atm_strike
+        # Support at ATM-50 and ATM-100, Resistance at ATM+50 and ATM+100
+        if spot_price:
+            if atm - 50 < spot_price:
+                support_levels.append({'price': atm - 50, 'source': 'ATM', 'type': 'Strike-50'})
+            if atm - 100 < spot_price:
+                support_levels.append({'price': atm - 100, 'source': 'ATM', 'type': 'Strike-100'})
+            if atm + 50 > spot_price:
+                resistance_levels.append({'price': atm + 50, 'source': 'ATM', 'type': 'Strike+50'})
+            if atm + 100 > spot_price:
+                resistance_levels.append({'price': atm + 100, 'source': 'ATM', 'type': 'Strike+100'})
+
     # 1. From ML Regime (chart-based S/R)
     if support_resistance:
         if support_resistance.get('near_support'):
@@ -969,6 +1000,21 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     if spot_price:
         merged_supports = sorted(merged_supports, key=lambda x: (-x['strength'], spot_price - x['price']))[:3]
         merged_resistances = sorted(merged_resistances, key=lambda x: (-x['strength'], x['price'] - spot_price))[:3]
+
+    # FALLBACK: If still no S/R, calculate from spot price
+    if not merged_supports and spot_price and spot_price > 0:
+        # Use round numbers as support
+        base = int(spot_price / 50) * 50  # Round to nearest 50
+        merged_supports = [
+            {'price': base - 50, 'range': (base - 50, base - 50), 'sources': ['Calculated'], 'strength': 1},
+            {'price': base - 100, 'range': (base - 100, base - 100), 'sources': ['Calculated'], 'strength': 1}
+        ]
+    if not merged_resistances and spot_price and spot_price > 0:
+        base = int(spot_price / 50) * 50  # Round to nearest 50
+        merged_resistances = [
+            {'price': base + 50, 'range': (base + 50, base + 50), 'sources': ['Calculated'], 'strength': 1},
+            {'price': base + 100, 'range': (base + 100, base + 100), 'sources': ['Calculated'], 'strength': 1}
+        ]
 
     # Get primary S/R for display
     support = merged_supports[0]['price'] if merged_supports else 0
