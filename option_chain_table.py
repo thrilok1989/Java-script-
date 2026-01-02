@@ -5,6 +5,7 @@ Displays option chain data in a tabulated format using native Streamlit componen
 - ATM ±5 strikes (11 total strikes)
 - Calls on left, Strike in middle, Puts on right
 - Uses st.dataframe for display
+- Highlights Support (Green) and Resistance (Red) levels
 """
 
 import streamlit as st
@@ -127,12 +128,223 @@ def calculate_max_pain_from_df(df):
         return 0
 
 
+def determine_sr_strength(strike, spot, chg_oi, oi_total, sr_type, vol=0):
+    """
+    Determine if a support/resistance level is BUILDING, HOLDING, or BREAKING
+
+    BUILDING STRONG:
+    - Positive ChgOI (new positions being written at this level)
+    - High volume activity
+    - Price not too close to the level
+
+    HOLDING:
+    - Stable OI (small positive or small negative ChgOI)
+    - Price approaching but hasn't breached
+
+    BREAKING/WEAKENING:
+    - Negative ChgOI (positions being unwound/squared off)
+    - Price very close to or crossing the level
+    - Low volume (sellers/buyers losing conviction)
+
+    Returns: (status_emoji, status_text, strength_score)
+    """
+    # Calculate distance from spot
+    distance = abs(strike - spot)
+    distance_pct = (distance / spot) * 100 if spot > 0 else 0
+
+    # Relative ChgOI (as % of total OI)
+    chg_oi_pct = (chg_oi / max(oi_total, 1)) * 100
+
+    strength_score = 0
+
+    # === Analyze Change in OI ===
+    if chg_oi > 0:
+        # Positive ChgOI = new positions being added = BUILDING
+        if chg_oi_pct > 5:  # More than 5% of OI added
+            strength_score += 3
+        elif chg_oi_pct > 2:
+            strength_score += 2
+        else:
+            strength_score += 1
+    elif chg_oi < 0:
+        # Negative ChgOI = positions being unwound = WEAKENING
+        if chg_oi_pct < -5:  # More than 5% of OI removed
+            strength_score -= 3
+        elif chg_oi_pct < -2:
+            strength_score -= 2
+        else:
+            strength_score -= 1
+
+    # === Analyze Price Proximity ===
+    if sr_type == "resistance":
+        if spot > strike:
+            # Price has breached resistance = BROKEN
+            strength_score -= 3
+        elif distance_pct < 0.3:
+            # Price very close (within 0.3%) = Testing
+            strength_score -= 1
+        elif distance_pct > 1.0:
+            # Price far away = Safe
+            strength_score += 1
+    else:  # support
+        if spot < strike:
+            # Price has breached support = BROKEN
+            strength_score -= 3
+        elif distance_pct < 0.3:
+            # Price very close (within 0.3%) = Testing
+            strength_score -= 1
+        elif distance_pct > 1.0:
+            # Price far away = Safe
+            strength_score += 1
+
+    # === Determine Status ===
+    if strength_score >= 3:
+        return "🔼", "BUILDING STRONG", strength_score
+    elif strength_score >= 1:
+        return "📈", "BUILDING", strength_score
+    elif strength_score == 0:
+        return "➖", "HOLDING", strength_score
+    elif strength_score >= -2:
+        return "📉", "WEAKENING", strength_score
+    else:
+        return "⚠️", "BREAKING", strength_score
+
+
+def identify_support_resistance(df, spot, atm_strike):
+    """
+    Identify support and resistance levels based on OI, PCR, GEX
+    Also determines if each level is BUILDING, HOLDING, or BREAKING
+
+    RESISTANCE (price expected to face selling pressure):
+    - High Call OI (sellers expect price to stay below)
+    - High Call writing (positive Chg OI for calls)
+    - Low PCR (< 0.7) - more call activity
+    - Strike above spot with high call concentration
+
+    SUPPORT (price expected to find buying interest):
+    - High Put OI (sellers expect price to stay above)
+    - High Put writing (positive Chg OI for puts)
+    - High PCR (> 1.3) - more put activity
+    - Strike below spot with high put concentration
+
+    Returns dict with support and resistance strikes + strength status
+    """
+    support_levels = []
+    resistance_levels = []
+
+    # Get max OI values for comparison
+    max_ce_oi = df["OI_CE"].max() if "OI_CE" in df.columns else 0
+    max_pe_oi = df["OI_PE"].max() if "OI_PE" in df.columns else 0
+
+    for _, row in df.iterrows():
+        strike = int(row["strikePrice"])
+        oi_ce = safe_int(row.get("OI_CE", 0))
+        oi_pe = safe_int(row.get("OI_PE", 0))
+        chg_oi_ce = safe_int(row.get("Chg_OI_CE", 0))
+        chg_oi_pe = safe_int(row.get("Chg_OI_PE", 0))
+        vol_ce = safe_int(row.get("Vol_CE", 0))
+        vol_pe = safe_int(row.get("Vol_PE", 0))
+        gex_ce = safe_float(row.get("GEX_CE", 0))
+        gex_pe = safe_float(row.get("GEX_PE", 0))
+
+        # Calculate strike PCR
+        pcr = oi_pe / max(oi_ce, 1)
+
+        # Resistance criteria (above or at spot with high call activity)
+        resistance_score = 0
+        if strike >= spot:
+            # High Call OI (top 30%)
+            if oi_ce >= max_ce_oi * 0.7:
+                resistance_score += 3
+            elif oi_ce >= max_ce_oi * 0.5:
+                resistance_score += 2
+
+            # Call writing (positive change)
+            if chg_oi_ce > 0:
+                resistance_score += 2
+
+            # Low PCR indicates call dominance
+            if pcr < 0.5:
+                resistance_score += 2
+            elif pcr < 0.8:
+                resistance_score += 1
+
+        # Support criteria (below or at spot with high put activity)
+        support_score = 0
+        if strike <= spot:
+            # High Put OI (top 30%)
+            if oi_pe >= max_pe_oi * 0.7:
+                support_score += 3
+            elif oi_pe >= max_pe_oi * 0.5:
+                support_score += 2
+
+            # Put writing (positive change)
+            if chg_oi_pe > 0:
+                support_score += 2
+
+            # High PCR indicates put dominance
+            if pcr > 1.5:
+                support_score += 2
+            elif pcr > 1.2:
+                support_score += 1
+
+        # Classify based on scores
+        if resistance_score >= 4:
+            # Determine strength (for resistance, use call data)
+            str_emoji, str_text, str_score = determine_sr_strength(
+                strike, spot, chg_oi_ce, oi_ce, "resistance", vol_ce
+            )
+            resistance_levels.append({
+                "strike": strike,
+                "score": resistance_score,
+                "oi_ce": oi_ce,
+                "chg_oi": chg_oi_ce,
+                "pcr": pcr,
+                "strength_emoji": str_emoji,
+                "strength_text": str_text,
+                "strength_score": str_score
+            })
+
+        if support_score >= 4:
+            # Determine strength (for support, use put data)
+            str_emoji, str_text, str_score = determine_sr_strength(
+                strike, spot, chg_oi_pe, oi_pe, "support", vol_pe
+            )
+            support_levels.append({
+                "strike": strike,
+                "score": support_score,
+                "oi_pe": oi_pe,
+                "chg_oi": chg_oi_pe,
+                "pcr": pcr,
+                "strength_emoji": str_emoji,
+                "strength_text": str_text,
+                "strength_score": str_score
+            })
+
+    # Sort by score (highest first) and get top levels
+    resistance_levels = sorted(resistance_levels, key=lambda x: x["score"], reverse=True)
+    support_levels = sorted(support_levels, key=lambda x: x["score"], reverse=True)
+
+    # Get primary support and resistance
+    primary_resistance = resistance_levels[0]["strike"] if resistance_levels else None
+    primary_support = support_levels[0]["strike"] if support_levels else None
+
+    return {
+        "resistance": [r["strike"] for r in resistance_levels[:3]],  # Top 3
+        "support": [s["strike"] for s in support_levels[:3]],  # Top 3
+        "primary_resistance": primary_resistance,
+        "primary_support": primary_support,
+        "resistance_details": resistance_levels[:3],
+        "support_details": support_levels[:3]
+    }
+
+
 def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expiry, days_to_expiry, tau):
     """
     Render the option chain table using native Streamlit components
     """
     st.subheader("Option Chain Table")
-    st.caption("ATM ±5 strikes | Calls on Left, Puts on Right | Click to Trade")
+    st.caption("ATM ±5 strikes | Support (Green) | Resistance (Red)")
 
     # Controls row
     col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
@@ -175,16 +387,56 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
     with col5:
         st.metric("NIFTY Spot", f"₹{spot:,.2f}", delta=f"Exp: {expiry} ({days_to_expiry:.1f}d)")
 
+    # Identify Support and Resistance
+    sr_levels = identify_support_resistance(df_filtered, spot, atm_strike)
+
+    # Display Support and Resistance Summary with Strength
     st.divider()
 
-    # Build display dataframe for CALLS
-    calls_data = []
-    puts_data = []
-    strike_data = []
+    sr_col1, sr_col2 = st.columns(2)
+
+    with sr_col1:
+        st.success(f"🟢 **SUPPORT LEVELS**")
+        if sr_levels["support_details"]:
+            for i, detail in enumerate(sr_levels["support_details"]):
+                marker = "→" if i == 0 else "  "
+                primary = " (Primary)" if i == 0 else ""
+                strength_emoji = detail.get("strength_emoji", "")
+                strength_text = detail.get("strength_text", "")
+                chg_oi = detail.get("chg_oi", 0)
+                chg_sign = "+" if chg_oi > 0 else ""
+                st.write(f"{marker} **{detail['strike']:,}**{primary}")
+                st.caption(f"   {strength_emoji} {strength_text} | ChgOI: {chg_sign}{chg_oi:,}")
+        else:
+            st.write("No strong support identified")
+
+    with sr_col2:
+        st.error(f"🔴 **RESISTANCE LEVELS**")
+        if sr_levels["resistance_details"]:
+            for i, detail in enumerate(sr_levels["resistance_details"]):
+                marker = "→" if i == 0 else "  "
+                primary = " (Primary)" if i == 0 else ""
+                strength_emoji = detail.get("strength_emoji", "")
+                strength_text = detail.get("strength_text", "")
+                chg_oi = detail.get("chg_oi", 0)
+                chg_sign = "+" if chg_oi > 0 else ""
+                st.write(f"{marker} **{detail['strike']:,}**{primary}")
+                st.caption(f"   {strength_emoji} {strength_text} | ChgOI: {chg_sign}{chg_oi:,}")
+        else:
+            st.write("No strong resistance identified")
+
+    st.divider()
+
+    # Build display dataframe
+    table_data = []
 
     for _, row in df_filtered.iterrows():
         strike = int(row["strikePrice"])
         is_atm = strike == atm_strike
+        is_support = strike in sr_levels["support"]
+        is_resistance = strike in sr_levels["resistance"]
+        is_primary_support = strike == sr_levels["primary_support"]
+        is_primary_resistance = strike == sr_levels["primary_resistance"]
 
         # CE values
         ltp_ce = safe_float(row.get("LTP_CE", 0))
@@ -193,7 +445,6 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
         vol_ce = safe_int(row.get("Vol_CE", 0))
         iv_ce = safe_float(row.get("IV_CE", 0))
         delta_ce = safe_float(row.get("Delta_CE", 0))
-        gex_ce = safe_float(row.get("GEX_CE", 0))
 
         # PE values
         ltp_pe = safe_float(row.get("LTP_PE", 0))
@@ -202,75 +453,97 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
         vol_pe = safe_int(row.get("Vol_PE", 0))
         iv_pe = safe_float(row.get("IV_PE", 0))
         delta_pe = safe_float(row.get("Delta_PE", 0))
-        gex_pe = safe_float(row.get("GEX_PE", 0))
 
         # Strike PCR
         strike_pcr = oi_pe / max(oi_ce, 1)
 
-        # ATM marker
-        atm_marker = " ⭐" if is_atm else ""
+        # Build markers
+        markers = []
+        if is_atm:
+            markers.append("⭐ATM")
+        if is_primary_support:
+            markers.append("🟢SUP")
+        elif is_support:
+            markers.append("🟢")
+        if is_primary_resistance:
+            markers.append("🔴RES")
+        elif is_resistance:
+            markers.append("🔴")
 
-        calls_data.append({
-            "OI (L)": format_oi_lakhs(oi_ce),
-            "Chg OI": format_change_oi(chg_oi_ce),
-            "Volume": format_volume(vol_ce),
-            "IV %": f"{iv_ce:.1f}" if iv_ce > 0 else "-",
-            "LTP": f"₹{ltp_ce:.2f}",
-            "Delta": f"{delta_ce:.2f}",
+        marker_str = " ".join(markers)
+
+        table_data.append({
+            # CE Side
+            "CE_OI": format_oi_lakhs(oi_ce),
+            "CE_ChgOI": format_change_oi(chg_oi_ce),
+            "CE_Vol": format_volume(vol_ce),
+            "CE_IV": f"{iv_ce:.1f}" if iv_ce > 0 else "-",
+            "CE_LTP": f"{ltp_ce:.2f}",
+            # Strike info
+            "Strike": strike,
+            "PCR": round(strike_pcr, 2),
+            "Signal": marker_str,
+            # PE Side
+            "PE_LTP": f"{ltp_pe:.2f}",
+            "PE_IV": f"{iv_pe:.1f}" if iv_pe > 0 else "-",
+            "PE_Vol": format_volume(vol_pe),
+            "PE_ChgOI": format_change_oi(chg_oi_pe),
+            "PE_OI": format_oi_lakhs(oi_pe),
+            # Hidden for styling
+            "_is_support": is_support,
+            "_is_resistance": is_resistance,
+            "_is_atm": is_atm,
         })
 
-        strike_data.append({
-            "Strike": f"{strike:,}{atm_marker}",
-            "PCR": f"{strike_pcr:.2f}",
-        })
+    display_df = pd.DataFrame(table_data)
 
-        puts_data.append({
-            "Delta": f"{delta_pe:.2f}",
-            "LTP": f"₹{ltp_pe:.2f}",
-            "IV %": f"{iv_pe:.1f}" if iv_pe > 0 else "-",
-            "Volume": format_volume(vol_pe),
-            "Chg OI": format_change_oi(chg_oi_pe),
-            "OI (L)": format_oi_lakhs(oi_pe),
-        })
+    # Create display version without hidden columns
+    display_cols = ["CE_OI", "CE_ChgOI", "CE_Vol", "CE_IV", "CE_LTP",
+                    "Strike", "PCR", "Signal",
+                    "PE_LTP", "PE_IV", "PE_Vol", "PE_ChgOI", "PE_OI"]
 
-    calls_df = pd.DataFrame(calls_data)
-    strike_df = pd.DataFrame(strike_data)
-    puts_df = pd.DataFrame(puts_data)
+    show_df = display_df[display_cols].copy()
 
-    # Display tables side by side
-    st.write("**CALLS (CE)** | **Strike** | **PUTS (PE)**")
+    # Rename columns for display
+    show_df.columns = ["OI(L)", "ChgOI", "Vol", "IV%", "LTP",
+                       "Strike", "PCR", "Signal",
+                       "LTP", "IV%", "Vol", "ChgOI", "OI(L)"]
 
-    col_ce, col_strike, col_pe = st.columns([4, 2, 4])
+    # Style function for highlighting
+    def highlight_rows(row):
+        strike = row.name
+        original_row = display_df.iloc[strike]
 
-    with col_ce:
-        st.dataframe(
-            calls_df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(400, (len(calls_df) + 1) * 35)
-        )
+        styles = [''] * len(row)
 
-    with col_strike:
-        st.dataframe(
-            strike_df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(400, (len(strike_df) + 1) * 35)
-        )
+        if original_row["_is_resistance"]:
+            styles = ['background-color: rgba(255, 0, 0, 0.2)'] * len(row)
+        elif original_row["_is_support"]:
+            styles = ['background-color: rgba(0, 255, 0, 0.2)'] * len(row)
+        elif original_row["_is_atm"]:
+            styles = ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
 
-    with col_pe:
-        st.dataframe(
-            puts_df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(400, (len(puts_df) + 1) * 35)
-        )
+        return styles
+
+    # Apply styling
+    styled_df = show_df.style.apply(highlight_rows, axis=1)
+
+    # Display header
+    st.write("**CALLS (CE)** ← | → **PUTS (PE)**")
+
+    # Display the styled dataframe
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        height=min(500, (len(show_df) + 1) * 35)
+    )
 
     # Legend
-    st.divider()
     st.caption(
-        "Legend: ⭐ = ATM Strike | OI in Lakhs | "
-        "PCR = Put-Call Ratio | Chg OI = Change in Open Interest"
+        "🟢 = Support | 🔴 = Resistance | ⭐ = ATM | "
+        "OI in Lakhs | PCR = Put/Call Ratio | "
+        "Strength: 🔼 BUILDING STRONG | 📈 BUILDING | ➖ HOLDING | 📉 WEAKENING | ⚠️ BREAKING"
     )
 
     st.divider()
