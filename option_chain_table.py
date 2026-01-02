@@ -457,6 +457,40 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
         # Strike PCR
         strike_pcr = oi_pe / max(oi_ce, 1)
 
+        # Market Depth Bias for CE (Call)
+        # Positive ChgOI + High Volume = Strong selling (writers adding positions)
+        # Negative ChgOI = Unwinding (sellers closing) = Weak
+        ce_bias = ""
+        if chg_oi_ce > 0:
+            if vol_ce > oi_ce * 0.05:  # High activity
+                ce_bias = "🐻S"  # Strong selling (bearish for calls = bullish for market)
+            else:
+                ce_bias = "🐻"
+        elif chg_oi_ce < 0:
+            if vol_ce > oi_ce * 0.05:
+                ce_bias = "🐂U"  # Unwinding (bullish for calls = bearish for market)
+            else:
+                ce_bias = "🐂"
+        else:
+            ce_bias = "➖"
+
+        # Market Depth Bias for PE (Put)
+        # Positive ChgOI = Put writing = Bullish
+        # Negative ChgOI = Put unwinding = Bearish
+        pe_bias = ""
+        if chg_oi_pe > 0:
+            if vol_pe > oi_pe * 0.05:
+                pe_bias = "🐂S"  # Strong put selling = Bullish
+            else:
+                pe_bias = "🐂"
+        elif chg_oi_pe < 0:
+            if vol_pe > oi_pe * 0.05:
+                pe_bias = "🐻U"  # Put unwinding = Bearish
+            else:
+                pe_bias = "🐻"
+        else:
+            pe_bias = "➖"
+
         # Build markers
         markers = []
         if is_atm:
@@ -474,6 +508,7 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
 
         table_data.append({
             # CE Side
+            "CE_Bias": ce_bias,
             "CE_OI": format_oi_lakhs(oi_ce),
             "CE_ChgOI": format_change_oi(chg_oi_ce),
             "CE_Vol": format_volume(vol_ce),
@@ -489,6 +524,7 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
             "PE_Vol": format_volume(vol_pe),
             "PE_ChgOI": format_change_oi(chg_oi_pe),
             "PE_OI": format_oi_lakhs(oi_pe),
+            "PE_Bias": pe_bias,
             # Hidden for styling
             "_is_support": is_support,
             "_is_resistance": is_resistance,
@@ -498,16 +534,16 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
     display_df = pd.DataFrame(table_data)
 
     # Create display version without hidden columns
-    display_cols = ["CE_OI", "CE_ChgOI", "CE_Vol", "CE_IV", "CE_LTP",
+    display_cols = ["CE_Bias", "CE_OI", "CE_ChgOI", "CE_Vol", "CE_IV", "CE_LTP",
                     "Strike", "PCR", "Signal",
-                    "PE_LTP", "PE_IV", "PE_Vol", "PE_ChgOI", "PE_OI"]
+                    "PE_LTP", "PE_IV", "PE_Vol", "PE_ChgOI", "PE_OI", "PE_Bias"]
 
     show_df = display_df[display_cols].copy()
 
     # Rename columns for display
-    show_df.columns = ["OI(L)", "ChgOI", "Vol", "IV%", "LTP",
+    show_df.columns = ["Bias", "OI(L)", "ChgOI", "Vol", "IV%", "LTP",
                        "Strike", "PCR", "Signal",
-                       "LTP", "IV%", "Vol", "ChgOI", "OI(L)"]
+                       "LTP", "IV%", "Vol", "ChgOI", "OI(L)", "Bias"]
 
     # Style function for highlighting
     def highlight_rows(row):
@@ -541,9 +577,13 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
 
     # Legend
     st.caption(
-        "🟢 = Support | 🔴 = Resistance | ⭐ = ATM | "
-        "OI in Lakhs | PCR = Put/Call Ratio | "
-        "Strength: 🔼 BUILDING STRONG | 📈 BUILDING | ➖ HOLDING | 📉 WEAKENING | ⚠️ BREAKING"
+        "🟢 = Support | 🔴 = Resistance | ⭐ = ATM | OI in Lakhs | PCR = Put/Call Ratio"
+    )
+    st.caption(
+        "**Bias:** 🐂 = Bullish | 🐻 = Bearish | S = Strong | U = Unwinding | ➖ = Neutral"
+    )
+    st.caption(
+        "**Strength:** 🔼 BUILDING STRONG | 📈 BUILDING | ➖ HOLDING | 📉 WEAKENING | ⚠️ BREAKING"
     )
 
     st.divider()
