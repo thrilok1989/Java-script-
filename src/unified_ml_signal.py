@@ -256,6 +256,19 @@ class UnifiedMLSignalGenerator:
         Returns:
             UnifiedSignal with combined analysis
         """
+        # Ensure we have a valid spot_price
+        if not spot_price or spot_price <= 0:
+            # Try to get from DataFrame
+            if df is not None and len(df) > 0:
+                close_col = 'Close' if 'Close' in df.columns else 'close' if 'close' in df.columns else None
+                if close_col:
+                    spot_price = float(df[close_col].iloc[-1])
+
+        # Store spot_price in session state for other components
+        if spot_price and spot_price > 0:
+            st.session_state['computed_spot_price'] = spot_price
+            st.session_state['nifty_spot'] = spot_price
+
         # Initialize scores
         scores = {
             'regime': 0,
@@ -728,15 +741,22 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     """
     # Fallback for spot_price if not provided
     if not spot_price or spot_price <= 0:
+        # Try computed spot price first (set by generate_signal)
+        spot_price = st.session_state.get('computed_spot_price')
+    if not spot_price or spot_price <= 0:
         # Try session state
         spot_price = st.session_state.get('nifty_spot') or st.session_state.get('spot_price')
     if not spot_price or spot_price <= 0:
         # Use ATM strike as approximation
         spot_price = signal.atm_strike if signal.atm_strike and signal.atm_strike > 0 else 0
     if not spot_price or spot_price <= 0:
-        # Last resort - try to get from entry zone
+        # Try to get from entry zone
         if signal.entry_zone and signal.entry_zone[0] > 0:
             spot_price = (signal.entry_zone[0] + signal.entry_zone[1]) / 2
+    if not spot_price or spot_price <= 0:
+        # Last resort - use stop loss as reference
+        if signal.stop_loss and signal.stop_loss > 0:
+            spot_price = signal.stop_loss + 100  # Approximate
 
     # Signal color
     signal_colors = {
