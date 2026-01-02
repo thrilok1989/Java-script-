@@ -726,6 +726,18 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     """
     Render the unified signal in Streamlit
     """
+    # Fallback for spot_price if not provided
+    if not spot_price or spot_price <= 0:
+        # Try session state
+        spot_price = st.session_state.get('nifty_spot') or st.session_state.get('spot_price')
+    if not spot_price or spot_price <= 0:
+        # Use ATM strike as approximation
+        spot_price = signal.atm_strike if signal.atm_strike and signal.atm_strike > 0 else 0
+    if not spot_price or spot_price <= 0:
+        # Last resort - try to get from entry zone
+        if signal.entry_zone and signal.entry_zone[0] > 0:
+            spot_price = (signal.entry_zone[0] + signal.entry_zone[1]) / 2
+
     # Signal color
     signal_colors = {
         'STRONG BUY': '#00FF00',
@@ -1037,16 +1049,34 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         merged_supports = sorted(merged_supports, key=lambda x: (-x['strength'], spot_price - x['price']))[:3]
         merged_resistances = sorted(merged_resistances, key=lambda x: (-x['strength'], x['price'] - spot_price))[:3]
 
-    # FALLBACK
-    if not merged_supports and spot_price:
-        base = int(spot_price / 100) * 100
-        merged_supports = [{'price': base - 100, 'range': (base-100, base-100), 'sources': ['Round'], 'strength': 1}]
-    if not merged_resistances and spot_price and spot_price > 0:
-        base = int(spot_price / 50) * 50  # Round to nearest 50
-        merged_resistances = [
-            {'price': base + 50, 'range': (base + 50, base + 50), 'sources': ['Calculated'], 'strength': 1},
-            {'price': base + 100, 'range': (base + 100, base + 100), 'sources': ['Calculated'], 'strength': 1}
-        ]
+    # FALLBACK - Always show S/R even if sources are empty
+    if not merged_supports:
+        if spot_price and spot_price > 0:
+            base = int(spot_price / 100) * 100
+            merged_supports = [
+                {'price': base - 50, 'range': (base-50, base-50), 'sources': ['Round'], 'strength': 1},
+                {'price': base - 100, 'range': (base-100, base-100), 'sources': ['Round'], 'strength': 1}
+            ]
+        elif signal.atm_strike and signal.atm_strike > 0:
+            atm = signal.atm_strike
+            merged_supports = [
+                {'price': atm - 50, 'range': (atm-50, atm-50), 'sources': ['ATM'], 'strength': 1},
+                {'price': atm - 100, 'range': (atm-100, atm-100), 'sources': ['ATM'], 'strength': 1}
+            ]
+
+    if not merged_resistances:
+        if spot_price and spot_price > 0:
+            base = int(spot_price / 100) * 100
+            merged_resistances = [
+                {'price': base + 100, 'range': (base+100, base+100), 'sources': ['Round'], 'strength': 1},
+                {'price': base + 150, 'range': (base+150, base+150), 'sources': ['Round'], 'strength': 1}
+            ]
+        elif signal.atm_strike and signal.atm_strike > 0:
+            atm = signal.atm_strike
+            merged_resistances = [
+                {'price': atm + 50, 'range': (atm+50, atm+50), 'sources': ['ATM'], 'strength': 1},
+                {'price': atm + 100, 'range': (atm+100, atm+100), 'sources': ['ATM'], 'strength': 1}
+            ]
 
     # Get primary S/R for display
     support = merged_supports[0]['price'] if merged_supports else 0
