@@ -151,8 +151,8 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
 
     df_filtered = merged_df[(merged_df["strikePrice"] >= lower_bound) &
                             (merged_df["strikePrice"] <= upper_bound)].copy()
-    # Sort by strike price descending (higher strikes at top, lower at bottom)
-    df_filtered = df_filtered.sort_values("strikePrice", ascending=False).reset_index(drop=True)
+    # Sort by strike price ascending (lower strikes at top, ATM in middle, higher at bottom)
+    df_filtered = df_filtered.sort_values("strikePrice", ascending=True).reset_index(drop=True)
 
     if df_filtered.empty:
         st.error("No data available for option chain table")
