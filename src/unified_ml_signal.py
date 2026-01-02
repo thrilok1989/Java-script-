@@ -1021,17 +1021,17 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 resistance_levels.append({'price': block['mid'], 'source': 'VOB', 'type': 'Bear'})
 
     # ═══════════════════════════════════════════════════════════════════
-    # 8. Merge levels using Fibonacci tolerance (not fixed threshold)
+    # 8. Merge levels - tight tolerance (30 points max)
     # ═══════════════════════════════════════════════════════════════════
     def merge_sr_levels_fib(levels):
-        """Merge levels using 0.382% tolerance (Fib-based confluence)"""
+        """Merge levels within 30 points (tight confluence zones)"""
         if not levels:
             return []
 
         sorted_levels = sorted(levels, key=lambda x: x['price'])
         merged = []
-        # Tolerance: 0.382% of spot (Fib ratio) ≈ 100 points for 26000
-        tolerance = spot_price * 0.00382 if spot_price else 100
+        # Tight tolerance: 30 points (about half a strike interval)
+        tolerance = 30
 
         current_zone = None
         for lvl in sorted_levels:
