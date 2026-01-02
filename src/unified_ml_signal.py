@@ -893,209 +893,311 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     phase_explanation = phase_explanations.get(market_phase, "Market in transition phase.")
 
     # ═══════════════════════════════════════════════════════════════════
-    # COMPREHENSIVE S/R: Fib + Option Chain + HTF + Price Action
+    # EXACT S/R LEVELS - NO RANGES, EXACT PRICES ONLY
+    # Priority: OI Wall > Fib 0.618 > Max Pain > Swing High/Low > HTF > VWAP
     # ═══════════════════════════════════════════════════════════════════
-    support_levels = []
-    resistance_levels = []
+
+    # Priority weights for sorting (higher = more important)
+    SOURCE_PRIORITY = {
+        'OI-Wall': 100,      # Option Chain OI is PRIMARY
+        'MaxPain': 90,       # Max Pain is very reliable
+        'Fib-0.618': 85,     # Golden ratio
+        'Fib-0.382': 80,     # Strong Fib level
+        'Swing': 75,         # Chart swing highs/lows
+        'Fib-0.5': 70,       # 50% retracement
+        'HTF': 65,           # Higher timeframe
+        'Spike': 60,         # From Spike Detector
+        'VWAP': 55,          # Volume weighted
+        'VOB': 50,           # Volume order blocks
+        'Fib-0.236': 45,     # Shallow Fib
+        'Fib-0.786': 45,     # Deep Fib
+        'Round': 30,         # Psychological only
+    }
+
+    exact_supports = []      # List of {'price': X, 'source': 'OI-Wall', 'label': 'PUT OI Wall'}
+    exact_resistances = []   # List of {'price': X, 'source': 'Fib-0.618', 'label': '61.8% Fib'}
 
     # ═══════════════════════════════════════════════════════════════════
-    # 1. FIBONACCI LEVELS (from Swing High/Low)
+    # 1. OPTION CHAIN OI WALLS (PRIMARY SOURCE - Most Reliable)
+    # Max PUT OI = Strong Support | Max CALL OI = Strong Resistance
+    # ═══════════════════════════════════════════════════════════════════
+    option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+    if option_data and spot_price:
+        # OI Wall Support (Max PUT OI strike)
+        supp_data = option_data.get('support', {})
+        if supp_data.get('strike') and supp_data['strike'] < spot_price:
+            oi_val = supp_data.get('oi', 0)
+            exact_supports.append({
+                'price': supp_data['strike'],
+                'source': 'OI-Wall',
+                'label': f"PUT OI Wall ({oi_val/100000:.1f}L)" if oi_val else "PUT OI Wall",
+                'priority': SOURCE_PRIORITY['OI-Wall']
+            })
+
+        # OI Wall Resistance (Max CALL OI strike)
+        res_data = option_data.get('resistance', {})
+        if res_data.get('strike') and res_data['strike'] > spot_price:
+            oi_val = res_data.get('oi', 0)
+            exact_resistances.append({
+                'price': res_data['strike'],
+                'source': 'OI-Wall',
+                'label': f"CALL OI Wall ({oi_val/100000:.1f}L)" if oi_val else "CALL OI Wall",
+                'priority': SOURCE_PRIORITY['OI-Wall']
+            })
+
+        # Max Pain
+        max_pain = option_data.get('max_pain')
+        if max_pain and isinstance(max_pain, (int, float)):
+            if max_pain < spot_price:
+                exact_supports.append({
+                    'price': max_pain,
+                    'source': 'MaxPain',
+                    'label': 'Max Pain Target',
+                    'priority': SOURCE_PRIORITY['MaxPain']
+                })
+            else:
+                exact_resistances.append({
+                    'price': max_pain,
+                    'source': 'MaxPain',
+                    'label': 'Max Pain Target',
+                    'priority': SOURCE_PRIORITY['MaxPain']
+                })
+
+    # From Spike Detector OI levels
+    if spike_data and spike_data.get('key_levels') and spot_price:
+        key_levels = spike_data.get('key_levels', {})
+        if key_levels.get('support') and key_levels['support'] < spot_price:
+            exact_supports.append({
+                'price': key_levels['support'],
+                'source': 'Spike',
+                'label': 'Spike OI Support',
+                'priority': SOURCE_PRIORITY['Spike']
+            })
+        if key_levels.get('resistance') and key_levels['resistance'] > spot_price:
+            exact_resistances.append({
+                'price': key_levels['resistance'],
+                'source': 'Spike',
+                'label': 'Spike OI Resistance',
+                'priority': SOURCE_PRIORITY['Spike']
+            })
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 2. FIBONACCI LEVELS (Price Action Based)
     # ═══════════════════════════════════════════════════════════════════
     swing_high = None
     swing_low = None
 
     if support_resistance:
-        # Get swing high/low from ML regime data
         all_res = support_resistance.get('all_resistances', [])
         all_sup = support_resistance.get('all_supports', [])
-        swing_high = max([r for r in all_res if r and isinstance(r, (int, float))]) if all_res else None
-        swing_low = min([s for s in all_sup if s and isinstance(s, (int, float))]) if all_sup else None
+
+        # Filter to only valid numeric values
+        valid_res = [r for r in all_res if r and isinstance(r, (int, float)) and not isinstance(r, bool)]
+        valid_sup = [s for s in all_sup if s and isinstance(s, (int, float)) and not isinstance(s, bool)]
+
+        swing_high = max(valid_res) if valid_res else None
+        swing_low = min(valid_sup) if valid_sup else None
 
         if not swing_high:
-            swing_high = support_resistance.get('major_resistance') or support_resistance.get('near_resistance')
+            major_res = support_resistance.get('major_resistance') or support_resistance.get('near_resistance')
+            if major_res and isinstance(major_res, (int, float)) and not isinstance(major_res, (list, bool)):
+                swing_high = float(major_res)
         if not swing_low:
-            swing_low = support_resistance.get('major_support') or support_resistance.get('near_support')
+            major_sup = support_resistance.get('major_support') or support_resistance.get('near_support')
+            if major_sup and isinstance(major_sup, (int, float)) and not isinstance(major_sup, (list, bool)):
+                swing_low = float(major_sup)
 
-    # Calculate Fibonacci retracement levels
-    if swing_high and swing_low and swing_high > swing_low and spot_price:
+    # Validate swing_high and swing_low are numeric before comparison
+    if swing_high and swing_low and isinstance(swing_high, (int, float)) and isinstance(swing_low, (int, float)) and swing_high > swing_low and spot_price:
         fib_range = swing_high - swing_low
-        fib_ratios = {'0.236': 0.236, '0.382': 0.382, '0.5': 0.5, '0.618': 0.618, '0.786': 0.786}
+        fib_levels = {
+            '0.236': (0.236, 'Fib-0.236', '23.6% Fib'),
+            '0.382': (0.382, 'Fib-0.382', '38.2% Fib'),
+            '0.5':   (0.5, 'Fib-0.5', '50% Fib'),
+            '0.618': (0.618, 'Fib-0.618', '61.8% Fib (Golden)'),
+            '0.786': (0.786, 'Fib-0.786', '78.6% Fib'),
+        }
 
-        for name, ratio in fib_ratios.items():
+        for name, (ratio, source_key, label) in fib_levels.items():
             fib_level = swing_high - (fib_range * ratio)
             if fib_level < spot_price:
-                support_levels.append({'price': fib_level, 'source': 'Fib', 'type': name})
+                exact_supports.append({
+                    'price': round(fib_level, 2),
+                    'source': source_key,
+                    'label': label,
+                    'priority': SOURCE_PRIORITY.get(source_key, 40)
+                })
             elif fib_level > spot_price:
-                resistance_levels.append({'price': fib_level, 'source': 'Fib', 'type': name})
+                exact_resistances.append({
+                    'price': round(fib_level, 2),
+                    'source': source_key,
+                    'label': label,
+                    'priority': SOURCE_PRIORITY.get(source_key, 40)
+                })
 
-        # Swing high/low as key levels
+        # Swing High/Low as key levels
         if swing_high > spot_price:
-            resistance_levels.append({'price': swing_high, 'source': 'Swing', 'type': 'High'})
+            exact_resistances.append({
+                'price': swing_high,
+                'source': 'Swing',
+                'label': 'Swing High',
+                'priority': SOURCE_PRIORITY['Swing']
+            })
         if swing_low < spot_price:
-            support_levels.append({'price': swing_low, 'source': 'Swing', 'type': 'Low'})
+            exact_supports.append({
+                'price': swing_low,
+                'source': 'Swing',
+                'label': 'Swing Low',
+                'priority': SOURCE_PRIORITY['Swing']
+            })
 
     # ═══════════════════════════════════════════════════════════════════
-    # 2. OPTION CHAIN (Max Pain, OI Walls)
-    # ═══════════════════════════════════════════════════════════════════
-    option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
-    if option_data and spot_price:
-        # Max Pain
-        max_pain = option_data.get('max_pain')
-        if max_pain and isinstance(max_pain, (int, float)):
-            if max_pain < spot_price:
-                support_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
-            else:
-                resistance_levels.append({'price': max_pain, 'source': 'MaxPain', 'type': 'Target'})
-
-        # OI Walls
-        supp_data = option_data.get('support', {})
-        if supp_data.get('strike') and supp_data['strike'] < spot_price:
-            support_levels.append({'price': supp_data['strike'], 'source': 'OI-Wall', 'type': 'PUT'})
-
-        res_data = option_data.get('resistance', {})
-        if res_data.get('strike') and res_data['strike'] > spot_price:
-            resistance_levels.append({'price': res_data['strike'], 'source': 'OI-Wall', 'type': 'CALL'})
-
-    # From Spike Detector
-    if spike_data and spike_data.get('key_levels') and spot_price:
-        key_levels = spike_data.get('key_levels', {})
-        if key_levels.get('support') and key_levels['support'] < spot_price:
-            support_levels.append({'price': key_levels['support'], 'source': 'Spike', 'type': 'OI'})
-        if key_levels.get('resistance') and key_levels['resistance'] > spot_price:
-            resistance_levels.append({'price': key_levels['resistance'], 'source': 'Spike', 'type': 'OI'})
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 3. HTF S/R (Higher Timeframe from session state)
+    # 3. HTF S/R (Higher Timeframe)
     # ═══════════════════════════════════════════════════════════════════
     htf_data = st.session_state.get('htf_sr_levels', {})
     if htf_data and spot_price:
         for tf, levels in htf_data.items():
             if isinstance(levels, dict):
                 if levels.get('support') and levels['support'] < spot_price:
-                    support_levels.append({'price': levels['support'], 'source': 'HTF', 'type': tf})
+                    exact_supports.append({
+                        'price': levels['support'],
+                        'source': 'HTF',
+                        'label': f'{tf} Support',
+                        'priority': SOURCE_PRIORITY['HTF']
+                    })
                 if levels.get('resistance') and levels['resistance'] > spot_price:
-                    resistance_levels.append({'price': levels['resistance'], 'source': 'HTF', 'type': tf})
+                    exact_resistances.append({
+                        'price': levels['resistance'],
+                        'source': 'HTF',
+                        'label': f'{tf} Resistance',
+                        'priority': SOURCE_PRIORITY['HTF']
+                    })
 
     # ═══════════════════════════════════════════════════════════════════
-    # 4. SWING HIGHS/LOWS (Price Action from Chart)
-    # ═══════════════════════════════════════════════════════════════════
-    if support_resistance and spot_price:
-        for s in support_resistance.get('all_supports', []):
-            if s and isinstance(s, (int, float)) and s < spot_price:
-                support_levels.append({'price': s, 'source': 'Chart', 'type': 'Swing'})
-        for r in support_resistance.get('all_resistances', []):
-            if r and isinstance(r, (int, float)) and r > spot_price:
-                resistance_levels.append({'price': r, 'source': 'Chart', 'type': 'Swing'})
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 5. ROUND NUMBERS (Psychological)
-    # ═══════════════════════════════════════════════════════════════════
-    if spot_price:
-        base = int(spot_price / 100) * 100
-        for lvl in [base - 100, base, base + 100, base + 200]:
-            if lvl < spot_price:
-                support_levels.append({'price': lvl, 'source': 'Round', 'type': '100'})
-            elif lvl > spot_price:
-                resistance_levels.append({'price': lvl, 'source': 'Round', 'type': '100'})
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 6. VWAP (Volume Weighted Average Price)
+    # 4. VWAP
     # ═══════════════════════════════════════════════════════════════════
     vwap = st.session_state.get('vwap_level') or st.session_state.get('nifty_vwap')
     if vwap and isinstance(vwap, (int, float)) and spot_price:
         if vwap < spot_price:
-            support_levels.append({'price': vwap, 'source': 'VWAP', 'type': 'Daily'})
+            exact_supports.append({
+                'price': vwap,
+                'source': 'VWAP',
+                'label': 'Daily VWAP',
+                'priority': SOURCE_PRIORITY['VWAP']
+            })
         else:
-            resistance_levels.append({'price': vwap, 'source': 'VWAP', 'type': 'Daily'})
+            exact_resistances.append({
+                'price': vwap,
+                'source': 'VWAP',
+                'label': 'Daily VWAP',
+                'priority': SOURCE_PRIORITY['VWAP']
+            })
 
     # ═══════════════════════════════════════════════════════════════════
-    # 7. Volume Order Blocks (VOB) from session state
+    # 5. Volume Order Blocks (VOB)
     # ═══════════════════════════════════════════════════════════════════
     vob_data = st.session_state.get('vob_levels', {})
     if vob_data and spot_price:
         for block in vob_data.get('bullish_blocks', []):
             if block.get('mid') and block['mid'] < spot_price:
-                support_levels.append({'price': block['mid'], 'source': 'VOB', 'type': 'Bull'})
+                exact_supports.append({
+                    'price': block['mid'],
+                    'source': 'VOB',
+                    'label': 'Bullish Order Block',
+                    'priority': SOURCE_PRIORITY['VOB']
+                })
         for block in vob_data.get('bearish_blocks', []):
             if block.get('mid') and block['mid'] > spot_price:
-                resistance_levels.append({'price': block['mid'], 'source': 'VOB', 'type': 'Bear'})
+                exact_resistances.append({
+                    'price': block['mid'],
+                    'source': 'VOB',
+                    'label': 'Bearish Order Block',
+                    'priority': SOURCE_PRIORITY['VOB']
+                })
 
     # ═══════════════════════════════════════════════════════════════════
-    # 8. Merge levels - tight tolerance (30 points max)
+    # 6. Round Numbers (Psychological - lowest priority)
     # ═══════════════════════════════════════════════════════════════════
-    def merge_sr_levels_fib(levels):
-        """Merge levels within 30 points (tight confluence zones)"""
+    if spot_price:
+        base = int(spot_price / 100) * 100
+        for lvl in [base - 100, base, base + 100, base + 200]:
+            if lvl < spot_price:
+                exact_supports.append({
+                    'price': lvl,
+                    'source': 'Round',
+                    'label': f'Round ₹{lvl:,.0f}',
+                    'priority': SOURCE_PRIORITY['Round']
+                })
+            elif lvl > spot_price:
+                exact_resistances.append({
+                    'price': lvl,
+                    'source': 'Round',
+                    'label': f'Round ₹{lvl:,.0f}',
+                    'priority': SOURCE_PRIORITY['Round']
+                })
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SORT BY PRIORITY (OI Wall first, then Fib, then others)
+    # Remove duplicates (same price within 5 points)
+    # ═══════════════════════════════════════════════════════════════════
+    def dedupe_and_sort(levels, is_support=True):
+        """Remove near-duplicates and sort by priority"""
         if not levels:
             return []
 
-        sorted_levels = sorted(levels, key=lambda x: x['price'])
-        merged = []
-        # Tight tolerance: 30 points (about half a strike interval)
-        tolerance = 30
+        # Sort by priority (highest first)
+        sorted_levels = sorted(levels, key=lambda x: -x['priority'])
 
-        current_zone = None
+        # Remove duplicates within 5 points (keep higher priority)
+        deduped = []
         for lvl in sorted_levels:
-            if current_zone is None:
-                current_zone = {'prices': [lvl['price']], 'sources': [lvl['source']]}
-            elif abs(lvl['price'] - sum(current_zone['prices'])/len(current_zone['prices'])) <= tolerance:
-                current_zone['prices'].append(lvl['price'])
-                if lvl['source'] not in current_zone['sources']:
-                    current_zone['sources'].append(lvl['source'])
-            else:
-                avg = sum(current_zone['prices']) / len(current_zone['prices'])
-                merged.append({
-                    'price': avg,
-                    'range': (min(current_zone['prices']), max(current_zone['prices'])),
-                    'sources': current_zone['sources'],
-                    'strength': len(current_zone['sources'])
-                })
-                current_zone = {'prices': [lvl['price']], 'sources': [lvl['source']]}
+            is_dup = False
+            for existing in deduped:
+                if abs(lvl['price'] - existing['price']) <= 5:
+                    is_dup = True
+                    break
+            if not is_dup:
+                deduped.append(lvl)
 
-        if current_zone:
-            avg = sum(current_zone['prices']) / len(current_zone['prices'])
-            merged.append({
-                'price': avg,
-                'range': (min(current_zone['prices']), max(current_zone['prices'])),
-                'sources': current_zone['sources'],
-                'strength': len(current_zone['sources'])
-            })
-        return merged
+        # For supports, sort by proximity to spot (closest first)
+        # For resistances, sort by proximity to spot (closest first)
+        if is_support:
+            deduped = sorted(deduped, key=lambda x: -(x['price']))  # Highest support first (closest to spot)
+        else:
+            deduped = sorted(deduped, key=lambda x: x['price'])    # Lowest resistance first (closest to spot)
 
-    merged_supports = merge_sr_levels_fib(support_levels)
-    merged_resistances = merge_sr_levels_fib(resistance_levels)
+        return deduped[:5]  # Top 5 levels
 
-    # Sort by confluence strength, then proximity
-    if spot_price:
-        merged_supports = sorted(merged_supports, key=lambda x: (-x['strength'], spot_price - x['price']))[:3]
-        merged_resistances = sorted(merged_resistances, key=lambda x: (-x['strength'], x['price'] - spot_price))[:3]
+    merged_supports = dedupe_and_sort(exact_supports, is_support=True)
+    merged_resistances = dedupe_and_sort(exact_resistances, is_support=False)
 
     # FALLBACK - Always show S/R even if sources are empty
     if not merged_supports:
         if spot_price and spot_price > 0:
-            base = int(spot_price / 100) * 100
+            base = int(spot_price / 50) * 50  # Align to 50-point strikes
             merged_supports = [
-                {'price': base - 50, 'range': (base-50, base-50), 'sources': ['Round'], 'strength': 1},
-                {'price': base - 100, 'range': (base-100, base-100), 'sources': ['Round'], 'strength': 1}
+                {'price': base - 50, 'source': 'Round', 'label': f'Strike ₹{base-50:,.0f}', 'priority': 30},
+                {'price': base - 100, 'source': 'Round', 'label': f'Strike ₹{base-100:,.0f}', 'priority': 30}
             ]
         elif signal.atm_strike and signal.atm_strike > 0:
             atm = signal.atm_strike
             merged_supports = [
-                {'price': atm - 50, 'range': (atm-50, atm-50), 'sources': ['ATM'], 'strength': 1},
-                {'price': atm - 100, 'range': (atm-100, atm-100), 'sources': ['ATM'], 'strength': 1}
+                {'price': atm - 50, 'source': 'ATM', 'label': f'ATM-50', 'priority': 25},
+                {'price': atm - 100, 'source': 'ATM', 'label': f'ATM-100', 'priority': 25}
             ]
 
     if not merged_resistances:
         if spot_price and spot_price > 0:
-            base = int(spot_price / 100) * 100
+            base = int(spot_price / 50) * 50  # Align to 50-point strikes
             merged_resistances = [
-                {'price': base + 100, 'range': (base+100, base+100), 'sources': ['Round'], 'strength': 1},
-                {'price': base + 150, 'range': (base+150, base+150), 'sources': ['Round'], 'strength': 1}
+                {'price': base + 50, 'source': 'Round', 'label': f'Strike ₹{base+50:,.0f}', 'priority': 30},
+                {'price': base + 100, 'source': 'Round', 'label': f'Strike ₹{base+100:,.0f}', 'priority': 30}
             ]
         elif signal.atm_strike and signal.atm_strike > 0:
             atm = signal.atm_strike
             merged_resistances = [
-                {'price': atm + 50, 'range': (atm+50, atm+50), 'sources': ['ATM'], 'strength': 1},
-                {'price': atm + 100, 'range': (atm+100, atm+100), 'sources': ['ATM'], 'strength': 1}
+                {'price': atm + 50, 'source': 'ATM', 'label': f'ATM+50', 'priority': 25},
+                {'price': atm + 100, 'source': 'ATM', 'label': f'ATM+100', 'priority': 25}
             ]
 
     # Get primary S/R for display
@@ -1148,14 +1250,14 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
 
     if primary_supp > 0 or primary_res > 0:
         st.markdown("---")
-        st.markdown("**📊 TRADING RANGE (OI + Chart Aligned)**")
+        st.markdown("**📊 EXACT S/R LEVELS (OI Wall = Primary)**")
         col_s, col_r, col_range = st.columns(3)
         with col_s:
-            supp_sources = " + ".join(merged_supports[0]['sources']) if merged_supports else "N/A"
-            st.metric("🛡️ Support", f"₹{primary_supp:,.0f}", delta=None, help=f"Sources: {supp_sources}")
+            supp_label = merged_supports[0].get('label', 'Support') if merged_supports else "N/A"
+            st.metric("🛡️ Support", f"₹{primary_supp:,.0f}", delta=None, help=supp_label)
         with col_r:
-            res_sources = " + ".join(merged_resistances[0]['sources']) if merged_resistances else "N/A"
-            st.metric("🧱 Resistance", f"₹{primary_res:,.0f}", delta=None, help=f"Sources: {res_sources}")
+            res_label = merged_resistances[0].get('label', 'Resistance') if merged_resistances else "N/A"
+            st.metric("🧱 Resistance", f"₹{primary_res:,.0f}", delta=None, help=res_label)
         with col_range:
             st.metric("📏 Range", f"{range_size:,.0f} pts", delta=None)
 
@@ -1185,34 +1287,46 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     st.write(f"• {sig}")
 
     # ═══════════════════════════════════════════════════════════════════
-    # 📊 COMPREHENSIVE SUPPORT/RESISTANCE DISPLAY - Python Components
+    # 📊 EXACT SUPPORT/RESISTANCE LEVELS - Python Components
     # ═══════════════════════════════════════════════════════════════════
     if merged_supports or merged_resistances:
         st.markdown("---")
-        st.subheader("📊 SUPPORT & RESISTANCE ZONES")
-        st.caption("Chart + OI Aligned | More █ = Stronger confluence")
+        st.subheader("📊 EXACT SUPPORT & RESISTANCE LEVELS")
+        st.caption("OI Wall = Primary | Fib = Secondary | Exact prices only")
 
         col_s, col_r = st.columns(2)
 
         with col_s:
-            st.markdown("**🛡️ SUPPORT ZONES**")
+            st.markdown("**🛡️ SUPPORT LEVELS (Market won't go below)**")
             if merged_supports:
-                for i, s in enumerate(merged_supports[:3]):
-                    strength_bars = "█" * min(s['strength'], 5)
-                    sources = " + ".join(s['sources'])
-                    zone_range = f"₹{s['range'][0]:,.0f} - ₹{s['range'][1]:,.0f}" if s['range'][0] != s['range'][1] else f"₹{s['price']:,.0f}"
-                    st.success(f"S{i+1}: {zone_range} ({sources}) {strength_bars}")
+                for i, s in enumerate(merged_supports[:5]):
+                    # Priority indicator: OI-Wall gets ★★★, Fib gets ★★, others get ★
+                    priority = s.get('priority', 30)
+                    if priority >= 90:
+                        stars = "★★★"  # OI Wall / Max Pain
+                    elif priority >= 70:
+                        stars = "★★"   # Fib 0.618/0.382/Swing
+                    else:
+                        stars = "★"    # HTF/VWAP/Round
+                    label = s.get('label', 'Support')
+                    st.success(f"S{i+1}: ₹{s['price']:,.0f} | {label} {stars}")
             else:
                 st.caption("No support levels detected")
 
         with col_r:
-            st.markdown("**🧱 RESISTANCE ZONES**")
+            st.markdown("**🧱 RESISTANCE LEVELS (Market won't go above)**")
             if merged_resistances:
-                for i, r in enumerate(merged_resistances[:3]):
-                    strength_bars = "█" * min(r['strength'], 5)
-                    sources = " + ".join(r['sources'])
-                    zone_range = f"₹{r['range'][0]:,.0f} - ₹{r['range'][1]:,.0f}" if r['range'][0] != r['range'][1] else f"₹{r['price']:,.0f}"
-                    st.error(f"R{i+1}: {zone_range} ({sources}) {strength_bars}")
+                for i, r in enumerate(merged_resistances[:5]):
+                    # Priority indicator
+                    priority = r.get('priority', 30)
+                    if priority >= 90:
+                        stars = "★★★"  # OI Wall / Max Pain
+                    elif priority >= 70:
+                        stars = "★★"   # Fib 0.618/0.382/Swing
+                    else:
+                        stars = "★"    # HTF/VWAP/Round
+                    label = r.get('label', 'Resistance')
+                    st.error(f"R{i+1}: ₹{r['price']:,.0f} | {label} {stars}")
             else:
                 st.caption("No resistance levels detected")
 
