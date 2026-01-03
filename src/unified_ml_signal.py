@@ -916,6 +916,113 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         'Round': 30,         # Psychological only
     }
 
+    # ═══════════════════════════════════════════════════════════════════
+    # STRIKE PCR-BASED DYNAMIC S/R WIDTH CALCULATION
+    # PCR at Strike = PUT OI / CALL OI at that specific strike
+    # Higher PCR at support = Stronger support = Entry zone above strike
+    # Lower PCR at resistance = Stronger resistance = Entry zone below strike
+    # ═══════════════════════════════════════════════════════════════════
+
+    def get_strike_pcr(strike_price: float, df) -> float:
+        """Calculate PCR at a specific strike from merged_df"""
+        if df is None or len(df) == 0:
+            return 1.0
+        try:
+            strike_row = df[df['strikePrice'] == strike_price]
+            if len(strike_row) > 0:
+                put_oi = float(strike_row['OI_PE'].iloc[0]) if 'OI_PE' in strike_row.columns else 0
+                call_oi = float(strike_row['OI_CE'].iloc[0]) if 'OI_CE' in strike_row.columns else 0
+                if call_oi > 0:
+                    return round(put_oi / call_oi, 2)
+        except Exception:
+            pass
+        return 1.0
+
+    def get_support_entry_zone(strike_price: float, strike_pcr: float) -> dict:
+        """
+        Calculate dynamic support entry zone based on strike PCR.
+        Higher PCR = Stronger PUT wall = Entry zone above strike (reverses quickly)
+        Lower PCR = Weaker support = Entry zone below strike (may dip before reversing)
+
+        Returns: {'entry_from': X, 'entry_to': Y, 'strength': 'STRONG'/'MEDIUM'/'WEAK'}
+        """
+        if strike_pcr >= 3.0:
+            # Very strong support - reverses at or above strike
+            return {
+                'entry_from': strike_price,
+                'entry_to': strike_price + 20,
+                'strength': 'STRONG',
+                'buffer': '+20'
+            }
+        elif strike_pcr >= 2.0:
+            # Strong support - may dip 10 points
+            return {
+                'entry_from': strike_price - 10,
+                'entry_to': strike_price + 10,
+                'strength': 'STRONG',
+                'buffer': '±10'
+            }
+        elif strike_pcr >= 1.5:
+            # Medium support - may dip 15 points
+            return {
+                'entry_from': strike_price - 15,
+                'entry_to': strike_price + 5,
+                'strength': 'MEDIUM',
+                'buffer': '-15/+5'
+            }
+        else:
+            # Weak support - may dip 20+ points
+            return {
+                'entry_from': strike_price - 20,
+                'entry_to': strike_price,
+                'strength': 'WEAK',
+                'buffer': '-20'
+            }
+
+    def get_resistance_entry_zone(strike_price: float, strike_pcr: float) -> dict:
+        """
+        Calculate dynamic resistance entry zone based on strike PCR.
+        Lower PCR = Stronger CALL wall = Entry zone below strike (reverses quickly)
+        Higher PCR = Weaker resistance = Entry zone above strike (may push before reversing)
+
+        Returns: {'entry_from': X, 'entry_to': Y, 'strength': 'STRONG'/'MEDIUM'/'WEAK'}
+        """
+        if strike_pcr <= 0.4:
+            # Very strong resistance - reverses at or below strike
+            return {
+                'entry_from': strike_price - 20,
+                'entry_to': strike_price,
+                'strength': 'STRONG',
+                'buffer': '-20'
+            }
+        elif strike_pcr <= 0.5:
+            # Strong resistance - may push 10 points
+            return {
+                'entry_from': strike_price - 10,
+                'entry_to': strike_price + 10,
+                'strength': 'STRONG',
+                'buffer': '±10'
+            }
+        elif strike_pcr <= 0.7:
+            # Medium resistance - may push 15 points
+            return {
+                'entry_from': strike_price - 5,
+                'entry_to': strike_price + 15,
+                'strength': 'MEDIUM',
+                'buffer': '-5/+15'
+            }
+        else:
+            # Weak resistance - may push 20+ points
+            return {
+                'entry_from': strike_price,
+                'entry_to': strike_price + 20,
+                'strength': 'WEAK',
+                'buffer': '+20'
+            }
+
+    # Get merged_df once for strike PCR calculations
+    merged_df_for_pcr = st.session_state.get('merged_df')
+
     exact_supports = []      # List of {'price': X, 'source': 'OI-Wall', 'label': 'PUT OI Wall'}
     exact_resistances = []   # List of {'price': X, 'source': 'Fib-0.618', 'label': '61.8% Fib'}
 
@@ -934,11 +1041,17 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         supp_strike = supp_data.get('strike') if isinstance(supp_data, dict) else None
         if supp_strike and isinstance(supp_strike, (int, float)) and not isinstance(supp_strike, bool) and supp_strike < spot_price:
             oi_val = supp_data.get('oi', 0) if isinstance(supp_data.get('oi'), (int, float)) else 0
+            # Calculate strike PCR and entry zone
+            strike_pcr = get_strike_pcr(float(supp_strike), merged_df_for_pcr)
+            entry_zone = get_support_entry_zone(float(supp_strike), strike_pcr)
+            strength_icon = "🟢" if entry_zone['strength'] == 'STRONG' else "🟡" if entry_zone['strength'] == 'MEDIUM' else "🔴"
             exact_supports.append({
                 'price': float(supp_strike),
                 'source': 'OI-Wall',
-                'label': f"PUT OI Wall ({oi_val/100000:.1f}L)" if oi_val else "PUT OI Wall",
-                'priority': SOURCE_PRIORITY['OI-Wall']
+                'label': f"PUT OI Wall ({oi_val/100000:.1f}L) PCR:{strike_pcr} {strength_icon}" if oi_val else f"PUT OI Wall PCR:{strike_pcr} {strength_icon}",
+                'priority': SOURCE_PRIORITY['OI-Wall'],
+                'strike_pcr': strike_pcr,
+                'entry_zone': entry_zone
             })
             put_oi_wall_added = True
 
@@ -947,11 +1060,17 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         res_strike = res_data.get('strike') if isinstance(res_data, dict) else None
         if res_strike and isinstance(res_strike, (int, float)) and not isinstance(res_strike, bool) and res_strike > spot_price:
             oi_val = res_data.get('oi', 0) if isinstance(res_data.get('oi'), (int, float)) else 0
+            # Calculate strike PCR and entry zone
+            strike_pcr = get_strike_pcr(float(res_strike), merged_df_for_pcr)
+            entry_zone = get_resistance_entry_zone(float(res_strike), strike_pcr)
+            strength_icon = "🟢" if entry_zone['strength'] == 'STRONG' else "🟡" if entry_zone['strength'] == 'MEDIUM' else "🔴"
             exact_resistances.append({
                 'price': float(res_strike),
                 'source': 'OI-Wall',
-                'label': f"CALL OI Wall ({oi_val/100000:.1f}L)" if oi_val else "CALL OI Wall",
-                'priority': SOURCE_PRIORITY['OI-Wall']
+                'label': f"CALL OI Wall ({oi_val/100000:.1f}L) PCR:{strike_pcr} {strength_icon}" if oi_val else f"CALL OI Wall PCR:{strike_pcr} {strength_icon}",
+                'priority': SOURCE_PRIORITY['OI-Wall'],
+                'strike_pcr': strike_pcr,
+                'entry_zone': entry_zone
             })
             call_oi_wall_added = True
 
@@ -983,11 +1102,17 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
             max_put_strike = oi_pcr_metrics.get('max_put_strike')
             max_put_oi = oi_pcr_metrics.get('max_put_oi', 0)
             if max_put_strike and isinstance(max_put_strike, (int, float)) and not isinstance(max_put_strike, bool) and max_put_strike < spot_price:
+                # Calculate strike PCR and entry zone
+                strike_pcr = get_strike_pcr(float(max_put_strike), merged_df_for_pcr)
+                entry_zone = get_support_entry_zone(float(max_put_strike), strike_pcr)
+                strength_icon = "🟢" if entry_zone['strength'] == 'STRONG' else "🟡" if entry_zone['strength'] == 'MEDIUM' else "🔴"
                 exact_supports.append({
                     'price': float(max_put_strike),
                     'source': 'OI-Wall',
-                    'label': f"PUT OI Wall ({max_put_oi/100000:.1f}L)" if max_put_oi else "PUT OI Wall",
-                    'priority': SOURCE_PRIORITY['OI-Wall']
+                    'label': f"PUT OI Wall ({max_put_oi/100000:.1f}L) PCR:{strike_pcr} {strength_icon}" if max_put_oi else f"PUT OI Wall PCR:{strike_pcr} {strength_icon}",
+                    'priority': SOURCE_PRIORITY['OI-Wall'],
+                    'strike_pcr': strike_pcr,
+                    'entry_zone': entry_zone
                 })
                 put_oi_wall_added = True
 
@@ -996,11 +1121,17 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
             max_call_strike = oi_pcr_metrics.get('max_call_strike')
             max_call_oi = oi_pcr_metrics.get('max_call_oi', 0)
             if max_call_strike and isinstance(max_call_strike, (int, float)) and not isinstance(max_call_strike, bool) and max_call_strike > spot_price:
+                # Calculate strike PCR and entry zone
+                strike_pcr = get_strike_pcr(float(max_call_strike), merged_df_for_pcr)
+                entry_zone = get_resistance_entry_zone(float(max_call_strike), strike_pcr)
+                strength_icon = "🟢" if entry_zone['strength'] == 'STRONG' else "🟡" if entry_zone['strength'] == 'MEDIUM' else "🔴"
                 exact_resistances.append({
                     'price': float(max_call_strike),
                     'source': 'OI-Wall',
-                    'label': f"CALL OI Wall ({max_call_oi/100000:.1f}L)" if max_call_oi else "CALL OI Wall",
-                    'priority': SOURCE_PRIORITY['OI-Wall']
+                    'label': f"CALL OI Wall ({max_call_oi/100000:.1f}L) PCR:{strike_pcr} {strength_icon}" if max_call_oi else f"CALL OI Wall PCR:{strike_pcr} {strength_icon}",
+                    'priority': SOURCE_PRIORITY['OI-Wall'],
+                    'strike_pcr': strike_pcr,
+                    'entry_zone': entry_zone
                 })
                 call_oi_wall_added = True
 
@@ -1016,11 +1147,18 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                         max_put_idx = below_spot['OI_PE'].idxmax()
                         max_put_strike = float(below_spot.loc[max_put_idx, 'strikePrice'])
                         max_put_oi = float(below_spot.loc[max_put_idx, 'OI_PE'])
+                        # Calculate strike PCR directly from merged_df row
+                        max_put_call_oi = float(below_spot.loc[max_put_idx, 'OI_CE']) if 'OI_CE' in below_spot.columns else 0
+                        strike_pcr = round(max_put_oi / max_put_call_oi, 2) if max_put_call_oi > 0 else 1.0
+                        entry_zone = get_support_entry_zone(max_put_strike, strike_pcr)
+                        strength_icon = "🟢" if entry_zone['strength'] == 'STRONG' else "🟡" if entry_zone['strength'] == 'MEDIUM' else "🔴"
                         exact_supports.append({
                             'price': max_put_strike,
                             'source': 'OI-Wall',
-                            'label': f"PUT OI Wall ({max_put_oi/100000:.1f}L)",
-                            'priority': SOURCE_PRIORITY['OI-Wall']
+                            'label': f"PUT OI Wall ({max_put_oi/100000:.1f}L) PCR:{strike_pcr} {strength_icon}",
+                            'priority': SOURCE_PRIORITY['OI-Wall'],
+                            'strike_pcr': strike_pcr,
+                            'entry_zone': entry_zone
                         })
                         put_oi_wall_added = True
 
@@ -1031,11 +1169,18 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                         max_call_idx = above_spot['OI_CE'].idxmax()
                         max_call_strike = float(above_spot.loc[max_call_idx, 'strikePrice'])
                         max_call_oi = float(above_spot.loc[max_call_idx, 'OI_CE'])
+                        # Calculate strike PCR directly from merged_df row
+                        max_call_put_oi = float(above_spot.loc[max_call_idx, 'OI_PE']) if 'OI_PE' in above_spot.columns else 0
+                        strike_pcr = round(max_call_put_oi / max_call_oi, 2) if max_call_oi > 0 else 1.0
+                        entry_zone = get_resistance_entry_zone(max_call_strike, strike_pcr)
+                        strength_icon = "🟢" if entry_zone['strength'] == 'STRONG' else "🟡" if entry_zone['strength'] == 'MEDIUM' else "🔴"
                         exact_resistances.append({
                             'price': max_call_strike,
                             'source': 'OI-Wall',
-                            'label': f"CALL OI Wall ({max_call_oi/100000:.1f}L)",
-                            'priority': SOURCE_PRIORITY['OI-Wall']
+                            'label': f"CALL OI Wall ({max_call_oi/100000:.1f}L) PCR:{strike_pcr} {strength_icon}",
+                            'priority': SOURCE_PRIORITY['OI-Wall'],
+                            'strike_pcr': strike_pcr,
+                            'entry_zone': entry_zone
                         })
                         call_oi_wall_added = True
             except Exception as e:
@@ -1498,6 +1643,10 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                         stars = "★"    # HTF/VWAP/Round
                     label = s.get('label', 'Support')
                     st.success(f"S{i+1}: ₹{s['price']:,.0f} | {label} {stars}")
+                    # Show entry zone for OI Wall with PCR
+                    entry_zone = s.get('entry_zone')
+                    if entry_zone and s.get('source') == 'OI-Wall':
+                        st.caption(f"   📍 Entry Zone: ₹{entry_zone['entry_from']:,.0f} - ₹{entry_zone['entry_to']:,.0f} ({entry_zone['buffer']})")
             else:
                 st.caption("No support levels detected")
 
@@ -1515,8 +1664,43 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                         stars = "★"    # HTF/VWAP/Round
                     label = r.get('label', 'Resistance')
                     st.error(f"R{i+1}: ₹{r['price']:,.0f} | {label} {stars}")
+                    # Show entry zone for OI Wall with PCR
+                    entry_zone = r.get('entry_zone')
+                    if entry_zone and r.get('source') == 'OI-Wall':
+                        st.caption(f"   📍 Entry Zone: ₹{entry_zone['entry_from']:,.0f} - ₹{entry_zone['entry_to']:,.0f} ({entry_zone['buffer']})")
             else:
                 st.caption("No resistance levels detected")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 📏 PCR-BASED ENTRY ZONE REFERENCE (Show how S/R width changes with PCR)
+        # ═══════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown("**📏 PCR-Based Entry Zone Reference**")
+        st.caption("How Support/Resistance zones vary based on Strike PCR")
+
+        pcr_col1, pcr_col2 = st.columns(2)
+
+        with pcr_col1:
+            st.markdown("""
+**🛡️ SUPPORT Entry Zones (PUT OI Wall)**
+| PCR | Strength | Entry Zone |
+|-----|----------|------------|
+| ≥3.0 | 🟢 STRONG | Strike +20 (reverses early) |
+| 2.0-3.0 | 🟢 STRONG | Strike ±10 |
+| 1.5-2.0 | 🟡 MEDIUM | Strike -15 to +5 |
+| <1.5 | 🔴 WEAK | Strike -20 (may dip below) |
+""")
+
+        with pcr_col2:
+            st.markdown("""
+**🧱 RESISTANCE Entry Zones (CALL OI Wall)**
+| PCR | Strength | Entry Zone |
+|-----|----------|------------|
+| ≤0.4 | 🟢 STRONG | Strike -20 (reverses early) |
+| 0.4-0.5 | 🟢 STRONG | Strike ±10 |
+| 0.5-0.7 | 🟡 MEDIUM | Strike -5 to +15 |
+| >0.7 | 🔴 WEAK | Strike +20 (may push above) |
+""")
 
     # ═══════════════════════════════════════════════════════════════════
     # 🎯 FINAL ASSESSMENT - Clear Directional Call
