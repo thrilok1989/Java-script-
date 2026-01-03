@@ -35,6 +35,25 @@ except ImportError:
         ExpiryDayKiller = None
         format_killer_result = None
 
+# Import SL Hunt Detector
+try:
+    from src.sl_hunt_detector import (
+        SLHuntDetector, SLHuntResult, TrapZone,
+        format_sl_hunt_telegram, format_hunt_candle_telegram
+    )
+except ImportError:
+    try:
+        from sl_hunt_detector import (
+            SLHuntDetector, SLHuntResult, TrapZone,
+            format_sl_hunt_telegram, format_hunt_candle_telegram
+        )
+    except ImportError:
+        SLHuntDetector = None
+        SLHuntResult = None
+        TrapZone = None
+        format_sl_hunt_telegram = None
+        format_hunt_candle_telegram = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -243,6 +262,176 @@ def send_reversal_entry_telegram(
     except Exception as e:
         logger.error(f"Telegram reversal entry error: {e}")
         return False, f"Error: {str(e)}"
+
+
+def send_sl_hunt_telegram(result, spot_price: float):
+    """
+    Send SL Hunt Alert to Telegram when high probability hunt is detected
+
+    Sends warning BEFORE the hunt happens so traders can:
+    1. Avoid entering breakout trades
+    2. Wait for hunt candle
+    3. Trade the reversal AFTER the hunt
+    """
+    try:
+        if format_sl_hunt_telegram is None:
+            return False, "SL Hunt module not loaded"
+
+        # Get Telegram credentials
+        bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+
+        if not bot_token or not chat_id:
+            return False, "Telegram not configured"
+
+        # Only send if hunt is likely
+        if not result.hunt_likely:
+            return False, "No hunt detected"
+
+        # Create unique signal key to avoid duplicates
+        signal_key = f"SL_HUNT_{result.hunt_direction}_{int(result.hunt_probability)}_{datetime.now().strftime('%Y%m%d%H%M')}"
+
+        if 'last_sl_hunt_telegram' in st.session_state:
+            if st.session_state.last_sl_hunt_telegram == signal_key:
+                return False, "Hunt alert already sent"
+
+        # Format message
+        message = format_sl_hunt_telegram(result, spot_price)
+
+        if not message:
+            return False, "No message to send"
+
+        # Send to Telegram
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+
+        if response.status_code == 200:
+            st.session_state.last_sl_hunt_telegram = signal_key
+            return True, "SL Hunt alert sent to Telegram!"
+        else:
+            return False, f"Failed: {response.status_code}"
+
+    except Exception as e:
+        logger.error(f"Telegram SL Hunt error: {e}")
+        return False, f"Error: {str(e)}"
+
+
+def analyze_sl_hunt(
+    spot_price: float,
+    df: pd.DataFrame = None,
+    oi_data: dict = None,
+    vwap: float = None,
+    prev_day_high: float = None,
+    prev_day_low: float = None,
+    support_levels: list = None,
+    resistance_levels: list = None,
+    auto_send: bool = True
+):
+    """
+    Analyze for potential stop-loss hunting and optionally send Telegram alert
+
+    This function:
+    1. Runs the complete SL Hunt analysis
+    2. Stores result in session state
+    3. Sends Telegram alert if hunt probability is high
+    4. Returns the analysis result
+
+    Returns:
+        SLHuntResult or None
+    """
+    if SLHuntDetector is None:
+        return None
+
+    try:
+        # Initialize detector
+        detector = SLHuntDetector(
+            morning_hunt_start=datetime.strptime("09:15", "%H:%M").time(),
+            morning_hunt_end=datetime.strptime("10:00", "%H:%M").time(),
+            closing_hunt_start=datetime.strptime("14:30", "%H:%M").time(),
+            closing_hunt_end=datetime.strptime("15:30", "%H:%M").time(),
+            hunt_probability_threshold=65,
+        )
+
+        # Get DataFrame from session state if not provided
+        if df is None:
+            df = st.session_state.get('nifty_df')
+
+        # Get OI data from session state if not provided
+        if oi_data is None:
+            oi_data = {}
+            try:
+                nifty_screener = st.session_state.get('nifty_screener_data', {})
+                oi_pcr_metrics = nifty_screener.get('oi_pcr_metrics', {}) if isinstance(nifty_screener, dict) else {}
+                option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+
+                # Build OI data structure
+                oi_data = {
+                    'call_oi': oi_pcr_metrics.get('call_oi', {}),
+                    'put_oi': oi_pcr_metrics.get('put_oi', {}),
+                    'call_oi_change': oi_pcr_metrics.get('call_oi_change', {}),
+                    'put_oi_change': oi_pcr_metrics.get('put_oi_change', {}),
+                    'call_premium_change': oi_pcr_metrics.get('call_premium_change', {}),
+                    'put_premium_change': oi_pcr_metrics.get('put_premium_change', {}),
+                    'max_call_strike': oi_pcr_metrics.get('max_call_strike', 0),
+                    'max_put_strike': oi_pcr_metrics.get('max_put_strike', 0),
+                    'max_pain': option_data.get('max_pain', 0)
+                }
+            except:
+                pass
+
+        # Get support/resistance from session state if not provided
+        if support_levels is None:
+            support_levels = []
+            try:
+                regime_data = st.session_state.get('ml_regime_result', {})
+                sr_data = regime_data.get('support_resistance', {})
+                for s in sr_data.get('supports', []):
+                    support_levels.append(float(s) if isinstance(s, (int, float)) else s.get('price', 0))
+            except:
+                pass
+
+        if resistance_levels is None:
+            resistance_levels = []
+            try:
+                regime_data = st.session_state.get('ml_regime_result', {})
+                sr_data = regime_data.get('support_resistance', {})
+                for r in sr_data.get('resistances', []):
+                    resistance_levels.append(float(r) if isinstance(r, (int, float)) else r.get('price', 0))
+            except:
+                pass
+
+        # Run analysis
+        result = detector.analyze(
+            spot_price=spot_price,
+            df=df,
+            oi_data=oi_data,
+            vwap=vwap,
+            prev_day_high=prev_day_high,
+            prev_day_low=prev_day_low,
+            support_levels=support_levels,
+            resistance_levels=resistance_levels,
+        )
+
+        # Store in session state
+        st.session_state['sl_hunt_result'] = result
+
+        # Send Telegram if hunt likely and auto_send enabled
+        if auto_send and result.hunt_likely and result.hunt_probability >= 70:
+            success, msg = send_sl_hunt_telegram(result, spot_price)
+            if success:
+                st.session_state['sl_hunt_telegram_sent'] = True
+
+        return result
+
+    except Exception as e:
+        logger.error(f"SL Hunt analysis error: {e}")
+        return None
 
 
 def check_and_send_reversal_entry(
@@ -1132,6 +1321,93 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
             """, unsafe_allow_html=True)
     else:
         st.caption("💡 Visit NIFTY Option Screener tab to activate spike detection")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 🎯 STOP-LOSS HUNT DETECTOR
+    # ═══════════════════════════════════════════════════════════════════
+    sl_hunt_result = st.session_state.get('sl_hunt_result')
+    if sl_hunt_result and SLHuntResult is not None:
+        hunt_prob = sl_hunt_result.hunt_probability
+        hunt_likely = sl_hunt_result.hunt_likely
+        hunt_dir = sl_hunt_result.hunt_direction
+
+        # Color based on hunt probability
+        if hunt_prob >= 80:
+            hunt_color = "#ff0000"  # Red - HIGH RISK
+            hunt_emoji = "🚨"
+        elif hunt_prob >= 65:
+            hunt_color = "#ff8800"  # Orange - MODERATE RISK
+            hunt_emoji = "⚠️"
+        elif hunt_prob >= 40:
+            hunt_color = "#ffcc00"  # Yellow - LOW RISK
+            hunt_emoji = "🔔"
+        else:
+            hunt_color = "#00cc00"  # Green - SAFE
+            hunt_emoji = "✅"
+
+        # Direction indicator
+        dir_emoji = "⬆️" if hunt_dir == "UP" else "⬇️" if hunt_dir == "DOWN" else "↔️"
+
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {hunt_color}15, {hunt_color}30);
+                    border: 2px solid {hunt_color};
+                    border-radius: 10px;
+                    padding: 12px 18px;
+                    margin-bottom: 15px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="color: {hunt_color}; font-weight: 800; font-size: 1.1rem;">
+                        {hunt_emoji} SL HUNT DETECTOR
+                    </span>
+                    <span style="color: #aaa; margin-left: 10px;">
+                        {dir_emoji} {hunt_dir}
+                    </span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="color: {hunt_color}; font-size: 1.4rem; font-weight: 900;">
+                        {hunt_prob:.0f}%
+                    </span>
+                </div>
+            </div>
+            <div style="margin-top: 8px; font-size: 0.85rem; color: #bbb;">
+                <span style="margin-right: 12px;">📊 OI: {sl_hunt_result.oi_absorption_score:.0f}%</span>
+                <span style="margin-right: 12px;">⚡ Effort: {sl_hunt_result.effort_result_score:.0f}%</span>
+                <span style="margin-right: 12px;">🎯 SL Zones: {sl_hunt_result.sl_cluster_score:.0f}%</span>
+                <span>⏰ Time: {sl_hunt_result.time_risk_score:.0f}%</span>
+            </div>
+            <div style="margin-top: 5px; font-size: 0.9rem; color: {hunt_color}; font-weight: 600;">
+                {sl_hunt_result.action}: {sl_hunt_result.reason[:80]}{'...' if len(sl_hunt_result.reason) > 80 else ''}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show trap zones if hunt is likely
+        if hunt_likely and sl_hunt_result.trap_zones:
+            with st.expander("🎯 View Trap Zones & Post-Hunt Setup", expanded=False):
+                # Trap zones
+                st.markdown("**Top SL Trap Zones:**")
+                for i, zone in enumerate(sl_hunt_result.trap_zones[:5], 1):
+                    zone_emoji = "🔴" if zone.zone_type == "PUT_SL_ZONE" else "🟢"
+                    st.markdown(f"  {i}. {zone_emoji} **₹{zone.price:,.0f}** - {zone.zone_type.replace('_', ' ')} ({zone.sl_density:.0f}% density)")
+                    st.caption(f"     {zone.reason}")
+
+                # Post-hunt entry setup
+                if sl_hunt_result.post_hunt_entry:
+                    entry = sl_hunt_result.post_hunt_entry
+                    st.markdown("---")
+                    st.markdown("**📈 Post-Hunt Trade Setup:**")
+                    st.markdown(f"- **Direction:** {entry.get('direction', 'WAIT')}")
+                    st.markdown(f"- **Wait For:** {entry.get('wait_for', 'Hunt completion')}")
+                    st.markdown(f"- **Entry Trigger:** {entry.get('entry_trigger', 'Confirmation candle')}")
+                    st.markdown(f"- **Stop Loss:** {entry.get('sl', 'Hunt candle extreme')}")
+                    st.markdown(f"- **Target:** {entry.get('target', 'Opposite OI wall')}")
+    else:
+        # Run SL Hunt analysis if we have spot price
+        if spot_price and spot_price > 0 and SLHuntDetector is not None:
+            # Auto-analyze on first load
+            if 'sl_hunt_analyzed' not in st.session_state:
+                analyze_sl_hunt(spot_price, auto_send=True)
+                st.session_state['sl_hunt_analyzed'] = True
 
     # ═══════════════════════════════════════════════════════════════════
     # 📊 ML MARKET REGIME ASSESSMENT
