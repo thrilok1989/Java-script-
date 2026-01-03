@@ -540,10 +540,10 @@ def render_option_chain_table_tab(merged_df, spot, atm_strike, strike_gap, expir
 
     show_df = display_df[display_cols].copy()
 
-    # Rename columns for display
-    show_df.columns = ["Bias", "OI(L)", "ChgOI", "Vol", "IV%", "LTP",
+    # Rename columns for display - use unique names to avoid Styler error
+    show_df.columns = ["CE Bias", "CE OI(L)", "CE ChgOI", "CE Vol", "CE IV%", "CE LTP",
                        "Strike", "PCR", "Signal",
-                       "LTP", "IV%", "Vol", "ChgOI", "OI(L)", "Bias"]
+                       "PE LTP", "PE IV%", "PE Vol", "PE ChgOI", "PE OI(L)", "PE Bias"]
 
     # Style function for highlighting
     def highlight_rows(row):
