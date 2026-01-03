@@ -6408,6 +6408,9 @@ def render_nifty_option_screener():
     # Fetch market depth from Dhan REST API (5-level depth)
     depth_data = get_market_depth_dhan()
 
+    # Store market depth in session state for SL Hunt Detector
+    st.session_state['market_depth_data'] = depth_data
+
     # Analyze depth (5 levels from Dhan API)
     depth_analysis = analyze_market_depth(depth_data, spot, levels=5)
 
