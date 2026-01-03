@@ -112,6 +112,183 @@ def send_ml_signal_telegram(signal, spot_price: float = None):
         return False, f"Error: {str(e)}"
 
 
+def send_reversal_entry_telegram(
+    spot_price: float,
+    reversal_zone: dict,
+    signal_type: str,  # "SUPPORT" or "RESISTANCE"
+    strike_pcr: float,
+    confluence_detail: str = "",
+    reversal_probability: int = 0,
+    exact_reversal_price: float = None
+):
+    """
+    Send Telegram alert when price enters EXACT REVERSAL zone
+
+    Triggers when:
+    - Price enters OI Wall entry zone
+    - Multiple confluence factors align (HTF + Fib + BOS + CHOCH)
+    - Reversal probability >= 75%
+    """
+    try:
+        # Get Telegram credentials
+        bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+
+        if not bot_token or not chat_id:
+            return False, "Telegram not configured"
+
+        # Create unique signal key to avoid duplicates
+        zone_price = reversal_zone.get('entry_from', 0)
+        signal_key = f"REVERSAL_{signal_type}_{int(zone_price)}_{datetime.now().strftime('%Y%m%d%H%M')}"
+
+        if 'last_reversal_telegram' in st.session_state:
+            if st.session_state.last_reversal_telegram == signal_key:
+                return False, "Entry signal already sent"
+
+        # Determine trade direction
+        if signal_type == "SUPPORT":
+            emoji = "🟢📈"
+            action = "BUY CALL"
+            direction = "BULLISH REVERSAL"
+            entry_logic = "Price at SUPPORT - Expect bounce UP"
+        else:
+            emoji = "🔴📉"
+            action = "BUY PUT"
+            direction = "BEARISH REVERSAL"
+            entry_logic = "Price at RESISTANCE - Expect rejection DOWN"
+
+        # Entry zone details
+        entry_from = reversal_zone.get('entry_from', 0)
+        entry_to = reversal_zone.get('entry_to', 0)
+        strength = reversal_zone.get('strength', 'MEDIUM')
+        buffer = reversal_zone.get('buffer', '±20')
+
+        # Strength indicator
+        strength_emoji = "🟢" if strength == "STRONG" else "🟡" if strength == "MEDIUM" else "🔴"
+
+        # Build message
+        message = f"""
+🎯 *EXACT REVERSAL ENTRY SIGNAL* 🎯
+
+{emoji} *{direction}* {emoji}
+
+📍 *Entry Zone Triggered!*
+• Spot Price: ₹{spot_price:,.0f}
+• Entry Zone: ₹{entry_from:,.0f} - ₹{entry_to:,.0f}
+• Exact Reversal: ₹{exact_reversal_price:,.0f}
+
+💪 *Strength:* {strength_emoji} {strength}
+📊 *Strike PCR:* {strike_pcr}
+🎯 *Reversal Probability:* {reversal_probability}%
+
+⚡ *Confluence Factors:*
+{confluence_detail if confluence_detail else "OI Wall + PCR"}
+
+🎬 *ACTION:* {action}
+📝 *Logic:* {entry_logic}
+
+⚠️ *Risk Management:*
+• SL: ₹{entry_from - 30 if signal_type == "SUPPORT" else entry_to + 30:,.0f}
+• Buffer: {buffer}
+
+⏰ _{datetime.now().strftime('%H:%M:%S')}_
+⚡ _Exact Reversal Detection System_
+"""
+
+        # Send to Telegram
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+
+        if response.status_code == 200:
+            st.session_state.last_reversal_telegram = signal_key
+            return True, "Entry signal sent to Telegram!"
+        else:
+            return False, f"Failed: {response.status_code}"
+
+    except Exception as e:
+        logger.error(f"Telegram reversal entry error: {e}")
+        return False, f"Error: {str(e)}"
+
+
+def check_and_send_reversal_entry(
+    spot_price: float,
+    support_levels: list,
+    resistance_levels: list,
+    auto_send: bool = True
+):
+    """
+    Check if price is in any exact reversal zone and send Telegram alert
+
+    Returns: List of triggered entry signals
+    """
+    triggered_entries = []
+
+    if not spot_price or not auto_send:
+        return triggered_entries
+
+    # Check support levels (price near or below support = potential LONG entry)
+    for supp in support_levels:
+        if supp.get('is_exact_reversal') and supp.get('entry_zone'):
+            entry_zone = supp['entry_zone']
+            entry_from = entry_zone.get('entry_from', 0)
+            entry_to = entry_zone.get('entry_to', 0)
+
+            # Check if spot price is within entry zone
+            if entry_from <= spot_price <= entry_to:
+                reversal_prob = supp.get('reversal_probability', 0)
+                if reversal_prob >= 75:
+                    success, msg = send_reversal_entry_telegram(
+                        spot_price=spot_price,
+                        reversal_zone=entry_zone,
+                        signal_type="SUPPORT",
+                        strike_pcr=supp.get('strike_pcr', 1.0),
+                        confluence_detail=supp.get('confluence_detail', ''),
+                        reversal_probability=reversal_prob,
+                        exact_reversal_price=supp.get('exact_reversal_price', supp['price'])
+                    )
+                    triggered_entries.append({
+                        'type': 'SUPPORT',
+                        'price': supp['price'],
+                        'success': success,
+                        'message': msg
+                    })
+
+    # Check resistance levels (price near or above resistance = potential SHORT entry)
+    for res in resistance_levels:
+        if res.get('is_exact_reversal') and res.get('entry_zone'):
+            entry_zone = res['entry_zone']
+            entry_from = entry_zone.get('entry_from', 0)
+            entry_to = entry_zone.get('entry_to', 0)
+
+            # Check if spot price is within entry zone
+            if entry_from <= spot_price <= entry_to:
+                reversal_prob = res.get('reversal_probability', 0)
+                if reversal_prob >= 75:
+                    success, msg = send_reversal_entry_telegram(
+                        spot_price=spot_price,
+                        reversal_zone=entry_zone,
+                        signal_type="RESISTANCE",
+                        strike_pcr=res.get('strike_pcr', 1.0),
+                        confluence_detail=res.get('confluence_detail', ''),
+                        reversal_probability=reversal_prob,
+                        exact_reversal_price=res.get('exact_reversal_price', res['price'])
+                    )
+                    triggered_entries.append({
+                        'type': 'RESISTANCE',
+                        'price': res['price'],
+                        'success': success,
+                        'message': msg
+                    })
+
+    return triggered_entries
+
+
 @dataclass
 class UnifiedSignal:
     """Unified Trading Signal"""
@@ -1810,6 +1987,22 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     support = merged_supports[0]['price'] if merged_supports else 0
     resistance = merged_resistances[0]['price'] if merged_resistances else 0
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 🎯 AUTO ENTRY SIGNAL - Check if price in exact reversal zone
+    # Send Telegram alert when price enters high-probability reversal zone
+    # ═══════════════════════════════════════════════════════════════════
+    auto_entry_enabled = st.session_state.get('auto_entry_telegram', True)
+    if spot_price and auto_entry_enabled:
+        triggered_entries = check_and_send_reversal_entry(
+            spot_price=spot_price,
+            support_levels=merged_supports,
+            resistance_levels=merged_resistances,
+            auto_send=True
+        )
+        # Store triggered entries for display
+        if triggered_entries:
+            st.session_state['last_triggered_entries'] = triggered_entries
+
     # Build signals text
     signals_text = ""
     if signals_list:
@@ -1891,6 +2084,45 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     st.error(f"• {sig}")
                 else:
                     st.write(f"• {sig}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 🎯 AUTO ENTRY TELEGRAM SETTINGS
+    # ═══════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    entry_col1, entry_col2 = st.columns([2, 1])
+    with entry_col1:
+        st.subheader("🎯 Exact Reversal Entry Signals")
+    with entry_col2:
+        auto_entry = st.checkbox("📱 Auto Telegram Entry", value=True, key="auto_entry_telegram")
+
+    # Show triggered entry signals
+    last_entries = st.session_state.get('last_triggered_entries', [])
+    if last_entries:
+        for entry in last_entries:
+            if entry.get('success'):
+                st.success(f"✅ Entry Signal Sent: {entry['type']} at ₹{entry['price']:,.0f}")
+            else:
+                st.warning(f"⚠️ {entry['type']}: {entry.get('message', 'Not sent')}")
+
+    # Show current distance to reversal zones
+    if spot_price:
+        for supp in merged_supports[:2]:
+            if supp.get('is_exact_reversal') and supp.get('entry_zone'):
+                zone = supp['entry_zone']
+                dist = spot_price - zone.get('entry_to', supp['price'])
+                if dist > 0:
+                    st.info(f"📍 SUPPORT Entry Zone: ₹{zone['entry_from']:,.0f} - ₹{zone['entry_to']:,.0f} | Distance: {dist:.0f} pts away")
+                else:
+                    st.success(f"🎯 IN SUPPORT ZONE: ₹{zone['entry_from']:,.0f} - ₹{zone['entry_to']:,.0f} | Reversal: {supp.get('reversal_probability', 0)}%")
+
+        for res in merged_resistances[:2]:
+            if res.get('is_exact_reversal') and res.get('entry_zone'):
+                zone = res['entry_zone']
+                dist = zone.get('entry_from', res['price']) - spot_price
+                if dist > 0:
+                    st.info(f"📍 RESISTANCE Entry Zone: ₹{zone['entry_from']:,.0f} - ₹{zone['entry_to']:,.0f} | Distance: {dist:.0f} pts away")
+                else:
+                    st.error(f"🎯 IN RESISTANCE ZONE: ₹{zone['entry_from']:,.0f} - ₹{zone['entry_to']:,.0f} | Reversal: {res.get('reversal_probability', 0)}%")
 
     # ═══════════════════════════════════════════════════════════════════
     # 📊 EXACT SUPPORT/RESISTANCE LEVELS - Python Components
