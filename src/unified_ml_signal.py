@@ -923,6 +923,10 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     # 1. OPTION CHAIN OI WALLS (PRIMARY SOURCE - Most Reliable)
     # Max PUT OI = Strong Support | Max CALL OI = Strong Resistance
     # ═══════════════════════════════════════════════════════════════════
+    put_oi_wall_added = False
+    call_oi_wall_added = False
+
+    # Source 1: overall_option_data (support/resistance structure)
     option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
     if option_data and spot_price and isinstance(spot_price, (int, float)):
         # OI Wall Support (Max PUT OI strike)
@@ -936,6 +940,7 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 'label': f"PUT OI Wall ({oi_val/100000:.1f}L)" if oi_val else "PUT OI Wall",
                 'priority': SOURCE_PRIORITY['OI-Wall']
             })
+            put_oi_wall_added = True
 
         # OI Wall Resistance (Max CALL OI strike)
         res_data = option_data.get('resistance', {})
@@ -948,6 +953,7 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 'label': f"CALL OI Wall ({oi_val/100000:.1f}L)" if oi_val else "CALL OI Wall",
                 'priority': SOURCE_PRIORITY['OI-Wall']
             })
+            call_oi_wall_added = True
 
         # Max Pain
         max_pain = option_data.get('max_pain')
@@ -966,6 +972,74 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     'label': 'Max Pain Target',
                     'priority': SOURCE_PRIORITY['MaxPain']
                 })
+
+    # Source 2: nifty_screener_data.oi_pcr_metrics (max_put_strike/max_call_strike)
+    nifty_screener = st.session_state.get('nifty_screener_data', {})
+    oi_pcr_metrics = nifty_screener.get('oi_pcr_metrics', {}) if isinstance(nifty_screener, dict) else {}
+
+    if oi_pcr_metrics and spot_price and isinstance(spot_price, (int, float)):
+        # PUT OI Wall from oi_pcr_metrics
+        if not put_oi_wall_added:
+            max_put_strike = oi_pcr_metrics.get('max_put_strike')
+            max_put_oi = oi_pcr_metrics.get('max_put_oi', 0)
+            if max_put_strike and isinstance(max_put_strike, (int, float)) and not isinstance(max_put_strike, bool) and max_put_strike < spot_price:
+                exact_supports.append({
+                    'price': float(max_put_strike),
+                    'source': 'OI-Wall',
+                    'label': f"PUT OI Wall ({max_put_oi/100000:.1f}L)" if max_put_oi else "PUT OI Wall",
+                    'priority': SOURCE_PRIORITY['OI-Wall']
+                })
+                put_oi_wall_added = True
+
+        # CALL OI Wall from oi_pcr_metrics
+        if not call_oi_wall_added:
+            max_call_strike = oi_pcr_metrics.get('max_call_strike')
+            max_call_oi = oi_pcr_metrics.get('max_call_oi', 0)
+            if max_call_strike and isinstance(max_call_strike, (int, float)) and not isinstance(max_call_strike, bool) and max_call_strike > spot_price:
+                exact_resistances.append({
+                    'price': float(max_call_strike),
+                    'source': 'OI-Wall',
+                    'label': f"CALL OI Wall ({max_call_oi/100000:.1f}L)" if max_call_oi else "CALL OI Wall",
+                    'priority': SOURCE_PRIORITY['OI-Wall']
+                })
+                call_oi_wall_added = True
+
+    # Source 3: merged_df - Calculate from raw option chain data if still missing
+    if (not put_oi_wall_added or not call_oi_wall_added) and spot_price and isinstance(spot_price, (int, float)):
+        merged_df = st.session_state.get('merged_df')
+        if merged_df is not None and len(merged_df) > 0:
+            try:
+                # Find max PUT OI strike (for support - below spot)
+                if not put_oi_wall_added and 'OI_PE' in merged_df.columns and 'strikePrice' in merged_df.columns:
+                    below_spot = merged_df[merged_df['strikePrice'] < spot_price].copy()
+                    if len(below_spot) > 0:
+                        max_put_idx = below_spot['OI_PE'].idxmax()
+                        max_put_strike = float(below_spot.loc[max_put_idx, 'strikePrice'])
+                        max_put_oi = float(below_spot.loc[max_put_idx, 'OI_PE'])
+                        exact_supports.append({
+                            'price': max_put_strike,
+                            'source': 'OI-Wall',
+                            'label': f"PUT OI Wall ({max_put_oi/100000:.1f}L)",
+                            'priority': SOURCE_PRIORITY['OI-Wall']
+                        })
+                        put_oi_wall_added = True
+
+                # Find max CALL OI strike (for resistance - above spot)
+                if not call_oi_wall_added and 'OI_CE' in merged_df.columns and 'strikePrice' in merged_df.columns:
+                    above_spot = merged_df[merged_df['strikePrice'] > spot_price].copy()
+                    if len(above_spot) > 0:
+                        max_call_idx = above_spot['OI_CE'].idxmax()
+                        max_call_strike = float(above_spot.loc[max_call_idx, 'strikePrice'])
+                        max_call_oi = float(above_spot.loc[max_call_idx, 'OI_CE'])
+                        exact_resistances.append({
+                            'price': max_call_strike,
+                            'source': 'OI-Wall',
+                            'label': f"CALL OI Wall ({max_call_oi/100000:.1f}L)",
+                            'priority': SOURCE_PRIORITY['OI-Wall']
+                        })
+                        call_oi_wall_added = True
+            except Exception as e:
+                logger.debug(f"Error calculating OI walls from merged_df: {e}")
 
     # From Spike Detector OI levels
     if spike_data and spike_data.get('key_levels') and spot_price and isinstance(spot_price, (int, float)):
