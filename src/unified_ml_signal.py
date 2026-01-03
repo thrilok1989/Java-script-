@@ -397,18 +397,20 @@ class UnifiedMLSignalGenerator:
                 logger.warning(f"CVD analysis failed: {e}")
 
         # 5. Liquidity Analysis
-        if self.liquidity_analyzer and option_chain and spot_price:
+        if self.liquidity_analyzer and option_chain and spot_price and isinstance(spot_price, (int, float)):
             try:
                 liq_result = self.liquidity_analyzer.analyze(option_chain, spot_price)
 
                 if hasattr(liq_result, 'gravity_center'):
                     gravity = liq_result.gravity_center
-                    if gravity > spot_price:
-                        scores['liquidity'] = 30  # Price likely to move up
-                        bullish_reasons.append(f"Liquidity center above price (₹{gravity:,.0f})")
-                    elif gravity < spot_price:
-                        scores['liquidity'] = -30  # Price likely to move down
-                        bearish_reasons.append(f"Liquidity center below price (₹{gravity:,.0f})")
+                    # Validate gravity is numeric before comparison
+                    if gravity and isinstance(gravity, (int, float)) and not isinstance(gravity, bool):
+                        if gravity > spot_price:
+                            scores['liquidity'] = 30  # Price likely to move up
+                            bullish_reasons.append(f"Liquidity center above price (₹{gravity:,.0f})")
+                        elif gravity < spot_price:
+                            scores['liquidity'] = -30  # Price likely to move down
+                            bearish_reasons.append(f"Liquidity center below price (₹{gravity:,.0f})")
 
             except Exception as e:
                 logger.warning(f"Liquidity analysis failed: {e}")
@@ -922,13 +924,14 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     # Max PUT OI = Strong Support | Max CALL OI = Strong Resistance
     # ═══════════════════════════════════════════════════════════════════
     option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
-    if option_data and spot_price:
+    if option_data and spot_price and isinstance(spot_price, (int, float)):
         # OI Wall Support (Max PUT OI strike)
         supp_data = option_data.get('support', {})
-        if supp_data.get('strike') and supp_data['strike'] < spot_price:
-            oi_val = supp_data.get('oi', 0)
+        supp_strike = supp_data.get('strike') if isinstance(supp_data, dict) else None
+        if supp_strike and isinstance(supp_strike, (int, float)) and not isinstance(supp_strike, bool) and supp_strike < spot_price:
+            oi_val = supp_data.get('oi', 0) if isinstance(supp_data.get('oi'), (int, float)) else 0
             exact_supports.append({
-                'price': supp_data['strike'],
+                'price': float(supp_strike),
                 'source': 'OI-Wall',
                 'label': f"PUT OI Wall ({oi_val/100000:.1f}L)" if oi_val else "PUT OI Wall",
                 'priority': SOURCE_PRIORITY['OI-Wall']
@@ -936,10 +939,11 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
 
         # OI Wall Resistance (Max CALL OI strike)
         res_data = option_data.get('resistance', {})
-        if res_data.get('strike') and res_data['strike'] > spot_price:
-            oi_val = res_data.get('oi', 0)
+        res_strike = res_data.get('strike') if isinstance(res_data, dict) else None
+        if res_strike and isinstance(res_strike, (int, float)) and not isinstance(res_strike, bool) and res_strike > spot_price:
+            oi_val = res_data.get('oi', 0) if isinstance(res_data.get('oi'), (int, float)) else 0
             exact_resistances.append({
-                'price': res_data['strike'],
+                'price': float(res_strike),
                 'source': 'OI-Wall',
                 'label': f"CALL OI Wall ({oi_val/100000:.1f}L)" if oi_val else "CALL OI Wall",
                 'priority': SOURCE_PRIORITY['OI-Wall']
@@ -947,39 +951,42 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
 
         # Max Pain
         max_pain = option_data.get('max_pain')
-        if max_pain and isinstance(max_pain, (int, float)):
+        if max_pain and isinstance(max_pain, (int, float)) and not isinstance(max_pain, bool):
             if max_pain < spot_price:
                 exact_supports.append({
-                    'price': max_pain,
+                    'price': float(max_pain),
                     'source': 'MaxPain',
                     'label': 'Max Pain Target',
                     'priority': SOURCE_PRIORITY['MaxPain']
                 })
             else:
                 exact_resistances.append({
-                    'price': max_pain,
+                    'price': float(max_pain),
                     'source': 'MaxPain',
                     'label': 'Max Pain Target',
                     'priority': SOURCE_PRIORITY['MaxPain']
                 })
 
     # From Spike Detector OI levels
-    if spike_data and spike_data.get('key_levels') and spot_price:
+    if spike_data and spike_data.get('key_levels') and spot_price and isinstance(spot_price, (int, float)):
         key_levels = spike_data.get('key_levels', {})
-        if key_levels.get('support') and key_levels['support'] < spot_price:
-            exact_supports.append({
-                'price': key_levels['support'],
-                'source': 'Spike',
-                'label': 'Spike OI Support',
-                'priority': SOURCE_PRIORITY['Spike']
-            })
-        if key_levels.get('resistance') and key_levels['resistance'] > spot_price:
-            exact_resistances.append({
-                'price': key_levels['resistance'],
-                'source': 'Spike',
-                'label': 'Spike OI Resistance',
-                'priority': SOURCE_PRIORITY['Spike']
-            })
+        if isinstance(key_levels, dict):
+            spike_supp = key_levels.get('support')
+            spike_res = key_levels.get('resistance')
+            if spike_supp and isinstance(spike_supp, (int, float)) and not isinstance(spike_supp, bool) and spike_supp < spot_price:
+                exact_supports.append({
+                    'price': float(spike_supp),
+                    'source': 'Spike',
+                    'label': 'Spike OI Support',
+                    'priority': SOURCE_PRIORITY['Spike']
+                })
+            if spike_res and isinstance(spike_res, (int, float)) and not isinstance(spike_res, bool) and spike_res > spot_price:
+                exact_resistances.append({
+                    'price': float(spike_res),
+                    'source': 'Spike',
+                    'label': 'Spike OI Resistance',
+                    'priority': SOURCE_PRIORITY['Spike']
+                })
 
     # ═══════════════════════════════════════════════════════════════════
     # 2. FIBONACCI LEVELS (Price Action Based)
@@ -1055,19 +1062,21 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     # 3. HTF S/R (Higher Timeframe)
     # ═══════════════════════════════════════════════════════════════════
     htf_data = st.session_state.get('htf_sr_levels', {})
-    if htf_data and spot_price:
+    if htf_data and spot_price and isinstance(spot_price, (int, float)) and isinstance(htf_data, dict):
         for tf, levels in htf_data.items():
             if isinstance(levels, dict):
-                if levels.get('support') and levels['support'] < spot_price:
+                htf_supp = levels.get('support')
+                htf_res = levels.get('resistance')
+                if htf_supp and isinstance(htf_supp, (int, float)) and not isinstance(htf_supp, bool) and htf_supp < spot_price:
                     exact_supports.append({
-                        'price': levels['support'],
+                        'price': float(htf_supp),
                         'source': 'HTF',
                         'label': f'{tf} Support',
                         'priority': SOURCE_PRIORITY['HTF']
                     })
-                if levels.get('resistance') and levels['resistance'] > spot_price:
+                if htf_res and isinstance(htf_res, (int, float)) and not isinstance(htf_res, bool) and htf_res > spot_price:
                     exact_resistances.append({
-                        'price': levels['resistance'],
+                        'price': float(htf_res),
                         'source': 'HTF',
                         'label': f'{tf} Resistance',
                         'priority': SOURCE_PRIORITY['HTF']
@@ -1077,17 +1086,17 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     # 4. VWAP
     # ═══════════════════════════════════════════════════════════════════
     vwap = st.session_state.get('vwap_level') or st.session_state.get('nifty_vwap')
-    if vwap and isinstance(vwap, (int, float)) and spot_price:
+    if vwap and isinstance(vwap, (int, float)) and not isinstance(vwap, bool) and spot_price and isinstance(spot_price, (int, float)):
         if vwap < spot_price:
             exact_supports.append({
-                'price': vwap,
+                'price': float(vwap),
                 'source': 'VWAP',
                 'label': 'Daily VWAP',
                 'priority': SOURCE_PRIORITY['VWAP']
             })
         else:
             exact_resistances.append({
-                'price': vwap,
+                'price': float(vwap),
                 'source': 'VWAP',
                 'label': 'Daily VWAP',
                 'priority': SOURCE_PRIORITY['VWAP']
@@ -1097,28 +1106,36 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     # 5. Volume Order Blocks (VOB)
     # ═══════════════════════════════════════════════════════════════════
     vob_data = st.session_state.get('vob_levels', {})
-    if vob_data and spot_price:
-        for block in vob_data.get('bullish_blocks', []):
-            if block.get('mid') and block['mid'] < spot_price:
-                exact_supports.append({
-                    'price': block['mid'],
-                    'source': 'VOB',
-                    'label': 'Bullish Order Block',
-                    'priority': SOURCE_PRIORITY['VOB']
-                })
-        for block in vob_data.get('bearish_blocks', []):
-            if block.get('mid') and block['mid'] > spot_price:
-                exact_resistances.append({
-                    'price': block['mid'],
-                    'source': 'VOB',
-                    'label': 'Bearish Order Block',
-                    'priority': SOURCE_PRIORITY['VOB']
-                })
+    if vob_data and spot_price and isinstance(spot_price, (int, float)) and isinstance(vob_data, dict):
+        bullish_blocks = vob_data.get('bullish_blocks', [])
+        if isinstance(bullish_blocks, list):
+            for block in bullish_blocks:
+                if isinstance(block, dict):
+                    block_mid = block.get('mid')
+                    if block_mid and isinstance(block_mid, (int, float)) and not isinstance(block_mid, bool) and block_mid < spot_price:
+                        exact_supports.append({
+                            'price': float(block_mid),
+                            'source': 'VOB',
+                            'label': 'Bullish Order Block',
+                            'priority': SOURCE_PRIORITY['VOB']
+                        })
+        bearish_blocks = vob_data.get('bearish_blocks', [])
+        if isinstance(bearish_blocks, list):
+            for block in bearish_blocks:
+                if isinstance(block, dict):
+                    block_mid = block.get('mid')
+                    if block_mid and isinstance(block_mid, (int, float)) and not isinstance(block_mid, bool) and block_mid > spot_price:
+                        exact_resistances.append({
+                            'price': float(block_mid),
+                            'source': 'VOB',
+                            'label': 'Bearish Order Block',
+                            'priority': SOURCE_PRIORITY['VOB']
+                        })
 
     # ═══════════════════════════════════════════════════════════════════
     # 6. Round Numbers (Psychological - lowest priority)
     # ═══════════════════════════════════════════════════════════════════
-    if spot_price:
+    if spot_price and isinstance(spot_price, (int, float)):
         base = int(spot_price / 100) * 100
         for lvl in [base - 100, base, base + 100, base + 200]:
             if lvl < spot_price:
