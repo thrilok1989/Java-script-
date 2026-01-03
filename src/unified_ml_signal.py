@@ -1133,9 +1133,57 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
             })
 
     # ═══════════════════════════════════════════════════════════════════
-    # 3. HTF S/R (Higher Timeframe)
+    # 3. HTF S/R (Higher Timeframe Pivot Points)
+    # Calculate pivot highs/lows from different lookback periods
     # ═══════════════════════════════════════════════════════════════════
     htf_data = st.session_state.get('htf_sr_levels', {})
+
+    # If HTF data not available, calculate from DataFrame
+    if not htf_data and 'nifty_df' in st.session_state:
+        try:
+            df_htf = st.session_state.get('nifty_df')
+            if df_htf is not None and len(df_htf) > 20:
+                # Normalize column names
+                high_col = 'High' if 'High' in df_htf.columns else 'high'
+                low_col = 'Low' if 'Low' in df_htf.columns else 'low'
+
+                if high_col in df_htf.columns and low_col in df_htf.columns:
+                    htf_data = {}
+
+                    # Calculate pivot points for different periods (simulating HTF)
+                    # 15min chart with 10 bars = ~2.5 hours of data
+                    # 15min chart with 20 bars = ~5 hours of data
+                    # 15min chart with 40 bars = ~10 hours (daily range)
+
+                    periods = {
+                        '15min': 5,    # 5 bars = 1.25 hours lookback
+                        '1H': 10,      # 10 bars = 2.5 hours lookback
+                        '4H': 20,      # 20 bars = 5 hours lookback
+                        'Daily': 40    # 40 bars = 10 hours lookback
+                    }
+
+                    for tf_name, lookback in periods.items():
+                        if len(df_htf) > lookback * 2:
+                            # Find pivot high (highest high in lookback period)
+                            recent_highs = df_htf[high_col].iloc[-lookback*2:-lookback].values
+                            recent_lows = df_htf[low_col].iloc[-lookback*2:-lookback].values
+
+                            if len(recent_highs) > 0 and len(recent_lows) > 0:
+                                pivot_high = float(max(recent_highs))
+                                pivot_low = float(min(recent_lows))
+
+                                htf_data[tf_name] = {
+                                    'support': pivot_low,
+                                    'resistance': pivot_high
+                                }
+
+                    # Store for future use
+                    if htf_data:
+                        st.session_state['htf_sr_levels'] = htf_data
+
+        except Exception as e:
+            logger.debug(f"HTF calculation error: {e}")
+
     if htf_data and spot_price and isinstance(spot_price, (int, float)) and isinstance(htf_data, dict):
         for tf, levels in htf_data.items():
             if isinstance(levels, dict):
@@ -1145,14 +1193,14 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     exact_supports.append({
                         'price': float(htf_supp),
                         'source': 'HTF',
-                        'label': f'{tf} Support',
+                        'label': f'{tf} Pivot Low',
                         'priority': SOURCE_PRIORITY['HTF']
                     })
                 if htf_res and isinstance(htf_res, (int, float)) and not isinstance(htf_res, bool) and htf_res > spot_price:
                     exact_resistances.append({
                         'price': float(htf_res),
                         'source': 'HTF',
-                        'label': f'{tf} Resistance',
+                        'label': f'{tf} Pivot High',
                         'priority': SOURCE_PRIORITY['HTF']
                     })
 
@@ -1228,7 +1276,56 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 })
 
     # ═══════════════════════════════════════════════════════════════════
-    # SORT BY PRIORITY (OI Wall first, then Fib, then others)
+    # 7. CONFLUENCE DETECTION (HTF + Fib alignment = Strongest levels)
+    # If HTF pivot aligns with Fib level within 20 points, mark as confluence
+    # ═══════════════════════════════════════════════════════════════════
+    CONFLUENCE_TOLERANCE = 20  # Points within which levels are considered aligned
+
+    def find_confluence(levels):
+        """Find and mark confluence levels (HTF + Fib aligned)"""
+        if not levels or len(levels) < 2:
+            return levels
+
+        # Separate by source type
+        htf_levels = [l for l in levels if l['source'] == 'HTF']
+        fib_levels = [l for l in levels if 'Fib' in l['source']]
+        other_levels = [l for l in levels if l['source'] != 'HTF' and 'Fib' not in l['source']]
+
+        # Check for HTF + Fib confluence
+        confluence_found = []
+        used_htf = set()
+        used_fib = set()
+
+        for i, htf in enumerate(htf_levels):
+            for j, fib in enumerate(fib_levels):
+                if abs(htf['price'] - fib['price']) <= CONFLUENCE_TOLERANCE:
+                    # Confluence found! Create merged level with boosted priority
+                    avg_price = (htf['price'] + fib['price']) / 2
+                    confluence_found.append({
+                        'price': round(avg_price, 2),
+                        'source': 'Confluence',
+                        'label': f"HTF+{fib['label']} ⚡",
+                        'priority': 95  # Very high priority (just below OI Wall)
+                    })
+                    used_htf.add(i)
+                    used_fib.add(j)
+
+        # Keep non-confluence levels
+        remaining_htf = [l for i, l in enumerate(htf_levels) if i not in used_htf]
+        remaining_fib = [l for j, l in enumerate(fib_levels) if j not in used_fib]
+
+        return confluence_found + remaining_htf + remaining_fib + other_levels
+
+    # Apply confluence detection
+    exact_supports = find_confluence(exact_supports)
+    exact_resistances = find_confluence(exact_resistances)
+
+    # Add Confluence to priority if not exists
+    if 'Confluence' not in SOURCE_PRIORITY:
+        SOURCE_PRIORITY['Confluence'] = 95
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SORT BY PRIORITY (OI Wall first, then Confluence, then Fib, then others)
     # Remove duplicates (same price within 5 points)
     # ═══════════════════════════════════════════════════════════════════
     def dedupe_and_sort(levels, is_support=True):
