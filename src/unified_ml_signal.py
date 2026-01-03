@@ -11,6 +11,7 @@ Modules Combined:
 5. CVD Delta Imbalance
 6. Liquidity Gravity Analysis
 7. Institutional vs Retail Detection
+8. Expiry Day Killer (False Breakout Filter)
 
 Output: Single unified trading signal with confidence score
 """
@@ -23,6 +24,16 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 import logging
+
+# Import Expiry Day Killer
+try:
+    from src.expiry_day_killer import ExpiryDayKiller, format_killer_result
+except ImportError:
+    try:
+        from expiry_day_killer import ExpiryDayKiller, format_killer_result
+    except ImportError:
+        ExpiryDayKiller = None
+        format_killer_result = None
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +130,8 @@ def send_reversal_entry_telegram(
     strike_pcr: float,
     confluence_detail: str = "",
     reversal_probability: int = 0,
-    exact_reversal_price: float = None
+    exact_reversal_price: float = None,
+    killer_result = None  # ExpiryKillerResult from expiry_day_killer.py
 ):
     """
     Send Telegram alert when price enters EXACT REVERSAL zone
@@ -128,6 +140,7 @@ def send_reversal_entry_telegram(
     - Price enters OI Wall entry zone
     - Multiple confluence factors align (HTF + Fib + BOS + CHOCH)
     - Reversal probability >= 75%
+    - Expiry Day Killer filters pass
     """
     try:
         # Get Telegram credentials
@@ -166,6 +179,22 @@ def send_reversal_entry_telegram(
         # Strength indicator
         strength_emoji = "🟢" if strength == "STRONG" else "🟡" if strength == "MEDIUM" else "🔴"
 
+        # Killer analysis section
+        killer_section = ""
+        if killer_result is not None:
+            risk_emoji = "🟢" if killer_result.risk_level == "LOW" else "🟡" if killer_result.risk_level == "MEDIUM" else "🔴"
+            killer_section = f"""
+🛡️ *EXPIRY DAY KILLER ANALYSIS:*
+• Safety Score: {killer_result.overall_score:.0f}/100
+• Risk Level: {risk_emoji} {killer_result.risk_level}
+• Volume: {killer_result.volume_ratio:.1f}x avg {'✅' if killer_result.volume_filter.value == 'PASSED' else '⚠️'}
+• Retest: {'✅ Confirmed' if killer_result.retest_confirmed else '⏳ Pending'}
+• OI Wall: {'✅ Aligned' if killer_result.oi_wall_aligned else '⚠️ Opposing'}
+• Max Pain: {'✅ Aligned' if killer_result.max_pain_aligned else '⚠️ Opposing'}
+"""
+            if killer_result.is_expiry_day:
+                killer_section += f"• ⚠️ EXPIRY DAY - {killer_result.minutes_to_close} mins to close\n"
+
         # Build message
         message = f"""
 🎯 *EXACT REVERSAL ENTRY SIGNAL* 🎯
@@ -183,7 +212,7 @@ def send_reversal_entry_telegram(
 
 ⚡ *Confluence Factors:*
 {confluence_detail if confluence_detail else "OI Wall + PCR"}
-
+{killer_section}
 🎬 *ACTION:* {action}
 📝 *Logic:* {entry_logic}
 
@@ -192,7 +221,7 @@ def send_reversal_entry_telegram(
 • Buffer: {buffer}
 
 ⏰ _{datetime.now().strftime('%H:%M:%S')}_
-⚡ _Exact Reversal Detection System_
+⚡ _Exact Reversal + Expiry Killer System_
 """
 
         # Send to Telegram
@@ -220,17 +249,51 @@ def check_and_send_reversal_entry(
     spot_price: float,
     support_levels: list,
     resistance_levels: list,
-    auto_send: bool = True
+    auto_send: bool = True,
+    df: pd.DataFrame = None,
+    oi_data: dict = None,
+    days_to_expiry: float = 7.0
 ):
     """
     Check if price is in any exact reversal zone and send Telegram alert
+    Uses Expiry Day Killer to filter false breakouts
 
-    Returns: List of triggered entry signals
+    Returns: List of triggered entry signals with killer analysis
     """
     triggered_entries = []
 
     if not spot_price or not auto_send:
         return triggered_entries
+
+    # Initialize Expiry Day Killer if available
+    killer = None
+    if ExpiryDayKiller is not None:
+        killer = ExpiryDayKiller(
+            expiry_cutoff_minutes=90,  # Block in last 90 mins on expiry
+            volume_confirmation_ratio=1.5,  # Need 1.5x avg volume
+            oi_wall_distance_threshold=50,  # Don't break INTO OI wall within 50 pts
+            max_pain_alignment_threshold=30  # Max pain should align within 30 pts
+        )
+
+    # Get OI data from session state if not provided
+    if oi_data is None:
+        oi_data = {}
+        try:
+            nifty_screener = st.session_state.get('nifty_screener_data', {})
+            oi_pcr_metrics = nifty_screener.get('oi_pcr_metrics', {}) if isinstance(nifty_screener, dict) else {}
+            option_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+
+            oi_data = {
+                'max_call_strike': oi_pcr_metrics.get('max_call_strike', 0),
+                'max_put_strike': oi_pcr_metrics.get('max_put_strike', 0),
+                'max_pain': option_data.get('max_pain', 0)
+            }
+        except:
+            pass
+
+    # Get DataFrame from session state if not provided
+    if df is None:
+        df = st.session_state.get('nifty_df')
 
     # Check support levels (price near or below support = potential LONG entry)
     for supp in support_levels:
@@ -243,21 +306,58 @@ def check_and_send_reversal_entry(
             if entry_from <= spot_price <= entry_to:
                 reversal_prob = supp.get('reversal_probability', 0)
                 if reversal_prob >= 75:
-                    success, msg = send_reversal_entry_telegram(
-                        spot_price=spot_price,
-                        reversal_zone=entry_zone,
-                        signal_type="SUPPORT",
-                        strike_pcr=supp.get('strike_pcr', 1.0),
-                        confluence_detail=supp.get('confluence_detail', ''),
-                        reversal_probability=reversal_prob,
-                        exact_reversal_price=supp.get('exact_reversal_price', supp['price'])
-                    )
-                    triggered_entries.append({
-                        'type': 'SUPPORT',
-                        'price': supp['price'],
-                        'success': success,
-                        'message': msg
-                    })
+                    # ═══════════════════════════════════════════════════════════
+                    # EXPIRY DAY KILLER CHECK - Filter false breakouts
+                    # ═══════════════════════════════════════════════════════════
+                    killer_result = None
+                    entry_allowed = True
+                    killer_msg = ""
+
+                    if killer is not None:
+                        killer_result = killer.analyze(
+                            spot_price=spot_price,
+                            entry_type="SUPPORT",
+                            entry_zone=entry_zone,
+                            df=df,
+                            oi_data=oi_data,
+                            days_to_expiry=days_to_expiry
+                        )
+                        entry_allowed = killer_result.entry_allowed
+                        killer_msg = killer_result.recommendation
+
+                        # Store killer result in session state for display
+                        st.session_state['last_killer_result'] = killer_result
+
+                    if entry_allowed:
+                        success, msg = send_reversal_entry_telegram(
+                            spot_price=spot_price,
+                            reversal_zone=entry_zone,
+                            signal_type="SUPPORT",
+                            strike_pcr=supp.get('strike_pcr', 1.0),
+                            confluence_detail=supp.get('confluence_detail', ''),
+                            reversal_probability=reversal_prob,
+                            exact_reversal_price=supp.get('exact_reversal_price', supp['price']),
+                            killer_result=killer_result
+                        )
+                        triggered_entries.append({
+                            'type': 'SUPPORT',
+                            'price': supp['price'],
+                            'success': success,
+                            'message': msg,
+                            'killer_score': killer_result.overall_score if killer_result else 100,
+                            'killer_allowed': True
+                        })
+                    else:
+                        # Entry blocked by Expiry Day Killer
+                        triggered_entries.append({
+                            'type': 'SUPPORT',
+                            'price': supp['price'],
+                            'success': False,
+                            'message': f"BLOCKED: {killer_msg}",
+                            'killer_score': killer_result.overall_score if killer_result else 0,
+                            'killer_allowed': False,
+                            'block_reasons': killer_result.block_reasons if killer_result else []
+                        })
 
     # Check resistance levels (price near or above resistance = potential SHORT entry)
     for res in resistance_levels:
@@ -270,21 +370,58 @@ def check_and_send_reversal_entry(
             if entry_from <= spot_price <= entry_to:
                 reversal_prob = res.get('reversal_probability', 0)
                 if reversal_prob >= 75:
-                    success, msg = send_reversal_entry_telegram(
-                        spot_price=spot_price,
-                        reversal_zone=entry_zone,
-                        signal_type="RESISTANCE",
-                        strike_pcr=res.get('strike_pcr', 1.0),
-                        confluence_detail=res.get('confluence_detail', ''),
-                        reversal_probability=reversal_prob,
-                        exact_reversal_price=res.get('exact_reversal_price', res['price'])
-                    )
-                    triggered_entries.append({
-                        'type': 'RESISTANCE',
-                        'price': res['price'],
-                        'success': success,
-                        'message': msg
-                    })
+                    # ═══════════════════════════════════════════════════════════
+                    # EXPIRY DAY KILLER CHECK - Filter false breakouts
+                    # ═══════════════════════════════════════════════════════════
+                    killer_result = None
+                    entry_allowed = True
+                    killer_msg = ""
+
+                    if killer is not None:
+                        killer_result = killer.analyze(
+                            spot_price=spot_price,
+                            entry_type="RESISTANCE",
+                            entry_zone=entry_zone,
+                            df=df,
+                            oi_data=oi_data,
+                            days_to_expiry=days_to_expiry
+                        )
+                        entry_allowed = killer_result.entry_allowed
+                        killer_msg = killer_result.recommendation
+
+                        # Store killer result in session state for display
+                        st.session_state['last_killer_result'] = killer_result
+
+                    if entry_allowed:
+                        success, msg = send_reversal_entry_telegram(
+                            spot_price=spot_price,
+                            reversal_zone=entry_zone,
+                            signal_type="RESISTANCE",
+                            strike_pcr=res.get('strike_pcr', 1.0),
+                            confluence_detail=res.get('confluence_detail', ''),
+                            reversal_probability=reversal_prob,
+                            exact_reversal_price=res.get('exact_reversal_price', res['price']),
+                            killer_result=killer_result
+                        )
+                        triggered_entries.append({
+                            'type': 'RESISTANCE',
+                            'price': res['price'],
+                            'success': success,
+                            'message': msg,
+                            'killer_score': killer_result.overall_score if killer_result else 100,
+                            'killer_allowed': True
+                        })
+                    else:
+                        # Entry blocked by Expiry Day Killer
+                        triggered_entries.append({
+                            'type': 'RESISTANCE',
+                            'price': res['price'],
+                            'success': False,
+                            'message': f"BLOCKED: {killer_msg}",
+                            'killer_score': killer_result.overall_score if killer_result else 0,
+                            'killer_allowed': False,
+                            'block_reasons': killer_result.block_reasons if killer_result else []
+                        })
 
     return triggered_entries
 
@@ -2095,14 +2232,55 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
     with entry_col2:
         auto_entry = st.checkbox("📱 Auto Telegram Entry", value=True, key="auto_entry_telegram")
 
-    # Show triggered entry signals
+    # Show triggered entry signals with Killer analysis
     last_entries = st.session_state.get('last_triggered_entries', [])
     if last_entries:
         for entry in last_entries:
+            killer_score = entry.get('killer_score', 100)
+            killer_allowed = entry.get('killer_allowed', True)
+
             if entry.get('success'):
-                st.success(f"✅ Entry Signal Sent: {entry['type']} at ₹{entry['price']:,.0f}")
+                st.success(f"✅ Entry Signal Sent: {entry['type']} at ₹{entry['price']:,.0f} | Killer Score: {killer_score:.0f}/100")
+            elif not killer_allowed:
+                # Entry blocked by Expiry Day Killer
+                st.error(f"🛑 BLOCKED BY KILLER: {entry['type']} at ₹{entry['price']:,.0f} | Score: {killer_score:.0f}/100")
+                block_reasons = entry.get('block_reasons', [])
+                if block_reasons:
+                    for reason in block_reasons[:2]:
+                        st.caption(f"   ⚠️ {reason}")
             else:
                 st.warning(f"⚠️ {entry['type']}: {entry.get('message', 'Not sent')}")
+
+    # Show last Killer analysis result
+    killer_result = st.session_state.get('last_killer_result')
+    if killer_result is not None:
+        with st.expander("🛡️ Expiry Day Killer Analysis", expanded=False):
+            col_k1, col_k2, col_k3 = st.columns(3)
+            with col_k1:
+                risk_color = "green" if killer_result.risk_level == "LOW" else "orange" if killer_result.risk_level == "MEDIUM" else "red"
+                st.metric("Safety Score", f"{killer_result.overall_score:.0f}/100")
+            with col_k2:
+                st.metric("Risk Level", killer_result.risk_level)
+            with col_k3:
+                st.metric("Volume", f"{killer_result.volume_ratio:.1f}x")
+
+            st.markdown("**Filter Results:**")
+            filter_cols = st.columns(5)
+            with filter_cols[0]:
+                st.caption(f"Time: {killer_result.time_filter.value}")
+            with filter_cols[1]:
+                st.caption(f"Volume: {killer_result.volume_filter.value}")
+            with filter_cols[2]:
+                st.caption(f"Retest: {killer_result.retest_filter.value}")
+            with filter_cols[3]:
+                st.caption(f"OI Wall: {killer_result.oi_wall_filter.value}")
+            with filter_cols[4]:
+                st.caption(f"Max Pain: {killer_result.max_pain_filter.value}")
+
+            if killer_result.block_reasons:
+                st.error("Block Reasons: " + " | ".join(killer_result.block_reasons[:2]))
+            if killer_result.warning_reasons:
+                st.warning("Warnings: " + " | ".join(killer_result.warning_reasons[:2]))
 
     # Show current distance to reversal zones
     if spot_price:
