@@ -1208,6 +1208,133 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 })
 
     # ═══════════════════════════════════════════════════════════════════
+    # 1.5 ADVANCED CHART ANALYSIS S/R (Reversal Zones + Price Action)
+    # Uses: Swing Highs/Lows, Reversal Probability Zones, BOS/CHOCH levels
+    # ═══════════════════════════════════════════════════════════════════
+    # Add priority for Advanced Chart sources
+    if 'Reversal' not in SOURCE_PRIORITY:
+        SOURCE_PRIORITY['Reversal'] = 82  # Between Fib 0.618 and Fib 0.382
+    if 'BOS' not in SOURCE_PRIORITY:
+        SOURCE_PRIORITY['BOS'] = 78  # Break of Structure
+    if 'CHOCH' not in SOURCE_PRIORITY:
+        SOURCE_PRIORITY['CHOCH'] = 77  # Change of Character
+
+    # Get reversal zones data from session state (from Advanced Chart Analysis tab)
+    reversal_zones_data = st.session_state.get('reversal_zones_data', {})
+    price_action_data = st.session_state.get('price_action_data', {})
+
+    if reversal_zones_data and reversal_zones_data.get('success') and spot_price:
+        try:
+            zone = reversal_zones_data.get('zone')
+            if zone:
+                # Add percentile target prices as potential reversal levels
+                if zone.is_bullish:
+                    # Bullish - targets are above current price (resistance)
+                    if zone.percentile_50_price and zone.percentile_50_price > spot_price:
+                        exact_resistances.append({
+                            'price': round(zone.percentile_50_price, 2),
+                            'source': 'Reversal',
+                            'label': 'Reversal Target 50%',
+                            'priority': SOURCE_PRIORITY['Reversal']
+                        })
+                    if zone.percentile_75_price and zone.percentile_75_price > spot_price:
+                        exact_resistances.append({
+                            'price': round(zone.percentile_75_price, 2),
+                            'source': 'Reversal',
+                            'label': 'Reversal Target 75%',
+                            'priority': SOURCE_PRIORITY['Reversal'] - 2
+                        })
+                else:
+                    # Bearish - targets are below current price (support)
+                    if zone.percentile_50_price and zone.percentile_50_price < spot_price:
+                        exact_supports.append({
+                            'price': round(zone.percentile_50_price, 2),
+                            'source': 'Reversal',
+                            'label': 'Reversal Target 50%',
+                            'priority': SOURCE_PRIORITY['Reversal']
+                        })
+                    if zone.percentile_75_price and zone.percentile_75_price < spot_price:
+                        exact_supports.append({
+                            'price': round(zone.percentile_75_price, 2),
+                            'source': 'Reversal',
+                            'label': 'Reversal Target 75%',
+                            'priority': SOURCE_PRIORITY['Reversal'] - 2
+                        })
+
+            # Add swing highs/lows from reversal zones
+            swing_highs_rz = reversal_zones_data.get('swing_highs', [])
+            swing_lows_rz = reversal_zones_data.get('swing_lows', [])
+
+            for sh in swing_highs_rz[-3:]:  # Last 3 swing highs
+                sh_price = sh.get('price')
+                if sh_price and isinstance(sh_price, (int, float)) and sh_price > spot_price:
+                    exact_resistances.append({
+                        'price': float(sh_price),
+                        'source': 'HTF',
+                        'label': 'Chart Swing High',
+                        'priority': SOURCE_PRIORITY['HTF']
+                    })
+
+            for sl in swing_lows_rz[-3:]:  # Last 3 swing lows
+                sl_price = sl.get('price')
+                if sl_price and isinstance(sl_price, (int, float)) and sl_price < spot_price:
+                    exact_supports.append({
+                        'price': float(sl_price),
+                        'source': 'HTF',
+                        'label': 'Chart Swing Low',
+                        'priority': SOURCE_PRIORITY['HTF']
+                    })
+        except Exception as e:
+            logger.debug(f"Error processing reversal zones data: {e}")
+
+    # Get BOS/CHOCH structure levels from price action data
+    if price_action_data and price_action_data.get('success') and spot_price:
+        try:
+            # BOS (Break of Structure) levels
+            bos_events = price_action_data.get('bos_events', [])
+            for bos in bos_events[-5:]:  # Last 5 BOS events
+                struct_level = bos.get('structure_level')
+                bos_type = bos.get('type', '')
+                if struct_level and isinstance(struct_level, (int, float)):
+                    if bos_type == 'BULLISH' and struct_level > spot_price:
+                        exact_resistances.append({
+                            'price': float(struct_level),
+                            'source': 'BOS',
+                            'label': f'BOS Bullish ↑',
+                            'priority': SOURCE_PRIORITY['BOS']
+                        })
+                    elif bos_type == 'BEARISH' and struct_level < spot_price:
+                        exact_supports.append({
+                            'price': float(struct_level),
+                            'source': 'BOS',
+                            'label': f'BOS Bearish ↓',
+                            'priority': SOURCE_PRIORITY['BOS']
+                        })
+
+            # CHOCH (Change of Character) levels - trend reversals
+            choch_events = price_action_data.get('choch_events', [])
+            for choch in choch_events[-3:]:  # Last 3 CHOCH events
+                struct_level = choch.get('structure_level')
+                choch_type = choch.get('type', '')
+                if struct_level and isinstance(struct_level, (int, float)):
+                    if struct_level > spot_price:
+                        exact_resistances.append({
+                            'price': float(struct_level),
+                            'source': 'CHOCH',
+                            'label': f'CHOCH {choch_type}',
+                            'priority': SOURCE_PRIORITY['CHOCH']
+                        })
+                    elif struct_level < spot_price:
+                        exact_supports.append({
+                            'price': float(struct_level),
+                            'source': 'CHOCH',
+                            'label': f'CHOCH {choch_type}',
+                            'priority': SOURCE_PRIORITY['CHOCH']
+                        })
+        except Exception as e:
+            logger.debug(f"Error processing price action data: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════
     # 2. FIBONACCI LEVELS (Price Action Based)
     # ═══════════════════════════════════════════════════════════════════
     swing_high = None
@@ -1301,6 +1428,8 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     # 15min chart with 40 bars = ~10 hours (daily range)
 
                     periods = {
+                        '5min': 2,     # 2 bars = 30 min lookback (short-term)
+                        '10min': 3,    # 3 bars = 45 min lookback
                         '15min': 5,    # 5 bars = 1.25 hours lookback
                         '1H': 10,      # 10 bars = 2.5 hours lookback
                         '4H': 20,      # 20 bars = 5 hours lookback
@@ -1421,36 +1550,173 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 })
 
     # ═══════════════════════════════════════════════════════════════════
-    # 7. CONFLUENCE DETECTION (HTF + Fib alignment = Strongest levels)
-    # If HTF pivot aligns with Fib level within 20 points, mark as confluence
+    # 7. EXACT REVERSAL DETECTION (OI Wall Entry Zone + Fib + HTF Confluence)
+    # Combines: OI Wall PCR-based entry zone + Fibonacci levels + HTF pivots
+    # When multiple factors align = HIGH PROBABILITY EXACT REVERSAL POINT
     # ═══════════════════════════════════════════════════════════════════
     CONFLUENCE_TOLERANCE = 20  # Points within which levels are considered aligned
 
-    def find_confluence(levels):
-        """Find and mark confluence levels (HTF + Fib aligned)"""
+    def find_exact_reversal_zones(levels, is_support=True):
+        """
+        Find EXACT REVERSAL zones by combining:
+        1. OI Wall with PCR-based entry zone
+        2. Fibonacci levels within entry zone
+        3. HTF pivots (5min/10min/15min) within entry zone
+        4. BOS/CHOCH structure levels within entry zone
+        5. Reversal Probability Zones targets within entry zone
+
+        Returns enhanced levels with reversal probability score
+        """
         if not levels or len(levels) < 2:
             return levels
 
         # Separate by source type
+        oi_walls = [l for l in levels if l['source'] == 'OI-Wall' and l.get('entry_zone')]
         htf_levels = [l for l in levels if l['source'] == 'HTF']
         fib_levels = [l for l in levels if 'Fib' in l['source']]
-        other_levels = [l for l in levels if l['source'] != 'HTF' and 'Fib' not in l['source']]
+        bos_levels = [l for l in levels if l['source'] == 'BOS']
+        choch_levels = [l for l in levels if l['source'] == 'CHOCH']
+        reversal_levels = [l for l in levels if l['source'] == 'Reversal']
+        other_levels = [l for l in levels if l['source'] not in ['OI-Wall', 'HTF', 'BOS', 'CHOCH', 'Reversal'] and 'Fib' not in l['source']]
 
-        # Check for HTF + Fib confluence
-        confluence_found = []
+        # For each OI Wall, find confluent levels within its entry zone
+        enhanced_oi_walls = []
         used_htf = set()
         used_fib = set()
+        used_bos = set()
+        used_choch = set()
+        used_reversal = set()
 
-        for i, htf in enumerate(htf_levels):
+        for oi in oi_walls:
+            entry_zone = oi.get('entry_zone', {})
+            zone_from = entry_zone.get('entry_from', oi['price'] - 20)
+            zone_to = entry_zone.get('entry_to', oi['price'] + 20)
+            strike_pcr = oi.get('strike_pcr', 1.0)
+
+            # Find HTF pivots within OI Wall entry zone
+            htf_in_zone = []
+            for i, htf in enumerate(htf_levels):
+                if i not in used_htf and zone_from <= htf['price'] <= zone_to:
+                    htf_in_zone.append(htf)
+                    used_htf.add(i)
+
+            # Find Fib levels within OI Wall entry zone
+            fib_in_zone = []
             for j, fib in enumerate(fib_levels):
+                if j not in used_fib and zone_from <= fib['price'] <= zone_to:
+                    fib_in_zone.append(fib)
+                    used_fib.add(j)
+
+            # Find BOS levels within OI Wall entry zone
+            bos_in_zone = []
+            for k, bos in enumerate(bos_levels):
+                if k not in used_bos and zone_from <= bos['price'] <= zone_to:
+                    bos_in_zone.append(bos)
+                    used_bos.add(k)
+
+            # Find CHOCH levels within OI Wall entry zone
+            choch_in_zone = []
+            for m, choch in enumerate(choch_levels):
+                if m not in used_choch and zone_from <= choch['price'] <= zone_to:
+                    choch_in_zone.append(choch)
+                    used_choch.add(m)
+
+            # Find Reversal targets within OI Wall entry zone
+            reversal_in_zone = []
+            for n, rev in enumerate(reversal_levels):
+                if n not in used_reversal and zone_from <= rev['price'] <= zone_to:
+                    reversal_in_zone.append(rev)
+                    used_reversal.add(n)
+
+            # Calculate REVERSAL PROBABILITY based on confluence
+            # Base score from PCR strength
+            strength = entry_zone.get('strength', 'MEDIUM')
+            if strength == 'STRONG':
+                base_score = 70
+            elif strength == 'MEDIUM':
+                base_score = 50
+            else:
+                base_score = 30
+
+            # Add points for each confluent factor
+            htf_bonus = len(htf_in_zone) * 10  # +10 per HTF pivot in zone
+            fib_bonus = len(fib_in_zone) * 8   # +8 per Fib level in zone
+            bos_bonus = len(bos_in_zone) * 7   # +7 per BOS level in zone
+            choch_bonus = len(choch_in_zone) * 6  # +6 per CHOCH level in zone
+            reversal_bonus = len(reversal_in_zone) * 5  # +5 per Reversal target in zone
+
+            # Extra bonus for key Fib levels (0.618, 0.382)
+            key_fib_bonus = sum(5 for f in fib_in_zone if '0.618' in f.get('label', '') or '0.382' in f.get('label', ''))
+
+            # Calculate total reversal probability
+            reversal_probability = min(99, base_score + htf_bonus + fib_bonus + bos_bonus + choch_bonus + reversal_bonus + key_fib_bonus)
+
+            # Determine exact reversal price (average of ALL confluent levels)
+            confluent_prices = [oi['price']]
+            confluent_prices.extend([h['price'] for h in htf_in_zone])
+            confluent_prices.extend([f['price'] for f in fib_in_zone])
+            confluent_prices.extend([b['price'] for b in bos_in_zone])
+            confluent_prices.extend([c['price'] for c in choch_in_zone])
+            confluent_prices.extend([r['price'] for r in reversal_in_zone])
+            exact_reversal_price = round(sum(confluent_prices) / len(confluent_prices), 2)
+
+            # Build confluence label
+            confluence_parts = []
+            if htf_in_zone:
+                htf_names = [h['label'].split()[0] for h in htf_in_zone]  # Get timeframe names
+                confluence_parts.append(f"HTF:{'+'.join(htf_names)}")
+            if fib_in_zone:
+                fib_names = [f['label'].split('%')[0] + '%' for f in fib_in_zone]
+                confluence_parts.append(f"Fib:{'+'.join(fib_names)}")
+            if bos_in_zone:
+                confluence_parts.append(f"BOS:{len(bos_in_zone)}")
+            if choch_in_zone:
+                confluence_parts.append(f"CHOCH:{len(choch_in_zone)}")
+            if reversal_in_zone:
+                confluence_parts.append(f"RevZone:{len(reversal_in_zone)}")
+
+            # Create enhanced OI Wall entry
+            enhanced_entry = {
+                'price': oi['price'],
+                'source': 'OI-Wall',
+                'label': oi['label'],
+                'priority': SOURCE_PRIORITY['OI-Wall'],
+                'strike_pcr': strike_pcr,
+                'entry_zone': entry_zone,
+                'reversal_probability': reversal_probability,
+                'exact_reversal_price': exact_reversal_price,
+                'confluent_htf': [h['label'] for h in htf_in_zone],
+                'confluent_fib': [f['label'] for f in fib_in_zone],
+                'confluent_bos': [b['label'] for b in bos_in_zone],
+                'confluent_choch': [c['label'] for c in choch_in_zone],
+                'confluent_reversal': [r['label'] for r in reversal_in_zone],
+            }
+
+            # If high confluence, mark as EXACT REVERSAL ZONE
+            if reversal_probability >= 75:
+                enhanced_entry['is_exact_reversal'] = True
+                enhanced_entry['label'] = f"{oi['label']} 🎯 REVERSAL {reversal_probability}%"
+                if confluence_parts:
+                    enhanced_entry['confluence_detail'] = ' + '.join(confluence_parts)
+
+            enhanced_oi_walls.append(enhanced_entry)
+
+        # Also check for HTF + Fib confluence (without OI Wall)
+        confluence_found = []
+        for i, htf in enumerate(htf_levels):
+            if i in used_htf:
+                continue
+            for j, fib in enumerate(fib_levels):
+                if j in used_fib:
+                    continue
                 if abs(htf['price'] - fib['price']) <= CONFLUENCE_TOLERANCE:
-                    # Confluence found! Create merged level with boosted priority
                     avg_price = (htf['price'] + fib['price']) / 2
                     confluence_found.append({
                         'price': round(avg_price, 2),
                         'source': 'Confluence',
                         'label': f"HTF+{fib['label']} ⚡",
-                        'priority': 95  # Very high priority (just below OI Wall)
+                        'priority': 95,
+                        'reversal_probability': 65  # Lower than OI Wall confluence
                     })
                     used_htf.add(i)
                     used_fib.add(j)
@@ -1458,12 +1724,19 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
         # Keep non-confluence levels
         remaining_htf = [l for i, l in enumerate(htf_levels) if i not in used_htf]
         remaining_fib = [l for j, l in enumerate(fib_levels) if j not in used_fib]
+        remaining_bos = [l for k, l in enumerate(bos_levels) if k not in used_bos]
+        remaining_choch = [l for m, l in enumerate(choch_levels) if m not in used_choch]
+        remaining_reversal = [l for n, l in enumerate(reversal_levels) if n not in used_reversal]
 
-        return confluence_found + remaining_htf + remaining_fib + other_levels
+        # OI Walls without entry_zone (legacy)
+        legacy_oi_walls = [l for l in levels if l['source'] == 'OI-Wall' and not l.get('entry_zone')]
 
-    # Apply confluence detection
-    exact_supports = find_confluence(exact_supports)
-    exact_resistances = find_confluence(exact_resistances)
+        return (enhanced_oi_walls + legacy_oi_walls + confluence_found +
+                remaining_htf + remaining_fib + remaining_bos + remaining_choch + remaining_reversal + other_levels)
+
+    # Apply EXACT REVERSAL detection
+    exact_supports = find_exact_reversal_zones(exact_supports, is_support=True)
+    exact_resistances = find_exact_reversal_zones(exact_resistances, is_support=False)
 
     # Add Confluence to priority if not exists
     if 'Confluence' not in SOURCE_PRIORITY:
@@ -1642,11 +1915,31 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     else:
                         stars = "★"    # HTF/VWAP/Round
                     label = s.get('label', 'Support')
-                    st.success(f"S{i+1}: ₹{s['price']:,.0f} | {label} {stars}")
+
+                    # Check for EXACT REVERSAL zone
+                    reversal_prob = s.get('reversal_probability', 0)
+                    if s.get('is_exact_reversal') and reversal_prob >= 75:
+                        st.success(f"🎯 S{i+1}: ₹{s['price']:,.0f} | REVERSAL {reversal_prob}% ★★★")
+                        # Show exact reversal price
+                        exact_price = s.get('exact_reversal_price', s['price'])
+                        st.caption(f"   🎯 EXACT REVERSAL: ₹{exact_price:,.0f}")
+                        # Show confluence details
+                        if s.get('confluence_detail'):
+                            st.caption(f"   ⚡ Confluence: {s['confluence_detail']}")
+                    else:
+                        st.success(f"S{i+1}: ₹{s['price']:,.0f} | {label} {stars}")
+
                     # Show entry zone for OI Wall with PCR
                     entry_zone = s.get('entry_zone')
                     if entry_zone and s.get('source') == 'OI-Wall':
                         st.caption(f"   📍 Entry Zone: ₹{entry_zone['entry_from']:,.0f} - ₹{entry_zone['entry_to']:,.0f} ({entry_zone['buffer']})")
+                        # Show confluent factors if any
+                        htf_list = s.get('confluent_htf', [])
+                        fib_list = s.get('confluent_fib', [])
+                        if htf_list:
+                            st.caption(f"   📊 HTF Pivots: {', '.join(htf_list)}")
+                        if fib_list:
+                            st.caption(f"   📐 Fib Levels: {', '.join(fib_list)}")
             else:
                 st.caption("No support levels detected")
 
@@ -1663,11 +1956,31 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                     else:
                         stars = "★"    # HTF/VWAP/Round
                     label = r.get('label', 'Resistance')
-                    st.error(f"R{i+1}: ₹{r['price']:,.0f} | {label} {stars}")
+
+                    # Check for EXACT REVERSAL zone
+                    reversal_prob = r.get('reversal_probability', 0)
+                    if r.get('is_exact_reversal') and reversal_prob >= 75:
+                        st.error(f"🎯 R{i+1}: ₹{r['price']:,.0f} | REVERSAL {reversal_prob}% ★★★")
+                        # Show exact reversal price
+                        exact_price = r.get('exact_reversal_price', r['price'])
+                        st.caption(f"   🎯 EXACT REVERSAL: ₹{exact_price:,.0f}")
+                        # Show confluence details
+                        if r.get('confluence_detail'):
+                            st.caption(f"   ⚡ Confluence: {r['confluence_detail']}")
+                    else:
+                        st.error(f"R{i+1}: ₹{r['price']:,.0f} | {label} {stars}")
+
                     # Show entry zone for OI Wall with PCR
                     entry_zone = r.get('entry_zone')
                     if entry_zone and r.get('source') == 'OI-Wall':
                         st.caption(f"   📍 Entry Zone: ₹{entry_zone['entry_from']:,.0f} - ₹{entry_zone['entry_to']:,.0f} ({entry_zone['buffer']})")
+                        # Show confluent factors if any
+                        htf_list = r.get('confluent_htf', [])
+                        fib_list = r.get('confluent_fib', [])
+                        if htf_list:
+                            st.caption(f"   📊 HTF Pivots: {', '.join(htf_list)}")
+                        if fib_list:
+                            st.caption(f"   📐 Fib Levels: {', '.join(fib_list)}")
             else:
                 st.caption("No resistance levels detected")
 
