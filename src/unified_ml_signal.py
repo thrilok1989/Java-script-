@@ -749,6 +749,44 @@ class UnifiedMLSignalGenerator:
             self.modules_loaded['institutional'] = False
             self.institutional_detector = None
 
+        # ========== DIAMOND LEVEL FEATURES ==========
+
+        # Cumulative Delta (CVD) - Order Flow Analysis
+        try:
+            from src.cumulative_delta import CumulativeDeltaAnalyzer
+            self.cvd_diamond_analyzer = CumulativeDeltaAnalyzer()
+            self.modules_loaded['cvd_diamond'] = True
+        except ImportError:
+            self.modules_loaded['cvd_diamond'] = False
+            self.cvd_diamond_analyzer = None
+
+        # Gamma Wall Flip Detector
+        try:
+            from src.gamma_wall_flip import GammaWallFlipDetector
+            self.gamma_flip_detector = GammaWallFlipDetector()
+            self.modules_loaded['gamma_flip'] = True
+        except ImportError:
+            self.modules_loaded['gamma_flip'] = False
+            self.gamma_flip_detector = None
+
+        # Black Order Detector (Hidden Institutional Orders)
+        try:
+            from src.black_order_detector import BlackOrderDetector
+            self.black_order_detector = BlackOrderDetector()
+            self.modules_loaded['black_order'] = True
+        except ImportError:
+            self.modules_loaded['black_order'] = False
+            self.black_order_detector = None
+
+        # Block Trade Detector (Institutional Footprints)
+        try:
+            from src.block_trade_detector import BlockTradeDetector
+            self.block_trade_detector = BlockTradeDetector()
+            self.modules_loaded['block_trade'] = True
+        except ImportError:
+            self.modules_loaded['block_trade'] = False
+            self.block_trade_detector = None
+
     def generate_signal(
         self,
         df: pd.DataFrame,
@@ -791,7 +829,12 @@ class UnifiedMLSignalGenerator:
             'oi_trap': 0,
             'cvd': 0,
             'liquidity': 0,
-            'institutional': 0
+            'institutional': 0,
+            # DIAMOND LEVEL SCORES
+            'cvd_diamond': 50,  # Cumulative Delta
+            'gamma_flip': 50,  # Gamma Wall Flip
+            'black_order': 50,  # Black/Hidden Orders
+            'block_trade': 50  # Block Trades
         }
 
         bullish_reasons = []
@@ -1028,30 +1071,162 @@ class UnifiedMLSignalGenerator:
         except Exception as e:
             logger.warning(f"Spike detection integration failed: {e}")
 
+        # 9. DIAMOND LEVEL FEATURES (Institutional-Grade Analysis)
+        diamond_signals = []
+
+        # 9a. Cumulative Delta (CVD) - Order Flow Analysis
+        if self.cvd_diamond_analyzer:
+            try:
+                cvd_result = self.cvd_diamond_analyzer.analyze(df)
+                if cvd_result:
+                    scores['cvd_diamond'] = cvd_result.score
+                    st.session_state['cvd_diamond_result'] = {
+                        'score': cvd_result.score,
+                        'bias': cvd_result.overall_bias,
+                        'trend': cvd_result.cvd_trend,
+                        'institutional_activity': cvd_result.institutional_activity,
+                        'smart_money_direction': cvd_result.smart_money_direction,
+                        'signals': [s.description for s in cvd_result.signals] if cvd_result.signals else []
+                    }
+                    if cvd_result.overall_bias == 'BULLISH':
+                        bullish_reasons.append(f"💎 CVD: {cvd_result.institutional_activity} ({cvd_result.score:.0f})")
+                        diamond_signals.append(('BULLISH', cvd_result.score))
+                    elif cvd_result.overall_bias == 'BEARISH':
+                        bearish_reasons.append(f"💎 CVD: {cvd_result.institutional_activity} ({cvd_result.score:.0f})")
+                        diamond_signals.append(('BEARISH', 100 - cvd_result.score))
+            except Exception as e:
+                logger.warning(f"CVD Diamond analysis failed: {e}")
+
+        # 9b. Gamma Wall Flip Detector
+        if self.gamma_flip_detector:
+            try:
+                merged_df = st.session_state.get('merged_df')
+                gamma_result = self.gamma_flip_detector.analyze(merged_df, spot_price)
+                if gamma_result:
+                    scores['gamma_flip'] = gamma_result.score
+                    st.session_state['gamma_flip_result'] = {
+                        'score': gamma_result.score,
+                        'gex_regime': gamma_result.gex_regime,
+                        'flip_signal': gamma_result.flip_signal.signal_type if gamma_result.flip_signal else None,
+                        'call_wall': gamma_result.call_wall,
+                        'put_wall': gamma_result.put_wall,
+                        'volatility_expectation': gamma_result.volatility_expectation,
+                        'description': gamma_result.description
+                    }
+                    if gamma_result.trade_bias == 'BULLISH':
+                        bullish_reasons.append(f"💎 Gamma: {gamma_result.gex_regime} ({gamma_result.score:.0f})")
+                        diamond_signals.append(('BULLISH', gamma_result.score))
+                    elif gamma_result.trade_bias == 'BEARISH':
+                        bearish_reasons.append(f"💎 Gamma: {gamma_result.gex_regime} ({gamma_result.score:.0f})")
+                        diamond_signals.append(('BEARISH', 100 - gamma_result.score))
+                    # Flip signal is critical - always report
+                    if gamma_result.flip_signal:
+                        flip_msg = f"⚠️ GEX FLIP: {gamma_result.flip_signal.signal_type} - {gamma_result.flip_signal.trade_implications}"
+                        if gamma_result.flip_signal.urgency == 'IMMEDIATE':
+                            bullish_reasons.append(flip_msg) if 'POSITIVE' in gamma_result.flip_signal.signal_type else bearish_reasons.append(flip_msg)
+            except Exception as e:
+                logger.warning(f"Gamma Flip analysis failed: {e}")
+
+        # 9c. Black Order Detector (Hidden Institutional Orders)
+        if self.black_order_detector:
+            try:
+                market_depth = st.session_state.get('market_depth_data')
+                black_result = self.black_order_detector.analyze(market_depth, df)
+                if black_result:
+                    scores['black_order'] = black_result.score
+                    st.session_state['black_order_result'] = {
+                        'score': black_result.score,
+                        'institutional_presence': black_result.institutional_presence,
+                        'smart_money_bias': black_result.smart_money_bias,
+                        'signals': len(black_result.signals),
+                        'description': black_result.description
+                    }
+                    if black_result.smart_money_bias == 'BULLISH' and black_result.institutional_presence in ['STRONG', 'MODERATE']:
+                        bullish_reasons.append(f"💎 Hidden Orders: {black_result.institutional_presence} ({black_result.score:.0f})")
+                        diamond_signals.append(('BULLISH', black_result.score))
+                    elif black_result.smart_money_bias == 'BEARISH' and black_result.institutional_presence in ['STRONG', 'MODERATE']:
+                        bearish_reasons.append(f"💎 Hidden Orders: {black_result.institutional_presence} ({black_result.score:.0f})")
+                        diamond_signals.append(('BEARISH', 100 - black_result.score))
+            except Exception as e:
+                logger.warning(f"Black Order analysis failed: {e}")
+
+        # 9d. Block Trade Detector (Institutional Footprints)
+        if self.block_trade_detector:
+            try:
+                merged_df = st.session_state.get('merged_df')
+                market_depth = st.session_state.get('market_depth_data')
+                block_result = self.block_trade_detector.analyze(df, merged_df, market_depth)
+                if block_result:
+                    scores['block_trade'] = block_result.score
+                    st.session_state['block_trade_result'] = {
+                        'score': block_result.score,
+                        'institutional_bias': block_result.institutional_bias,
+                        'activity_level': block_result.activity_level,
+                        'bullish_blocks': block_result.bullish_blocks,
+                        'bearish_blocks': block_result.bearish_blocks,
+                        'total_volume': block_result.total_block_volume,
+                        'description': block_result.description
+                    }
+                    if block_result.institutional_bias == 'ACCUMULATING' and block_result.activity_level in ['HEAVY', 'MODERATE']:
+                        bullish_reasons.append(f"💎 Blocks: {block_result.activity_level} ({block_result.bullish_blocks} buys)")
+                        diamond_signals.append(('BULLISH', block_result.score))
+                    elif block_result.institutional_bias == 'DISTRIBUTING' and block_result.activity_level in ['HEAVY', 'MODERATE']:
+                        bearish_reasons.append(f"💎 Blocks: {block_result.activity_level} ({block_result.bearish_blocks} sells)")
+                        diamond_signals.append(('BEARISH', 100 - block_result.score))
+            except Exception as e:
+                logger.warning(f"Block Trade analysis failed: {e}")
+
+        # Calculate Diamond consensus
+        diamond_score = 50  # Neutral
+        if diamond_signals:
+            bullish_diamond = sum(s[1] for s in diamond_signals if s[0] == 'BULLISH')
+            bearish_diamond = sum(s[1] for s in diamond_signals if s[0] == 'BEARISH')
+            diamond_count = len(diamond_signals)
+            if bullish_diamond > bearish_diamond:
+                diamond_score = 50 + min(50, (bullish_diamond - bearish_diamond) / diamond_count)
+            else:
+                diamond_score = 50 - min(50, (bearish_diamond - bullish_diamond) / diamond_count)
+
         # Calculate weighted final score
         weights = {
-            'regime': 0.20,      # 20% (reduced to make room for spike)
-            'xgboost': 0.15,     # 15% (if trained)
-            'volatility': 0.10,  # 10%
-            'oi_trap': 0.15,     # 15%
-            'cvd': 0.10,         # 10%
-            'liquidity': 0.10,   # 10%
+            'regime': 0.15,      # 15% - Market Regime
+            'xgboost': 0.10,     # 10% (if trained)
+            'volatility': 0.08,  # 8%
+            'oi_trap': 0.12,     # 12%
+            'cvd': 0.08,         # 8%
+            'liquidity': 0.07,   # 7%
             'institutional': 0.05,  # 5%
-            'spike': 0.15        # 15% - NEW spike detection weight
+            'spike': 0.10,       # 10% - Spike detection
+            # DIAMOND LEVEL FEATURES (25% total - highest quality signals)
+            'cvd_diamond': 0.07,   # 7% - Cumulative Delta Order Flow
+            'gamma_flip': 0.08,    # 8% - Gamma Wall Flip (critical for volatility)
+            'black_order': 0.05,   # 5% - Hidden Orders
+            'block_trade': 0.05    # 5% - Block Trades
         }
 
         # Adjust weights if XGBoost not trained
         if not (self.xgboost_analyzer and getattr(self.xgboost_analyzer, 'is_trained', False)):
             weights['xgboost'] = 0
-            weights['regime'] = 0.25
-            weights['oi_trap'] = 0.20
-            weights['cvd'] = 0.15
-            weights['spike'] = 0.20  # Increase spike weight when XGBoost not available
+            weights['regime'] = 0.18
+            weights['oi_trap'] = 0.15
+            weights['cvd'] = 0.10
+            weights['spike'] = 0.12
+            # Boost Diamond features when XGBoost unavailable
+            weights['gamma_flip'] = 0.10
+            weights['cvd_diamond'] = 0.10
 
         # If high probability spike detected, boost spike weight significantly
         if spike_detected and spike_probability > 60:
-            weights['spike'] = 0.30  # 30% weight for strong spikes
-            weights['regime'] = 0.15  # Reduce regime weight
+            weights['spike'] = 0.25  # 25% weight for strong spikes
+            weights['regime'] = 0.10  # Reduce regime weight
+
+        # If Diamond features show strong consensus, boost their weight
+        if len(diamond_signals) >= 3:
+            diamond_agreement = all(s[0] == diamond_signals[0][0] for s in diamond_signals)
+            if diamond_agreement:
+                weights['gamma_flip'] = 0.12
+                weights['cvd_diamond'] = 0.10
+                weights['block_trade'] = 0.08
 
         # Normalize weights
         total_weight = sum(weights.values())
