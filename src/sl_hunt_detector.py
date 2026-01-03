@@ -50,6 +50,17 @@ class OIAbsorptionScore:
 
 
 @dataclass
+class DepthSpoofScore:
+    """Market depth spoof/fake intent detection"""
+    spoof_score: float  # 0-100
+    fake_support: bool
+    fake_resistance: bool
+    bid_ask_imbalance: float  # Positive = more bids, Negative = more asks
+    vanishing_orders: bool  # Orders disappearing when price approaches
+    reason: str
+
+
+@dataclass
 class SLHuntResult:
     """Complete stop-loss hunt analysis result"""
     hunt_probability: float  # 0-100%
@@ -61,6 +72,7 @@ class SLHuntResult:
     effort_result_score: float
     sl_cluster_score: float
     time_risk_score: float
+    depth_spoof_score: float = 0  # Market depth spoof detection
 
     # Trap zones identified
     trap_zones: List[TrapZone] = field(default_factory=list)
@@ -68,6 +80,7 @@ class SLHuntResult:
     # Detailed analysis
     oi_analysis: Optional[OIAbsorptionScore] = None
     effort_analysis: Optional[EffortResultScore] = None
+    depth_analysis: Optional[DepthSpoofScore] = None
 
     # Action recommendation
     action: str = "WAIT"  # "WAIT", "TRADE_REVERSAL", "AVOID", "SAFE"
@@ -124,6 +137,8 @@ class SLHuntDetector:
         spot_price: float,
         df: Optional[pd.DataFrame] = None,
         oi_data: Optional[Dict] = None,
+        merged_df: Optional[pd.DataFrame] = None,  # Option chain merged_df from NIFTY Option Screener
+        market_depth: Optional[Dict] = None,  # Market depth from get_market_depth_dhan()
         vwap: Optional[float] = None,
         prev_day_high: Optional[float] = None,
         prev_day_low: Optional[float] = None,
@@ -135,8 +150,10 @@ class SLHuntDetector:
 
         Args:
             spot_price: Current NIFTY spot price
-            df: Price DataFrame with OHLCV data
+            df: Price DataFrame with OHLCV data (from chart_data / Advanced Chart)
             oi_data: Option chain data with OI, premium changes
+            merged_df: Option chain merged_df from NIFTY Option Screener tab
+            market_depth: Market depth data from get_market_depth_dhan()
             vwap: Current VWAP value
             prev_day_high: Previous day high
             prev_day_low: Previous day low
@@ -147,8 +164,8 @@ class SLHuntDetector:
             SLHuntResult with complete analysis
         """
 
-        # 1. Analyze Option Chain (OI Absorption)
-        oi_score, oi_analysis = self._analyze_oi_absorption(spot_price, oi_data)
+        # 1. Analyze Option Chain (OI Absorption) - Use merged_df if available
+        oi_score, oi_analysis = self._analyze_oi_absorption(spot_price, oi_data, merged_df)
 
         # 2. Analyze Volume vs Price (Effort vs Result)
         effort_score, effort_analysis = self._analyze_effort_vs_result(df)
@@ -156,23 +173,26 @@ class SLHuntDetector:
         # 3. Map SL Cluster Zones
         sl_score, trap_zones = self._map_sl_clusters(
             spot_price, oi_data, vwap, prev_day_high, prev_day_low,
-            support_levels, resistance_levels
+            support_levels, resistance_levels, merged_df
         )
 
         # 4. Time Risk Score
         time_score = self._calculate_time_risk()
 
-        # 5. Calculate Combined Hunt Probability
+        # 5. Analyze Market Depth for Spoof Detection
+        depth_score, depth_analysis = self._analyze_market_depth_spoof(spot_price, market_depth)
+
+        # 6. Calculate Combined Hunt Probability (now includes depth)
         hunt_probability = self._calculate_hunt_probability(
-            oi_score, effort_score, sl_score, time_score
+            oi_score, effort_score, sl_score, time_score, depth_score
         )
 
-        # 6. Determine Hunt Direction
+        # 7. Determine Hunt Direction
         hunt_direction = self._determine_hunt_direction(
-            spot_price, trap_zones, oi_analysis
+            spot_price, trap_zones, oi_analysis, depth_analysis
         )
 
-        # 7. Generate Action Recommendation
+        # 8. Generate Action Recommendation
         hunt_likely = hunt_probability >= self.hunt_probability_threshold
         action, reason = self._generate_recommendation(
             hunt_likely, hunt_probability, hunt_direction, trap_zones
@@ -193,9 +213,11 @@ class SLHuntDetector:
             effort_result_score=effort_score,
             sl_cluster_score=sl_score,
             time_risk_score=time_score,
+            depth_spoof_score=depth_score,
             trap_zones=trap_zones,
             oi_analysis=oi_analysis,
             effort_analysis=effort_analysis,
+            depth_analysis=depth_analysis,
             action=action,
             reason=reason,
             post_hunt_entry=post_hunt_entry,
@@ -204,7 +226,8 @@ class SLHuntDetector:
     def _analyze_oi_absorption(
         self,
         spot_price: float,
-        oi_data: Optional[Dict]
+        oi_data: Optional[Dict],
+        merged_df: Optional[pd.DataFrame] = None
     ) -> Tuple[float, Optional[OIAbsorptionScore]]:
         """
         Layer 1: Option Chain Analysis - OI Absorption Detection
@@ -216,7 +239,14 @@ class SLHuntDetector:
         - ΔOI increasing (sellers adding)
         - Premium NOT increasing (confident sellers)
         → TRAP BUILDING
+
+        Uses merged_df from NIFTY Option Screener if available (more accurate)
+        Falls back to oi_data dict otherwise
         """
+        # Try to use merged_df first (from NIFTY Option Screener)
+        if merged_df is not None and len(merged_df) > 0:
+            return self._analyze_oi_from_merged_df(spot_price, merged_df)
+
         if not oi_data:
             return 0, None
 
@@ -299,6 +329,204 @@ class SLHuntDetector:
         )
 
         return absorption_score, oi_analysis
+
+    def _analyze_oi_from_merged_df(
+        self,
+        spot_price: float,
+        merged_df: pd.DataFrame
+    ) -> Tuple[float, Optional[OIAbsorptionScore]]:
+        """
+        Analyze OI absorption using merged_df from NIFTY Option Screener
+
+        This is more accurate as it uses real-time data from the screener.
+        merged_df contains: strikePrice, OI_CE, OI_PE, Chg_OI_CE, Chg_OI_PE, LTP_CE, LTP_PE, etc.
+        """
+        try:
+            atm_strike = round(spot_price / 50) * 50
+
+            # Find max OI strikes
+            max_ce_oi_row = merged_df.loc[merged_df["OI_CE"].idxmax()] if "OI_CE" in merged_df.columns else None
+            max_pe_oi_row = merged_df.loc[merged_df["OI_PE"].idxmax()] if "OI_PE" in merged_df.columns else None
+
+            max_call_oi_strike = int(max_ce_oi_row["strikePrice"]) if max_ce_oi_row is not None else atm_strike
+            max_put_oi_strike = int(max_pe_oi_row["strikePrice"]) if max_pe_oi_row is not None else atm_strike
+            max_call_oi = float(max_ce_oi_row["OI_CE"]) if max_ce_oi_row is not None else 0
+            max_put_oi = float(max_pe_oi_row["OI_PE"]) if max_pe_oi_row is not None else 0
+
+            # Distance to high OI strikes
+            dist_to_call_wall = max_call_oi_strike - spot_price
+            dist_to_put_wall = spot_price - max_put_oi_strike
+
+            absorption_score = 0
+            trap_building = False
+            analysis_strike = atm_strike
+            delta_oi = 0
+            delta_premium = 0
+            reason = "Normal market conditions"
+
+            # Check for CALL side trap (shorts getting hunted)
+            if 0 < dist_to_call_wall <= 50:
+                strike_row = merged_df[merged_df["strikePrice"] == max_call_oi_strike]
+                if len(strike_row) > 0:
+                    delta_oi = float(strike_row["Chg_OI_CE"].iloc[0]) if "Chg_OI_CE" in strike_row.columns else 0
+
+                    # Check premium change - if we have previous LTP data
+                    ltp_ce = float(strike_row["LTP_CE"].iloc[0]) if "LTP_CE" in strike_row.columns else 0
+
+                    # Trap pattern: OI increasing significantly
+                    if delta_oi > 5000:  # Significant OI build
+                        absorption_score = min(90, 50 + (delta_oi / 10000) * 20)
+                        trap_building = True
+                        analysis_strike = max_call_oi_strike
+                        reason = f"CALL trap at {max_call_oi_strike}: OI +{delta_oi:,.0f}, Max OI={max_call_oi:,.0f}"
+
+            # Check for PUT side trap (longs getting hunted)
+            elif 0 < dist_to_put_wall <= 50:
+                strike_row = merged_df[merged_df["strikePrice"] == max_put_oi_strike]
+                if len(strike_row) > 0:
+                    delta_oi = float(strike_row["Chg_OI_PE"].iloc[0]) if "Chg_OI_PE" in strike_row.columns else 0
+
+                    if delta_oi > 5000:
+                        absorption_score = min(90, 50 + (delta_oi / 10000) * 20)
+                        trap_building = True
+                        analysis_strike = max_put_oi_strike
+                        reason = f"PUT trap at {max_put_oi_strike}: OI +{delta_oi:,.0f}, Max OI={max_put_oi:,.0f}"
+
+            # Check ATM OI concentration
+            atm_row = merged_df[merged_df["strikePrice"] == atm_strike]
+            if len(atm_row) > 0:
+                atm_ce_oi = float(atm_row["OI_CE"].iloc[0]) if "OI_CE" in atm_row.columns else 0
+                atm_pe_oi = float(atm_row["OI_PE"].iloc[0]) if "OI_PE" in atm_row.columns else 0
+                total_atm_oi = atm_ce_oi + atm_pe_oi
+
+                if total_atm_oi > 500000:
+                    absorption_score = max(absorption_score, 40)
+                    if not trap_building:
+                        reason = f"High ATM OI concentration: {total_atm_oi:,.0f}"
+
+            return absorption_score, OIAbsorptionScore(
+                strike=analysis_strike,
+                delta_oi=delta_oi,
+                delta_premium=delta_premium,
+                absorption_score=absorption_score,
+                trap_building=trap_building,
+                reason=reason,
+            )
+
+        except Exception as e:
+            return 0, None
+
+    def _analyze_market_depth_spoof(
+        self,
+        spot_price: float,
+        market_depth: Optional[Dict]
+    ) -> Tuple[float, Optional[DepthSpoofScore]]:
+        """
+        Layer 2: Market Depth - Fake Intent / Spoof Detection
+
+        Fake Move Signature:
+        - Big orders appear suddenly near LTP (5-10x normal quantity)
+        - Orders vanish when price approaches
+        - This is called Spoofing / Liquidity Painting
+
+        Uses market_depth from get_market_depth_dhan() in NIFTY Option Screener
+        """
+        if not market_depth or "bid" not in market_depth or "ask" not in market_depth:
+            return 0, None
+
+        try:
+            bids = market_depth.get("bid", [])
+            asks = market_depth.get("ask", [])
+
+            if not bids or not asks:
+                return 0, None
+
+            # Calculate total quantities
+            total_bid_qty = sum(b.get("quantity", 0) for b in bids)
+            total_ask_qty = sum(a.get("quantity", 0) for a in asks)
+
+            # Bid/Ask imbalance
+            if total_bid_qty + total_ask_qty > 0:
+                bid_ask_imbalance = (total_bid_qty - total_ask_qty) / (total_bid_qty + total_ask_qty) * 100
+            else:
+                bid_ask_imbalance = 0
+
+            spoof_score = 0
+            fake_support = False
+            fake_resistance = False
+            vanishing_orders = False
+            reason = "Normal depth"
+
+            # Check for unusual concentration at specific levels
+            if len(bids) >= 3 and len(asks) >= 3:
+                # Top bid quantities
+                top_bid_qty = bids[0].get("quantity", 0) if bids else 0
+                avg_bid_qty = total_bid_qty / len(bids) if bids else 0
+
+                # Top ask quantities
+                top_ask_qty = asks[0].get("quantity", 0) if asks else 0
+                avg_ask_qty = total_ask_qty / len(asks) if asks else 0
+
+                # Check for abnormally large orders (5x average = potential spoof)
+                if avg_bid_qty > 0 and top_bid_qty > avg_bid_qty * 5:
+                    spoof_score += 40
+                    fake_support = True
+                    reason = f"Large bid order ({top_bid_qty:,}) vs avg ({avg_bid_qty:,.0f}) - potential fake support"
+
+                if avg_ask_qty > 0 and top_ask_qty > avg_ask_qty * 5:
+                    spoof_score += 40
+                    fake_resistance = True
+                    if fake_support:
+                        reason = "Both bid & ask have unusually large orders - high spoof risk"
+                    else:
+                        reason = f"Large ask order ({top_ask_qty:,}) vs avg ({avg_ask_qty:,.0f}) - potential fake resistance"
+
+                # Check bid/ask spread abnormality
+                if bids and asks:
+                    best_bid = bids[0].get("price", 0)
+                    best_ask = asks[0].get("price", 0)
+                    spread = best_ask - best_bid
+
+                    # Normal NIFTY spread is 0.05-0.5 points
+                    if spread > 2:  # Abnormally wide spread
+                        spoof_score += 20
+                        reason += " | Wide spread detected"
+
+                # Check for order concentration away from LTP
+                # If large orders are placed far from current price, they may be spoofs
+                for i, bid in enumerate(bids[:5]):
+                    bid_price = bid.get("price", 0)
+                    bid_qty = bid.get("quantity", 0)
+                    distance = spot_price - bid_price
+
+                    # Large order far from price = likely spoof
+                    if distance > 20 and bid_qty > avg_bid_qty * 3:
+                        spoof_score += 15
+                        fake_support = True
+
+                for i, ask in enumerate(asks[:5]):
+                    ask_price = ask.get("price", 0)
+                    ask_qty = ask.get("quantity", 0)
+                    distance = ask_price - spot_price
+
+                    if distance > 20 and ask_qty > avg_ask_qty * 3:
+                        spoof_score += 15
+                        fake_resistance = True
+
+            # Cap the score
+            spoof_score = min(100, spoof_score)
+
+            return spoof_score, DepthSpoofScore(
+                spoof_score=spoof_score,
+                fake_support=fake_support,
+                fake_resistance=fake_resistance,
+                bid_ask_imbalance=bid_ask_imbalance,
+                vanishing_orders=vanishing_orders,
+                reason=reason,
+            )
+
+        except Exception as e:
+            return 0, None
 
     def _analyze_effort_vs_result(
         self,
@@ -393,6 +621,7 @@ class SLHuntDetector:
         prev_day_low: Optional[float],
         support_levels: Optional[List[float]],
         resistance_levels: Optional[List[float]],
+        merged_df: Optional[pd.DataFrame] = None,
     ) -> Tuple[float, List[TrapZone]]:
         """
         Layer 4: Chart Structure - SL Cluster Zone Detection
@@ -403,6 +632,8 @@ class SLHuntDetector:
         - VWAP ±0.5%
         - Obvious trendline touches
         - Just above CALL OI / below PUT OI
+
+        Uses merged_df from NIFTY Option Screener if available
         """
         trap_zones = []
         max_sl_density = 0
@@ -578,32 +809,54 @@ class SLHuntDetector:
         effort_score: float,
         sl_score: float,
         time_score: float,
+        depth_score: float = 0,
     ) -> float:
         """
         Calculate combined hunt probability
 
-        Weights:
+        Weights (with depth):
+        - OI Absorption: 25%
+        - Market Depth Spoof: 20%
+        - Effort vs Result: 20%
+        - SL Cluster: 20%
+        - Time Risk: 15%
+
+        Without depth data:
         - OI Absorption: 30%
         - Effort vs Result: 25%
         - SL Cluster: 25%
         - Time Risk: 20%
         """
-        probability = (
-            oi_score * 0.30 +
-            effort_score * 0.25 +
-            sl_score * 0.25 +
-            time_score * 0.20
-        )
+        if depth_score > 0:
+            # Full 5-layer calculation
+            probability = (
+                oi_score * 0.25 +
+                depth_score * 0.20 +
+                effort_score * 0.20 +
+                sl_score * 0.20 +
+                time_score * 0.15
+            )
+        else:
+            # 4-layer calculation (no depth data)
+            probability = (
+                oi_score * 0.30 +
+                effort_score * 0.25 +
+                sl_score * 0.25 +
+                time_score * 0.20
+            )
 
         # Bonus if multiple factors align
         high_factors = sum([
             oi_score > 60,
+            depth_score > 50,
             effort_score > 40,
             sl_score > 60,
             time_score > 60,
         ])
 
-        if high_factors >= 3:
+        if high_factors >= 4:
+            probability = min(100, probability * 1.25)
+        elif high_factors >= 3:
             probability = min(100, probability * 1.2)
         elif high_factors >= 2:
             probability = min(100, probability * 1.1)
@@ -615,12 +868,18 @@ class SLHuntDetector:
         spot_price: float,
         trap_zones: List[TrapZone],
         oi_analysis: Optional[OIAbsorptionScore],
+        depth_analysis: Optional[DepthSpoofScore] = None,
     ) -> str:
         """
         Determine which direction the hunt will go
 
         - UP: Hunting shorts (triggering CALL SL zones)
         - DOWN: Hunting longs (triggering PUT SL zones)
+
+        Considers:
+        - Trap zone density
+        - OI trap building direction
+        - Market depth spoof signals (fake support/resistance)
         """
         if not trap_zones:
             return "NONE"
@@ -643,6 +902,19 @@ class SLHuntDetector:
                 oi_direction = "UP"
             elif "PUT" in oi_analysis.reason:
                 oi_direction = "DOWN"
+
+        # Factor in depth analysis - fake support/resistance
+        depth_direction = "NONE"
+        if depth_analysis:
+            # Fake support = they want price to go DOWN (to trigger long SLs)
+            if depth_analysis.fake_support and not depth_analysis.fake_resistance:
+                depth_direction = "DOWN"
+            # Fake resistance = they want price to go UP (to trigger short SLs)
+            elif depth_analysis.fake_resistance and not depth_analysis.fake_support:
+                depth_direction = "UP"
+            # Both fake = high manipulation, direction unclear
+            elif depth_analysis.fake_support and depth_analysis.fake_resistance:
+                depth_direction = "BOTH"
 
         # Determine direction
         if nearest_call and nearest_put:
@@ -849,8 +1121,9 @@ def format_sl_hunt_telegram(result: SLHuntResult, spot_price: float) -> str:
 📍 Current Price: ₹{spot_price:,.2f}
 🎯 Hunt Direction: {result.hunt_direction}
 
-📊 ANALYSIS SCORES:
+📊 ANALYSIS SCORES (5-LAYER):
 ├─ OI Absorption: {result.oi_absorption_score:.0f}%
+├─ Depth Spoof: {result.depth_spoof_score:.0f}%
 ├─ Effort vs Result: {result.effort_result_score:.0f}%
 ├─ SL Clusters: {result.sl_cluster_score:.0f}%
 └─ Time Risk: {result.time_risk_score:.0f}%
@@ -860,6 +1133,15 @@ def format_sl_hunt_telegram(result: SLHuntResult, spot_price: float) -> str:
         msg += f"""
 🔴 OI TRAP DETECTED:
 └─ {result.oi_analysis.reason}
+"""
+
+    if result.depth_analysis and result.depth_analysis.spoof_score > 30:
+        msg += f"""
+📉 MARKET DEPTH SPOOF:
+├─ {'Fake Support ⚠️' if result.depth_analysis.fake_support else 'Support OK ✅'}
+├─ {'Fake Resistance ⚠️' if result.depth_analysis.fake_resistance else 'Resistance OK ✅'}
+├─ Bid/Ask Imbalance: {result.depth_analysis.bid_ask_imbalance:+.1f}%
+└─ {result.depth_analysis.reason}
 """
 
     if result.effort_analysis:
