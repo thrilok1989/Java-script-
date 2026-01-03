@@ -358,9 +358,18 @@ def analyze_sl_hunt(
             hunt_probability_threshold=65,
         )
 
-        # Get DataFrame from session state if not provided
+        # Get chart DataFrame from session state if not provided
+        # Priority: chart_data (from Advanced Chart) > nifty_df
         if df is None:
-            df = st.session_state.get('nifty_df')
+            df = st.session_state.get('chart_data')
+            if df is None:
+                df = st.session_state.get('nifty_df')
+
+        # Get merged_df from NIFTY Option Screener (contains OI_CE, OI_PE, Chg_OI_CE, etc.)
+        merged_df = st.session_state.get('merged_df')
+
+        # Get market depth data
+        market_depth = st.session_state.get('market_depth_data')
 
         # Get OI data from session state if not provided
         if oi_data is None:
@@ -406,11 +415,13 @@ def analyze_sl_hunt(
             except:
                 pass
 
-        # Run analysis
+        # Run analysis with all data sources
         result = detector.analyze(
             spot_price=spot_price,
             df=df,
             oi_data=oi_data,
+            merged_df=merged_df,  # From NIFTY Option Screener
+            market_depth=market_depth,  # From get_market_depth_dhan()
             vwap=vwap,
             prev_day_high=prev_day_high,
             prev_day_low=prev_day_low,
@@ -1370,9 +1381,10 @@ def render_unified_signal(signal: UnifiedSignal, spot_price: float = None):
                 </div>
             </div>
             <div style="margin-top: 8px; font-size: 0.85rem; color: #bbb;">
-                <span style="margin-right: 12px;">📊 OI: {sl_hunt_result.oi_absorption_score:.0f}%</span>
-                <span style="margin-right: 12px;">⚡ Effort: {sl_hunt_result.effort_result_score:.0f}%</span>
-                <span style="margin-right: 12px;">🎯 SL Zones: {sl_hunt_result.sl_cluster_score:.0f}%</span>
+                <span style="margin-right: 10px;">📊 OI: {sl_hunt_result.oi_absorption_score:.0f}%</span>
+                <span style="margin-right: 10px;">📉 Depth: {sl_hunt_result.depth_spoof_score:.0f}%</span>
+                <span style="margin-right: 10px;">⚡ Effort: {sl_hunt_result.effort_result_score:.0f}%</span>
+                <span style="margin-right: 10px;">🎯 SL: {sl_hunt_result.sl_cluster_score:.0f}%</span>
                 <span>⏰ Time: {sl_hunt_result.time_risk_score:.0f}%</span>
             </div>
             <div style="margin-top: 5px; font-size: 0.9rem; color: {hunt_color}; font-weight: 600;">
