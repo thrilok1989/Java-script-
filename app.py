@@ -1337,12 +1337,29 @@ with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
                 except:
                     pass
 
-            # 3. Last resort - fetch from API
+            # 3. Try to fetch from API
             if df_for_signal is None:
                 try:
                     df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
                     if df_for_signal is not None and len(df_for_signal) > 0:
                         st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            # 4. Last resort - create minimal DataFrame from nifty_data OHLC
+            if df_for_signal is None and nifty_data and nifty_data.get('spot_price'):
+                try:
+                    import pandas as pd
+                    from datetime import datetime
+                    # Create minimal DataFrame with current OHLC
+                    df_for_signal = pd.DataFrame({
+                        'open': [nifty_data.get('open', nifty_data['spot_price'])],
+                        'high': [nifty_data.get('high', nifty_data['spot_price'])],
+                        'low': [nifty_data.get('low', nifty_data['spot_price'])],
+                        'close': [nifty_data.get('spot_price')],
+                        'volume': [0]
+                    }, index=[datetime.now()])
+                    st.session_state.chart_data = df_for_signal
                 except:
                     pass
 
