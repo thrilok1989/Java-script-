@@ -4256,28 +4256,57 @@ with tab12:
     if st.session_state.get('load_structure_analysis', False):
         try:
             with st.spinner("Loading Market Structure analysis..."):
-                # Get OHLC data from cache
+                # Get OHLC data from multiple sources (prioritize freshest)
                 ohlc_df = None
                 option_data = None
                 spot_price = None
                 is_expiry = False
 
-                # Try to get NIFTY data from cache
+                # SOURCE 1: Try data cache manager (used by Overall Market Sentiment)
                 nifty_data = get_cached_nifty_data()
                 if nifty_data and 'chart_data' in nifty_data:
                     chart_data = nifty_data['chart_data']
                     if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
                         ohlc_df = chart_data
 
-                # Get spot price
+                # SOURCE 2: Try Advanced Chart Analysis session_state
+                if ohlc_df is None and 'advanced_chart_data' in st.session_state:
+                    chart_data = st.session_state.get('advanced_chart_data')
+                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                        ohlc_df = chart_data
+
+                # Get spot price from multiple sources
                 if nifty_data and 'spot_price' in nifty_data:
                     spot_price = nifty_data['spot_price']
+                elif 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
+                    spot_price = st.session_state['nifty_spot']  # From Option Screener
                 elif 'last_spot_price' in st.session_state:
                     spot_price = st.session_state.last_spot_price
 
-                # Get option data if available
+                # Get option data from multiple sources
+                # SOURCE 1: Data cache
                 if nifty_data and 'option_chain' in nifty_data:
                     option_data = nifty_data['option_chain']
+
+                # SOURCE 2: NIFTY Option Screener session_state
+                if option_data is None and 'overall_option_data' in st.session_state:
+                    screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+                    if screener_data:
+                        option_data = screener_data
+
+                # SOURCE 3: Direct chain cache from screener
+                if option_data is None:
+                    current_expiry = st.session_state.get('current_expiry')
+                    if current_expiry:
+                        chain_key = f"option_chain_NIFTY_{current_expiry}"
+                        if chain_key in st.session_state:
+                            option_data = st.session_state[chain_key]
+
+                # Enhance option_data with Greeks from Option Screener if available
+                if 'atm_strike' in st.session_state:
+                    if option_data is None:
+                        option_data = {}
+                    option_data['atm_strike'] = st.session_state['atm_strike']
 
                 # Check if it's expiry day (Thursday in India)
                 from datetime import datetime
@@ -4292,8 +4321,13 @@ with tab12:
                         spot_price=spot_price
                     )
                 else:
-                    st.warning("⚠️ Insufficient OHLC data for structure analysis. Please load market data first.")
-                    st.info("Go to 'Overall Market Sentiment' tab to load the data, then return here.")
+                    st.warning("⚠️ Insufficient OHLC data for structure analysis.")
+                    st.info("Please load data first by visiting:")
+                    st.markdown("""
+                    1. **Overall Market Sentiment** tab - Click to auto-load market data
+                    2. **Advanced Chart Analysis** tab - Load chart data
+                    3. **NIFTY Option Screener** tab - Load option chain for Greeks & OI
+                    """)
 
         except ImportError as e:
             st.error(f"❌ Market Structure module not available: {e}")
