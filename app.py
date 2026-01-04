@@ -899,6 +899,17 @@ if st.session_state.ai_analysis_results:
     st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
+# PRE-LOAD OPTION SCREENER DATA (for SL Hunt Detector and other ML modules)
+# ═══════════════════════════════════════════════════════════════════════
+# Load option screener data silently if not already loaded
+if st.session_state.get('merged_df') is None:
+    try:
+        from NiftyOptionScreener import load_option_screener_data_silently
+        load_option_screener_data_silently()
+    except Exception as e:
+        pass  # Silently fail - will retry in tab
+
+# ═══════════════════════════════════════════════════════════════════════
 # UNIFIED ML TRADING SIGNAL (Above all tabs - heavily cached for performance)
 # ═══════════════════════════════════════════════════════════════════════
 # Initialize cache variables once
