@@ -54,6 +54,18 @@ except ImportError:
         format_sl_hunt_telegram = None
         format_hunt_candle_telegram = None
 
+# Import Real ML Training System
+try:
+    from src.ml_data_collector import get_data_collector, record_trading_signal
+    from src.ml_real_trainer import get_trainer, predict_with_real_model
+    ML_REAL_TRAINING_AVAILABLE = True
+except ImportError:
+    ML_REAL_TRAINING_AVAILABLE = False
+    get_data_collector = None
+    record_trading_signal = None
+    get_trainer = None
+    predict_with_real_model = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -1393,6 +1405,22 @@ class UnifiedMLSignalGenerator:
                         atm_put_ltp = float(atm_row['LTP_PE'].iloc[0]) if 'LTP_PE' in atm_row.columns else 0.0
         except Exception as e:
             logger.debug(f"Could not fetch ATM LTP: {e}")
+
+        # ========== RECORD SIGNAL FOR ML TRAINING ==========
+        # Record BUY/SELL signals for real ML training
+        if ML_REAL_TRAINING_AVAILABLE and signal in ['BUY', 'SELL', 'STRONG BUY', 'STRONG SELL']:
+            try:
+                signal_id = record_trading_signal(
+                    signal_type='BUY' if 'BUY' in signal else 'SELL',
+                    confidence=confidence,
+                    atm_strike=atm_strike_val,
+                    entry_price=spot_price or 0
+                )
+                if signal_id:
+                    st.session_state['last_recorded_signal_id'] = signal_id
+                    logger.info(f"Recorded signal for ML training: {signal_id}")
+            except Exception as e:
+                logger.debug(f"Could not record signal: {e}")
 
         return UnifiedSignal(
             signal=signal,
