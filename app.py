@@ -1315,10 +1315,16 @@ with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
             if st.session_state.unified_ml_generator is None:
                 st.session_state.unified_ml_generator = UnifiedMLSignalGenerator()
 
-            df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+            # First try to use existing chart_data from session_state (from other tabs)
+            df_for_signal = st.session_state.get('chart_data')
+
+            # If no existing data, try to fetch from API
+            if df_for_signal is None or len(df_for_signal) == 0:
+                df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+                if df_for_signal is not None and len(df_for_signal) > 0:
+                    st.session_state.chart_data = df_for_signal
 
             if df_for_signal is not None and len(df_for_signal) > 0:
-                st.session_state.chart_data = df_for_signal
 
                 option_chain = st.session_state.get('option_chain_data')
                 vix_current = st.session_state.get('vix_current', 15.0)
