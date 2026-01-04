@@ -5917,6 +5917,16 @@ def load_option_screener_data_silently():
             'last_updated': get_ist_now()
         }
 
+        # Store merged_df for SL Hunt Detector and other ML modules
+        st.session_state['merged_df'] = merged
+
+        # Also load market depth for SL Hunt Detector
+        try:
+            depth_data = get_market_depth_dhan()
+            st.session_state['market_depth_data'] = depth_data
+        except:
+            pass  # Market depth is optional
+
         return True
     except Exception as e:
         # Log the error to session state for debugging
