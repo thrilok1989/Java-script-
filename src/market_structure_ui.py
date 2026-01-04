@@ -17,10 +17,12 @@ from market_structure_features import (
     MarketStructureFeatureExtractor, MarketStructure, MarketStructureSnapshot
 )
 from sequence_pattern_detector import (
-    SequencePatternDetector, PatternType, SequenceAnalysisResult
+    SequencePatternDetector, PatternType, SequenceAnalysisResult,
+    SequencePatternDetectorAdapter, get_sequence_detector
 )
 from probability_engine import (
-    ProbabilityEngine, ProbabilityAnalysis
+    ProbabilityEngine, ProbabilityAnalysis,
+    ProbabilityEngineAdapter, get_probability_engine
 )
 from expiry_structure_detector import (
     ExpiryStructureDetector, ExpiryPhase, ExpiryStructureAnalysis
@@ -97,8 +99,8 @@ class MarketStructureUI:
 
     def __init__(self):
         self.feature_extractor = MarketStructureFeatureExtractor()
-        self.pattern_detector = SequencePatternDetector()
-        self.probability_engine = ProbabilityEngine()
+        self.pattern_detector = SequencePatternDetectorAdapter()  # Uses adapter for UI compatibility
+        self.probability_engine = ProbabilityEngineAdapter()       # Uses adapter for UI compatibility
         self.expiry_detector = ExpiryStructureDetector()
         self.geometric_engine = GeometricPatternEngine()
 

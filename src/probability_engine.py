@@ -806,3 +806,199 @@ def analysis_to_dict(analysis: ProbabilityAnalysis) -> Dict:
         'warnings': analysis.warnings,
         'reasoning': analysis.reasoning,
     }
+
+
+# =============================================================================
+# UI ADAPTER - Simplified interface for market_structure_ui.py
+# =============================================================================
+
+@dataclass
+class SimpleProbabilityAnalysis:
+    """
+    Simplified probability analysis for UI display
+    Provides the interface expected by market_structure_ui.py
+    """
+    # Main probabilities (0-1)
+    expansion_up_probability: float = 0.2
+    expansion_down_probability: float = 0.2
+    continued_range_probability: float = 0.2
+    sl_hunt_probability: float = 0.1
+    fake_break_probability: float = 0.1
+
+    # Confidence and sample info
+    confidence_score: float = 0.0
+    sample_size: int = 0
+
+    # All probabilities dict
+    all_probabilities: Dict[str, float] = field(default_factory=dict)
+
+    # Most likely outcome
+    most_likely_outcome: str = "UNKNOWN"
+
+
+class ProbabilityEngineAdapter:
+    """
+    Adapter that wraps ProbabilityEngine to provide simplified interface
+    for the market_structure_ui.py
+
+    This handles:
+    - Converting MarketStructureSnapshot to feature dict
+    - Providing fallback probabilities when no historical data
+    - Returning SimpleProbabilityAnalysis with expected attributes
+    """
+
+    def __init__(self):
+        self.engine = ProbabilityEngine()
+
+    def analyze(self, snapshot) -> SimpleProbabilityAnalysis:
+        """
+        Analyze a MarketStructureSnapshot and return simplified analysis
+
+        Args:
+            snapshot: MarketStructureSnapshot or dict with features
+
+        Returns:
+            SimpleProbabilityAnalysis with UI-friendly interface
+        """
+        # Extract features from snapshot
+        features = self._extract_features(snapshot)
+
+        # Calculate base probabilities from features (rule-based)
+        base_probs = calculate_base_probabilities(features)
+
+        # Try to enhance with historical data
+        try:
+            full_analysis = self.engine.analyze(
+                current_features=features,
+                is_expiry=features.get('is_expiry_day', False),
+                is_expiry_week=features.get('is_expiry_week', False)
+            )
+
+            if full_analysis.similar_patterns_found >= 10:
+                # Use historical data
+                probs = {
+                    k: v.probability
+                    for k, v in full_analysis.outcome_probabilities.items()
+                }
+                sample_size = full_analysis.similar_patterns_found
+                confidence = full_analysis.primary_confidence
+            else:
+                # Fall back to base probabilities
+                probs = base_probs
+                sample_size = full_analysis.similar_patterns_found
+                confidence = 30.0  # Low confidence without enough data
+
+        except Exception:
+            # Use base probabilities on error
+            probs = base_probs
+            sample_size = 0
+            confidence = 25.0
+
+        # Build simplified analysis
+        expansion_up = probs.get('EXPANSION_UP', 0.2)
+        expansion_down = probs.get('EXPANSION_DOWN', 0.2)
+        continued_range = probs.get('CONTINUED_RANGE', 0.2)
+        sl_hunt = probs.get('SL_HUNT_ABOVE', 0.05) + probs.get('SL_HUNT_BELOW', 0.05)
+        fake_break = probs.get('FAKE_BREAK_UP', 0.05) + probs.get('FAKE_BREAK_DOWN', 0.05)
+
+        # Find most likely outcome
+        most_likely = max(probs.items(), key=lambda x: x[1])[0] if probs else "UNKNOWN"
+
+        return SimpleProbabilityAnalysis(
+            expansion_up_probability=expansion_up,
+            expansion_down_probability=expansion_down,
+            continued_range_probability=continued_range,
+            sl_hunt_probability=sl_hunt,
+            fake_break_probability=fake_break,
+            confidence_score=confidence,
+            sample_size=sample_size,
+            all_probabilities=probs,
+            most_likely_outcome=most_likely
+        )
+
+    def _extract_features(self, snapshot) -> Dict[str, float]:
+        """Extract flat feature dict from MarketStructureSnapshot"""
+        features = {}
+
+        # Handle if it's already a dict
+        if isinstance(snapshot, dict):
+            return snapshot
+
+        # Extract from MarketStructureSnapshot
+        try:
+            # Price features
+            if hasattr(snapshot, 'price_features'):
+                pf = snapshot.price_features
+                features['price_range_atr_ratio'] = getattr(pf, 'price_range_atr_ratio', 1.0)
+                features['clv'] = getattr(pf, 'clv', 0.5)
+                features['rejection_score'] = getattr(pf, 'rejection_score', 0.0)
+                features['higher_highs_count'] = getattr(pf, 'higher_highs_count', 0)
+                features['lower_lows_count'] = getattr(pf, 'lower_lows_count', 0)
+                features['equal_highs_count'] = getattr(pf, 'equal_highs_count', 0)
+                features['equal_lows_count'] = getattr(pf, 'equal_lows_count', 0)
+                features['price_momentum_5'] = getattr(pf, 'price_momentum_5', 0.0)
+                features['price_momentum_20'] = getattr(pf, 'price_momentum_20', 0.0)
+
+            # Volume/OI features
+            if hasattr(snapshot, 'volume_oi_features'):
+                vf = snapshot.volume_oi_features
+                features['volume_ratio'] = getattr(vf, 'volume_ratio', 1.0)
+                features['volume_trend'] = getattr(vf, 'volume_trend', 0.0)
+                features['oi_pcr'] = getattr(vf, 'oi_pcr', 1.0)
+                features['volume_price_divergence'] = getattr(vf, 'volume_price_divergence', False)
+
+            # Delta flow features
+            if hasattr(snapshot, 'delta_flow_features'):
+                df = snapshot.delta_flow_features
+                features['cvd_slope'] = getattr(df, 'cvd_slope', 0.0)
+                features['delta_imbalance'] = getattr(df, 'delta_imbalance', 0.0)
+                features['delta_absorption'] = getattr(df, 'delta_absorption', False)
+
+            # Volatility features
+            if hasattr(snapshot, 'volatility_features'):
+                vof = snapshot.volatility_features
+                features['atr_percentile'] = getattr(vof, 'atr_percentile', 50.0)
+                features['compression_score'] = getattr(vof, 'compression_score', 0.0)
+                features['compression_duration'] = getattr(vof, 'compression_duration', 0)
+                features['bollinger_squeeze'] = getattr(vof, 'bollinger_squeeze', False)
+
+            # Gamma features
+            if hasattr(snapshot, 'gamma_features'):
+                gf = snapshot.gamma_features
+                features['gex_flip_distance'] = getattr(gf, 'gex_flip_distance', 100.0)
+                features['pin_probability'] = getattr(gf, 'pin_probability', 0.0)
+                features['is_expiry_day'] = getattr(gf, 'is_expiry_day', False)
+                features['is_expiry_week'] = getattr(gf, 'is_expiry_week', False)
+                features['days_to_expiry'] = getattr(gf, 'days_to_expiry', 7.0)
+
+            # Derived indicators
+            if hasattr(snapshot, 'derived_indicators'):
+                di = snapshot.derived_indicators
+                features['accumulation_score'] = getattr(di, 'accumulation_score', 0.0)
+                features['distribution_score'] = getattr(di, 'distribution_score', 0.0)
+                features['structure_maturity'] = getattr(di, 'structure_maturity', 0.0)
+                features['breakout_imminence'] = getattr(di, 'breakout_imminence', 0.0)
+                features['sl_hunt_probability_above'] = getattr(di, 'sl_hunt_probability_above', 0.0)
+                features['sl_hunt_probability_below'] = getattr(di, 'sl_hunt_probability_below', 0.0)
+                features['structure_clarity'] = getattr(di, 'structure_clarity', 50.0)
+
+            # Structure confidence
+            if hasattr(snapshot, 'structure_confidence'):
+                features['structure_confidence'] = snapshot.structure_confidence
+
+        except Exception as e:
+            logger.warning(f"Error extracting features from snapshot: {e}")
+
+        return features
+
+
+# Create singleton instance for easy import
+_probability_engine_adapter = None
+
+
+def get_probability_engine():
+    """Get singleton probability engine adapter"""
+    global _probability_engine_adapter
+    if _probability_engine_adapter is None:
+        _probability_engine_adapter = ProbabilityEngineAdapter()
+    return _probability_engine_adapter

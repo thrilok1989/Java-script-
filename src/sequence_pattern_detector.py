@@ -893,3 +893,192 @@ def result_to_dict(result: SequenceAnalysisResult) -> Dict:
         ],
         'primary_pattern': result.primary_pattern.pattern_name if result.primary_pattern else None,
     }
+
+
+# =============================================================================
+# UI ADAPTER - For market_structure_ui.py compatibility
+# =============================================================================
+
+@dataclass
+class UIPatternMatch:
+    """Pattern match result formatted for UI display"""
+    pattern: SequencePattern
+    match_score: float
+    confidence: float
+
+
+@dataclass
+class UISequenceAnalysis:
+    """Sequence analysis formatted for UI display"""
+    detected_patterns: List[UIPatternMatch]
+    dominant_structure: Optional[str]
+    transition_probability: float
+    structure_probabilities: Dict[str, float]
+
+
+class SequencePatternDetectorAdapter:
+    """
+    Adapter for SequencePatternDetector to work with MarketStructureSnapshot
+    Provides analyze_sequence method expected by market_structure_ui.py
+    """
+
+    def __init__(self):
+        self.detector = SequencePatternDetector()
+
+    def analyze_sequence(self, snapshots) -> UISequenceAnalysis:
+        """
+        Analyze a sequence of MarketStructureSnapshot objects
+
+        Args:
+            snapshots: List of MarketStructureSnapshot or single snapshot
+
+        Returns:
+            UISequenceAnalysis formatted for UI display
+        """
+        # Handle single snapshot
+        if not isinstance(snapshots, list):
+            snapshots = [snapshots]
+
+        if not snapshots:
+            return self._empty_analysis()
+
+        # Take the most recent snapshot
+        snapshot = snapshots[-1]
+
+        # Extract features from snapshot
+        features = self._extract_features(snapshot)
+
+        # Run pattern detection
+        try:
+            result = self.detector.analyze(features)
+        except Exception as e:
+            logger.warning(f"Error in pattern analysis: {e}")
+            return self._empty_analysis()
+
+        # Convert to UI format
+        ui_patterns = []
+        for match in result.patterns_detected:
+            # Find the original pattern definition
+            pattern_def = None
+            for p in self.detector.patterns:
+                if p.pattern_type == match.pattern_type:
+                    pattern_def = p
+                    break
+
+            if pattern_def:
+                ui_patterns.append(UIPatternMatch(
+                    pattern=pattern_def,
+                    match_score=match.similarity_score,
+                    confidence=match.confidence / 100  # Normalize to 0-1
+                ))
+
+        # Determine dominant structure
+        dominant = None
+        if hasattr(snapshot, 'primary_structure'):
+            dominant = snapshot.primary_structure
+
+        # Calculate structure probabilities from patterns
+        structure_probs = {}
+        if result.probability_summary:
+            for outcome, prob in result.probability_summary.items():
+                if 'UP' in outcome:
+                    structure_probs['EXPANSION'] = structure_probs.get('EXPANSION', 0) + prob
+                elif 'DOWN' in outcome:
+                    structure_probs['CONTRACTION'] = structure_probs.get('CONTRACTION', 0) + prob
+                elif 'RANGE' in outcome or 'CHOP' in outcome:
+                    structure_probs['CONSOLIDATION'] = structure_probs.get('CONSOLIDATION', 0) + prob
+
+        # Transition probability
+        transition_prob = 0.0
+        if hasattr(snapshot, 'derived_indicators'):
+            transition_prob = getattr(snapshot.derived_indicators, 'breakout_imminence', 0) / 100
+
+        return UISequenceAnalysis(
+            detected_patterns=ui_patterns,
+            dominant_structure=dominant,
+            transition_probability=transition_prob,
+            structure_probabilities=structure_probs
+        )
+
+    def _extract_features(self, snapshot) -> Dict[str, Any]:
+        """Extract flat feature dict from MarketStructureSnapshot"""
+        features = {}
+
+        if isinstance(snapshot, dict):
+            return snapshot
+
+        try:
+            # Price features
+            if hasattr(snapshot, 'price_features'):
+                pf = snapshot.price_features
+                features['price_range_atr_ratio'] = getattr(pf, 'price_range_atr_ratio', 1.0)
+                features['clv'] = getattr(pf, 'clv', 0.5)
+                features['rejection_score'] = getattr(pf, 'rejection_score', 0.0)
+                features['equal_highs_count'] = getattr(pf, 'equal_highs_count', 0)
+                features['equal_lows_count'] = getattr(pf, 'equal_lows_count', 0)
+                features['price_momentum_5'] = getattr(pf, 'price_momentum_5', 0.0)
+                features['wick_imbalance'] = getattr(pf, 'wick_imbalance', 0.0)
+
+            # Volume/OI features
+            if hasattr(snapshot, 'volume_oi_features'):
+                vf = snapshot.volume_oi_features
+                features['volume_ratio'] = getattr(vf, 'volume_ratio', 1.0)
+                features['volume_trend'] = getattr(vf, 'volume_trend', 0.0)
+                features['oi_pcr'] = getattr(vf, 'oi_pcr', 1.0)
+                features['oi_change_pct'] = getattr(vf, 'oi_change_pct', 0.0)
+                features['oi_buildup_score'] = getattr(vf, 'oi_buildup_score', 0.0)
+                features['oi_slope'] = getattr(vf, 'oi_slope', 0.0)
+                features['oi_unwinding'] = getattr(vf, 'oi_unwinding', False)
+
+            # Delta flow features
+            if hasattr(snapshot, 'delta_flow_features'):
+                df = snapshot.delta_flow_features
+                features['cvd_slope'] = getattr(df, 'cvd_slope', 0.0)
+                features['delta_imbalance'] = getattr(df, 'delta_imbalance', 0.0)
+                features['delta_absorption'] = getattr(df, 'delta_absorption', False)
+                features['cvd_price_divergence'] = getattr(df, 'cvd_price_divergence', False)
+
+            # Volatility features
+            if hasattr(snapshot, 'volatility_features'):
+                vof = snapshot.volatility_features
+                features['atr_percentile'] = getattr(vof, 'atr_percentile', 50.0)
+                features['compression_score'] = getattr(vof, 'compression_score', 0.0)
+                features['compression_duration'] = getattr(vof, 'compression_duration', 0)
+
+            # Gamma features
+            if hasattr(snapshot, 'gamma_features'):
+                gf = snapshot.gamma_features
+                features['gex_flip_distance'] = getattr(gf, 'gex_flip_distance', 100.0)
+                features['pin_probability'] = getattr(gf, 'pin_probability', 0.0)
+                features['days_to_expiry'] = getattr(gf, 'days_to_expiry', 7.0)
+
+            # Derived indicators
+            if hasattr(snapshot, 'derived_indicators'):
+                di = snapshot.derived_indicators
+                features['momentum_divergence'] = getattr(di, 'momentum_divergence', False)
+
+        except Exception as e:
+            logger.warning(f"Error extracting features: {e}")
+
+        return features
+
+    def _empty_analysis(self) -> UISequenceAnalysis:
+        """Return empty analysis"""
+        return UISequenceAnalysis(
+            detected_patterns=[],
+            dominant_structure=None,
+            transition_probability=0.0,
+            structure_probabilities={}
+        )
+
+
+# Singleton for easy import
+_sequence_detector_adapter = None
+
+
+def get_sequence_detector():
+    """Get singleton sequence detector adapter"""
+    global _sequence_detector_adapter
+    if _sequence_detector_adapter is None:
+        _sequence_detector_adapter = SequencePatternDetectorAdapter()
+    return _sequence_detector_adapter
