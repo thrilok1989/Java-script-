@@ -35,6 +35,7 @@ from data_cache_manager import (
     get_cached_bias_analysis_results
 )
 from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
+from src.market_structure_ui import render_market_structure_section, render_structure_widget
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -1024,7 +1025,7 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════
 
 # Native tabs - work seamlessly on mobile and desktop, no multiple clicks needed
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "🌟 Overall Market Sentiment",
     "🎯 Trade Setup",
     "📊 Active Signals",
@@ -1035,7 +1036,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🌐 Enhanced Market Data",
     "🔍 NSE Stock Screener",
     "📈 NIFTY Futures Analysis",
-    "🤖 AI Training & Models"
+    "🤖 AI Training & Models",
+    "🧠 Market Structure"
 ])
 
 
@@ -4238,6 +4240,125 @@ with tab11:
             st.error(f"❌ Error loading AI Training: {e}")
     else:
         st.info("👆 Click 'Load AI Training Dashboard' to access AI model training and management.")
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 12: MARKET STRUCTURE ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab12:
+    st.markdown("# 🧠 Market Structure Analysis")
+    st.caption("Structure-based detection BEFORE price moves | Probability Engine | Expiry Patterns")
+
+    # LAZY LOADING for performance
+    if st.button("🔄 Load Structure Analysis", type="primary", key="load_structure_btn"):
+        st.session_state.load_structure_analysis = True
+
+    if st.session_state.get('load_structure_analysis', False):
+        try:
+            with st.spinner("Loading Market Structure analysis..."):
+                # Get OHLC data from multiple sources (prioritize freshest)
+                ohlc_df = None
+                option_data = None
+                spot_price = None
+                is_expiry = False
+
+                # SOURCE 1: Try data cache manager (used by Overall Market Sentiment)
+                nifty_data = get_cached_nifty_data()
+                if nifty_data and 'chart_data' in nifty_data:
+                    chart_data = nifty_data['chart_data']
+                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                        ohlc_df = chart_data
+
+                # SOURCE 2: Try Advanced Chart Analysis session_state
+                if ohlc_df is None and 'advanced_chart_data' in st.session_state:
+                    chart_data = st.session_state.get('advanced_chart_data')
+                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                        ohlc_df = chart_data
+
+                # Get spot price from multiple sources
+                if nifty_data and 'spot_price' in nifty_data:
+                    spot_price = nifty_data['spot_price']
+                elif 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
+                    spot_price = st.session_state['nifty_spot']  # From Option Screener
+                elif 'last_spot_price' in st.session_state:
+                    spot_price = st.session_state.last_spot_price
+
+                # Get option data from multiple sources
+                # SOURCE 1: Data cache
+                if nifty_data and 'option_chain' in nifty_data:
+                    option_data = nifty_data['option_chain']
+
+                # SOURCE 2: NIFTY Option Screener session_state
+                if option_data is None and 'overall_option_data' in st.session_state:
+                    screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+                    if screener_data:
+                        option_data = screener_data
+
+                # SOURCE 3: Direct chain cache from screener
+                if option_data is None:
+                    current_expiry = st.session_state.get('current_expiry')
+                    if current_expiry:
+                        chain_key = f"option_chain_NIFTY_{current_expiry}"
+                        if chain_key in st.session_state:
+                            option_data = st.session_state[chain_key]
+
+                # Enhance option_data with Greeks from Option Screener if available
+                if 'atm_strike' in st.session_state:
+                    if option_data is None:
+                        option_data = {}
+                    option_data['atm_strike'] = st.session_state['atm_strike']
+
+                # Check if it's expiry day (Thursday in India)
+                from datetime import datetime
+                today = datetime.now()
+                is_expiry = today.weekday() == 3  # Thursday
+
+                if ohlc_df is not None and len(ohlc_df) > 20:
+                    render_market_structure_section(
+                        ohlc_df=ohlc_df,
+                        option_data=option_data,
+                        is_expiry=is_expiry,
+                        spot_price=spot_price
+                    )
+                else:
+                    st.warning("⚠️ Insufficient OHLC data for structure analysis.")
+                    st.info("Please load data first by visiting:")
+                    st.markdown("""
+                    1. **Overall Market Sentiment** tab - Click to auto-load market data
+                    2. **Advanced Chart Analysis** tab - Load chart data
+                    3. **NIFTY Option Screener** tab - Load option chain for Greeks & OI
+                    """)
+
+        except ImportError as e:
+            st.error(f"❌ Market Structure module not available: {e}")
+            st.info("Required modules: src/market_structure_features.py, src/sequence_pattern_detector.py, src/probability_engine.py, src/expiry_structure_detector.py")
+        except Exception as e:
+            st.error(f"❌ Error loading Market Structure Analysis: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.info("👆 Click 'Load Structure Analysis' to access structure-based market analysis.")
+
+        # Show quick overview
+        st.markdown("""
+        ### What is Market Structure Analysis?
+
+        **Philosophy**: Detect market STRUCTURES before price moves, not after.
+
+        | Structure | Description |
+        |-----------|-------------|
+        | **Accumulation** | Smart money buying, volume absorption, range tightening |
+        | **Distribution** | Smart money selling, supply absorption, failed breakouts |
+        | **Compression** | Volatility contracting, coiling for expansion |
+        | **Expansion** | Breakout move, directional momentum |
+        | **Manipulation** | SL hunts, fake breaks, liquidity grabs |
+
+        ### Features:
+        - 🎯 **Pattern Detection**: Silent Buildup, Fake Break, Gamma Pin Snap, SL Hunt
+        - 📊 **Probability Engine**: Historical pattern matching with confidence scores
+        - ⏰ **Expiry Structure**: Special patterns for expiry day trading
+        - 📈 **No Deep Learning**: Fast, lightweight statistical matching
+        """)
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
