@@ -66,6 +66,24 @@ except ImportError:
     get_trainer = None
     predict_with_real_model = None
 
+# Import Smart Alert System
+try:
+    from src.smart_alert_system import get_alert_system, check_and_send_alerts
+    SMART_ALERTS_AVAILABLE = True
+except ImportError:
+    SMART_ALERTS_AVAILABLE = False
+    get_alert_system = None
+    check_and_send_alerts = None
+
+# Import FII/DII Fetcher
+try:
+    from src.fii_dii_fetcher import get_fii_dii_data, FIIDIIData
+    FII_DII_AVAILABLE = True
+except ImportError:
+    FII_DII_AVAILABLE = False
+    get_fii_dii_data = None
+    FIIDIIData = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -1421,6 +1439,20 @@ class UnifiedMLSignalGenerator:
                     logger.info(f"Recorded signal for ML training: {signal_id}")
             except Exception as e:
                 logger.debug(f"Could not record signal: {e}")
+
+        # ========== CHECK SMART ALERTS ==========
+        # Check and send alerts for significant market conditions
+        if SMART_ALERTS_AVAILABLE:
+            try:
+                # Only check alerts on strong signals or periodically
+                should_check = signal in ['STRONG BUY', 'STRONG SELL'] or confidence > 70
+                if should_check:
+                    alert_result = check_and_send_alerts()
+                    if alert_result and alert_result.get('sent', 0) > 0:
+                        st.session_state['last_alert_result'] = alert_result
+                        logger.info(f"Sent {alert_result['sent']} smart alerts")
+            except Exception as e:
+                logger.debug(f"Smart alert check failed: {e}")
 
         return UnifiedSignal(
             signal=signal,
