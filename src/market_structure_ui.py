@@ -25,6 +25,10 @@ from probability_engine import (
 from expiry_structure_detector import (
     ExpiryStructureDetector, ExpiryPhase, ExpiryStructureAnalysis
 )
+from geometric_pattern_engine import (
+    GeometricPatternEngine, GeometricPatternType, PatternDirection,
+    DetectedPattern, PatternAnalysisResult
+)
 
 
 # Color schemes for structures
@@ -58,6 +62,35 @@ EXPIRY_PHASE_COLORS = {
     ExpiryPhase.LAST_MINUTE_CHAOS: "#F44336",
 }
 
+GEOMETRIC_PATTERN_COLORS = {
+    # Triangles
+    GeometricPatternType.ASCENDING_TRIANGLE: "#4CAF50",
+    GeometricPatternType.DESCENDING_TRIANGLE: "#F44336",
+    GeometricPatternType.SYMMETRIC_TRIANGLE: "#FFC107",
+    # Channels
+    GeometricPatternType.PARALLEL_CHANNEL: "#2196F3",
+    GeometricPatternType.RISING_CHANNEL: "#00C853",
+    GeometricPatternType.FALLING_CHANNEL: "#FF1744",
+    GeometricPatternType.HORIZONTAL_RANGE: "#9E9E9E",
+    # Wedges
+    GeometricPatternType.RISING_WEDGE: "#E91E63",    # Bearish
+    GeometricPatternType.FALLING_WEDGE: "#8BC34A",   # Bullish
+    # Flags
+    GeometricPatternType.BULL_FLAG: "#00E676",
+    GeometricPatternType.BEAR_FLAG: "#FF5252",
+    GeometricPatternType.PENNANT: "#FFAB00",
+    # Tops & Bottoms
+    GeometricPatternType.DOUBLE_TOP: "#D32F2F",
+    GeometricPatternType.DOUBLE_BOTTOM: "#388E3C",
+    GeometricPatternType.TRIPLE_TOP: "#B71C1C",
+    GeometricPatternType.TRIPLE_BOTTOM: "#1B5E20",
+    # H&S
+    GeometricPatternType.HEAD_SHOULDERS: "#7B1FA2",
+    GeometricPatternType.INVERSE_HEAD_SHOULDERS: "#00695C",
+    # Compression
+    GeometricPatternType.COIL_BOX: "#FF9800",
+}
+
 
 class MarketStructureUI:
     """Streamlit UI component for market structure analysis"""
@@ -67,6 +100,7 @@ class MarketStructureUI:
         self.pattern_detector = SequencePatternDetector()
         self.probability_engine = ProbabilityEngine()
         self.expiry_detector = ExpiryStructureDetector()
+        self.geometric_engine = GeometricPatternEngine()
 
     def render_structure_dashboard(
         self,
@@ -88,9 +122,10 @@ class MarketStructureUI:
             return
 
         # Create tabs for different views
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🎯 Current Structure",
-            "🔄 Pattern Detection",
+            "📐 Geometric Patterns",
+            "🔄 Sequence Patterns",
             "📈 Probability Analysis",
             "⏰ Expiry Structure" if is_expiry else "📊 Structure History"
         ])
@@ -99,12 +134,15 @@ class MarketStructureUI:
             self._render_current_structure(snapshot, ohlc_df)
 
         with tab2:
-            self._render_pattern_detection(snapshot, ohlc_df)
+            self._render_geometric_patterns(ohlc_df, option_data)
 
         with tab3:
-            self._render_probability_analysis(snapshot)
+            self._render_pattern_detection(snapshot, ohlc_df)
 
         with tab4:
+            self._render_probability_analysis(snapshot)
+
+        with tab5:
             if is_expiry:
                 self._render_expiry_structure(ohlc_df, option_data, spot_price)
             else:
@@ -313,6 +351,261 @@ class MarketStructureUI:
                     st.text(f"{key}: {value:.4f}")
                 else:
                     st.text(f"{key}: {value}")
+
+    def _render_geometric_patterns(self, ohlc_df: pd.DataFrame, option_data: Optional[Dict]):
+        """Render geometric pattern analysis - Institution-grade pattern detection"""
+
+        st.markdown("#### 📐 Geometric Pattern Detection")
+        st.markdown("*Shapes converted to numeric features ML can learn*")
+
+        try:
+            # Analyze geometric patterns
+            result = self.geometric_engine.analyze(ohlc_df, option_data)
+
+            # Display swing points info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Swing Highs", len(result.swing_highs))
+            with col2:
+                st.metric("Swing Lows", len(result.swing_lows))
+            with col3:
+                st.metric("Market Structure", result.market_structure)
+
+            # Display geometric features
+            with st.expander("📊 Geometric Features", expanded=False):
+                gf = result.geometric_features
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Slope Features**")
+                    st.text(f"Slope Highs: {gf.slope_highs:.6f}")
+                    st.text(f"Slope Lows: {gf.slope_lows:.6f}")
+                    st.text(f"Norm Slope Highs: {gf.norm_slope_highs:.6f}")
+                    st.text(f"Norm Slope Lows: {gf.norm_slope_lows:.6f}")
+
+                with col2:
+                    st.markdown("**Structure Features**")
+                    st.text(f"Range Width: {gf.range_width:.2f}")
+                    st.text(f"Compression Ratio: {gf.compression_ratio:.2f}")
+                    st.text(f"Convergence Rate: {gf.convergence_rate:.6f}")
+                    st.text(f"Converging: {'Yes' if gf.is_converging else 'No'}")
+
+            # Display detected patterns
+            if not result.patterns:
+                st.info("No geometric patterns detected in current price structure")
+                return
+
+            st.markdown("#### 🎯 Detected Patterns")
+
+            for pattern in result.patterns:
+                color = GEOMETRIC_PATTERN_COLORS.get(pattern.pattern_type, "#757575")
+                direction_icon = "🟢" if pattern.direction == PatternDirection.BULLISH else "🔴" if pattern.direction == PatternDirection.BEARISH else "⚪"
+
+                st.markdown(f"""
+                <div style="
+                    background: linear-gradient(135deg, {color}11, {color}22);
+                    border-left: 4px solid {color};
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin-bottom: 12px;
+                ">
+                    <h4 style="margin: 0; color: {color};">
+                        {direction_icon} {pattern.pattern_type.value.replace('_', ' ')}
+                    </h4>
+                    <p style="margin: 5px 0; color: #bbb;">
+                        Direction: {pattern.direction.value} | Geometry Score: {pattern.geometry_score:.1%}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Pattern details
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    vol_icon = "✅" if pattern.volume_confirmed else "❌"
+                    st.metric("Volume", vol_icon)
+                with col2:
+                    oi_icon = "✅" if pattern.oi_confirmed else "❌"
+                    st.metric("OI", oi_icon)
+                with col3:
+                    delta_icon = "✅" if pattern.delta_confirmed else "❌"
+                    st.metric("Delta", delta_icon)
+                with col4:
+                    st.metric("Fake Risk", f"{pattern.fake_move_risk:.0%}")
+
+                # Expected outcomes
+                if pattern.expected_outcomes:
+                    outcomes = pattern.expected_outcomes
+                    if 'expansion' in outcomes:
+                        cols = st.columns(3)
+                        with cols[0]:
+                            st.metric("Expansion", f"{outcomes.get('expansion', 0):.0%}")
+                        with cols[1]:
+                            st.metric("Fake", f"{outcomes.get('fake', 0):.0%}")
+                        with cols[2]:
+                            st.metric("Chop", f"{outcomes.get('chop', 0):.0%}")
+
+                # Support/Resistance levels
+                if pattern.support > 0 or pattern.resistance > 0:
+                    st.markdown(f"**Levels**: Support: {pattern.support:,.2f} | Resistance: {pattern.resistance:,.2f}")
+
+                if pattern.target > 0:
+                    st.markdown(f"**Target**: {pattern.target:,.2f}")
+
+                st.markdown("---")
+
+            # Dominant pattern highlight
+            if result.dominant_pattern:
+                dp = result.dominant_pattern
+                color = GEOMETRIC_PATTERN_COLORS.get(dp.pattern_type, "#757575")
+
+                st.markdown(f"""
+                ### 👑 Dominant Pattern
+
+                <div style="
+                    background: {color}33;
+                    border: 2px solid {color};
+                    padding: 20px;
+                    border-radius: 12px;
+                    text-align: center;
+                ">
+                    <h2 style="margin: 0; color: {color};">{dp.pattern_type.value.replace('_', ' ')}</h2>
+                    <p style="margin: 10px 0 0 0; color: #ddd;">
+                        {dp.direction.value} | Score: {dp.geometry_score:.1%} | Fake Risk: {dp.fake_move_risk:.0%}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Pattern chart with swing points
+            st.markdown("#### 📈 Pattern Visualization")
+            self._render_geometric_chart(ohlc_df, result)
+
+        except Exception as e:
+            st.error(f"Error analyzing geometric patterns: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+    def _render_geometric_chart(self, ohlc_df: pd.DataFrame, result: PatternAnalysisResult):
+        """Render chart with swing points and pattern overlay"""
+
+        df = ohlc_df.tail(100).copy()
+
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.75, 0.25],
+            subplot_titles=("Price with Swing Points", "Volume")
+        )
+
+        # Candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=list(range(len(df))),
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
+                name='Price',
+                increasing_line_color='#00C853',
+                decreasing_line_color='#FF1744'
+            ),
+            row=1, col=1
+        )
+
+        # Add swing highs
+        swing_highs_in_range = [sh for sh in result.swing_highs if sh.index >= len(ohlc_df) - 100]
+        if swing_highs_in_range:
+            sh_x = [sh.index - (len(ohlc_df) - 100) for sh in swing_highs_in_range]
+            sh_y = [sh.price for sh in swing_highs_in_range]
+            fig.add_trace(
+                go.Scatter(
+                    x=sh_x,
+                    y=sh_y,
+                    mode='markers',
+                    marker=dict(symbol='triangle-down', size=12, color='#FF5722'),
+                    name='Swing Highs'
+                ),
+                row=1, col=1
+            )
+
+        # Add swing lows
+        swing_lows_in_range = [sl for sl in result.swing_lows if sl.index >= len(ohlc_df) - 100]
+        if swing_lows_in_range:
+            sl_x = [sl.index - (len(ohlc_df) - 100) for sl in swing_lows_in_range]
+            sl_y = [sl.price for sl in swing_lows_in_range]
+            fig.add_trace(
+                go.Scatter(
+                    x=sl_x,
+                    y=sl_y,
+                    mode='markers',
+                    marker=dict(symbol='triangle-up', size=12, color='#2196F3'),
+                    name='Swing Lows'
+                ),
+                row=1, col=1
+            )
+
+        # Add trendlines for dominant pattern
+        if result.dominant_pattern and result.dominant_pattern.features:
+            gf = result.geometric_features
+
+            # High trendline
+            if len(swing_highs_in_range) >= 2:
+                x_line = [swing_highs_in_range[0].index - (len(ohlc_df) - 100),
+                          swing_highs_in_range[-1].index - (len(ohlc_df) - 100)]
+                y_line = [swing_highs_in_range[0].price,
+                          swing_highs_in_range[0].price + gf.slope_highs * (x_line[1] - x_line[0])]
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_line,
+                        y=y_line,
+                        mode='lines',
+                        line=dict(color='#FF9800', dash='dash', width=2),
+                        name='High Trend'
+                    ),
+                    row=1, col=1
+                )
+
+            # Low trendline
+            if len(swing_lows_in_range) >= 2:
+                x_line = [swing_lows_in_range[0].index - (len(ohlc_df) - 100),
+                          swing_lows_in_range[-1].index - (len(ohlc_df) - 100)]
+                y_line = [swing_lows_in_range[0].price,
+                          swing_lows_in_range[0].price + gf.slope_lows * (x_line[1] - x_line[0])]
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_line,
+                        y=y_line,
+                        mode='lines',
+                        line=dict(color='#2196F3', dash='dash', width=2),
+                        name='Low Trend'
+                    ),
+                    row=1, col=1
+                )
+
+        # Volume bars
+        if 'volume' in df.columns:
+            colors = ['#00C853' if c >= o else '#FF1744' for c, o in zip(df['close'], df['open'])]
+            fig.add_trace(
+                go.Bar(
+                    x=list(range(len(df))),
+                    y=df['volume'],
+                    marker_color=colors,
+                    name='Volume',
+                    opacity=0.7
+                ),
+                row=2, col=1
+            )
+
+        fig.update_layout(
+            height=500,
+            showlegend=True,
+            xaxis_rangeslider_visible=False,
+            template="plotly_dark",
+            margin=dict(l=50, r=50, t=30, b=30)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
 
     def _render_pattern_detection(self, snapshot: MarketStructureSnapshot, ohlc_df: pd.DataFrame):
         """Render pattern detection results"""
