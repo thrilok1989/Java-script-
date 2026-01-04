@@ -23,7 +23,7 @@ Features:
 import streamlit as st
 import requests
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 import json
 import os
@@ -545,7 +545,3 @@ def send_custom_alert(title: str, message: str, priority: str = "MEDIUM") -> Tup
     system = get_alert_system()
     full_message = f"*{title}*\n\n{message}"
     return system.send_telegram(full_message, priority)
-
-
-# Import Tuple for type hints
-from typing import Tuple
