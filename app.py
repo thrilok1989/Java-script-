@@ -4261,40 +4261,68 @@ with tab12:
                 option_data = None
                 spot_price = None
                 is_expiry = False
+                nifty_data = None  # Initialize to avoid reference errors
 
-                # SOURCE 1: Try data cache manager (used by Overall Market Sentiment)
-                nifty_data = get_cached_nifty_data()
-                if nifty_data and 'chart_data' in nifty_data:
-                    chart_data = nifty_data['chart_data']
+                # SOURCE 1: PRIMARY - st.session_state.chart_data (used by Unified ML - MOST RELIABLE)
+                if 'chart_data' in st.session_state:
+                    chart_data = st.session_state.get('chart_data')
                     if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                        ohlc_df = chart_data
+                        ohlc_df = chart_data.copy()
 
-                # SOURCE 2: Try Advanced Chart Analysis session_state
+                # SOURCE 2: data_df from Option Screener
+                if ohlc_df is None and 'data_df' in st.session_state:
+                    chart_data = st.session_state.get('data_df')
+                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                        ohlc_df = chart_data.copy()
+
+                # SOURCE 3: nifty_df alternative
+                if ohlc_df is None and 'nifty_df' in st.session_state:
+                    chart_data = st.session_state.get('nifty_df')
+                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                        ohlc_df = chart_data.copy()
+
+                # SOURCE 4: Try data cache manager (used by Overall Market Sentiment)
+                if ohlc_df is None:
+                    nifty_data = get_cached_nifty_data()
+                    if nifty_data and 'chart_data' in nifty_data:
+                        chart_data = nifty_data['chart_data']
+                        if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                            ohlc_df = chart_data
+
+                # SOURCE 5: Try Advanced Chart Analysis session_state
                 if ohlc_df is None and 'advanced_chart_data' in st.session_state:
                     chart_data = st.session_state.get('advanced_chart_data')
                     if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
                         ohlc_df = chart_data
 
-                # Get spot price from multiple sources
-                if nifty_data and 'spot_price' in nifty_data:
-                    spot_price = nifty_data['spot_price']
-                elif 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
-                    spot_price = st.session_state['nifty_spot']  # From Option Screener
-                elif 'last_spot_price' in st.session_state:
+                # Get spot price from multiple sources (prioritize session_state)
+                if 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
+                    spot_price = st.session_state['nifty_spot']  # From Option Screener - MOST RELIABLE
+                elif 'last_spot_price' in st.session_state and st.session_state.get('last_spot_price'):
                     spot_price = st.session_state.last_spot_price
+                elif nifty_data and 'spot_price' in nifty_data:
+                    spot_price = nifty_data['spot_price']
+                elif ohlc_df is not None and len(ohlc_df) > 0 and 'close' in ohlc_df.columns:
+                    spot_price = float(ohlc_df['close'].iloc[-1])  # Fallback to last close
 
                 # Get option data from multiple sources
-                # SOURCE 1: Data cache
-                if nifty_data and 'option_chain' in nifty_data:
-                    option_data = nifty_data['option_chain']
+                # SOURCE 1: merged_df from Option Screener (has Greeks, OI, etc.)
+                if 'merged_df' in st.session_state:
+                    merged = st.session_state.get('merged_df')
+                    if isinstance(merged, pd.DataFrame) and len(merged) > 0:
+                        option_data = {'merged_df': merged, 'source': 'option_screener'}
 
-                # SOURCE 2: NIFTY Option Screener session_state
+                # SOURCE 2: NIFTY Option Screener overall data
                 if option_data is None and 'overall_option_data' in st.session_state:
                     screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
                     if screener_data:
                         option_data = screener_data
 
-                # SOURCE 3: Direct chain cache from screener
+                # SOURCE 3: nifty_screener_data
+                if option_data is None and 'nifty_screener_data' in st.session_state:
+                    option_data = st.session_state.get('nifty_screener_data')
+
+                # SOURCE 4: Direct chain cache from screener
                 if option_data is None:
                     current_expiry = st.session_state.get('current_expiry')
                     if current_expiry:
@@ -4302,11 +4330,25 @@ with tab12:
                         if chain_key in st.session_state:
                             option_data = st.session_state[chain_key]
 
-                # Enhance option_data with Greeks from Option Screener if available
+                # SOURCE 5: Data cache
+                if option_data is None and nifty_data and 'option_chain' in nifty_data:
+                    option_data = nifty_data['option_chain']
+
+                # Enhance option_data with all available Greeks/OI from session state
+                if option_data is None:
+                    option_data = {}
+
+                # Add ATM strike
                 if 'atm_strike' in st.session_state:
-                    if option_data is None:
-                        option_data = {}
                     option_data['atm_strike'] = st.session_state['atm_strike']
+
+                # Add market depth
+                if 'market_depth_data' in st.session_state:
+                    option_data['market_depth'] = st.session_state['market_depth_data']
+
+                # Add max pain if available
+                if 'max_pain' in st.session_state:
+                    option_data['max_pain'] = st.session_state['max_pain']
 
                 # Check if it's expiry day (Thursday in India)
                 from datetime import datetime
