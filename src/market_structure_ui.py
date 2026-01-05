@@ -13,21 +13,21 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import asdict
 
 # Import our structure analysis components
-from market_structure_features import (
+from src.market_structure_features import (
     MarketStructureFeatureExtractor, MarketStructure, MarketStructureSnapshot
 )
-from sequence_pattern_detector import (
+from src.sequence_pattern_detector import (
     SequencePatternDetector, PatternType, SequenceAnalysisResult,
     SequencePatternDetectorAdapter, get_sequence_detector
 )
-from probability_engine import (
+from src.probability_engine import (
     ProbabilityEngine, ProbabilityAnalysis,
     ProbabilityEngineAdapter, get_probability_engine
 )
-from expiry_structure_detector import (
+from src.expiry_structure_detector import (
     ExpiryStructureDetector, ExpiryPhase, ExpiryStructureAnalysis
 )
-from geometric_pattern_engine import (
+from src.geometric_pattern_engine import (
     GeometricPatternEngine, GeometricPatternType, PatternDirection,
     DetectedPattern, PatternAnalysisResult
 )

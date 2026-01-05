@@ -26,7 +26,7 @@ import logging
 import json
 import os
 
-from .market_structure_features import (
+from src.market_structure_features import (
     MarketStructureFeatureExtractor,
     MarketStructureSnapshot,
     MarketStructure,
