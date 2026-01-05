@@ -59,11 +59,11 @@ class SequencePattern:
     name: str
     description: str
     conditions: List[PatternCondition]  # Ordered conditions
-    min_duration: int = 3               # Minimum bars for pattern
-    max_duration: int = 20              # Maximum bars for pattern
     expected_outcomes: Dict[str, float] # Outcome → base probability
     risk_warnings: List[str]            # Risk warnings for this pattern
     recommended_action: str             # What to do when detected
+    min_duration: int = 3               # Minimum bars for pattern
+    max_duration: int = 20              # Maximum bars for pattern
 
 
 @dataclass
