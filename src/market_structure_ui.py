@@ -178,7 +178,7 @@ class MarketStructureUI:
         col1, col2, col3 = st.columns([2, 1, 1])
 
         with col1:
-            structure = snapshot.current_structure
+            structure = snapshot.primary_structure
             color = STRUCTURE_COLORS.get(structure, "#757575")
 
             st.markdown(f"""
@@ -267,7 +267,7 @@ class MarketStructureUI:
             fig.add_hrect(
                 y0=price_features.range_low,
                 y1=price_features.range_high,
-                fillcolor=STRUCTURE_COLORS.get(snapshot.current_structure, "#757575"),
+                fillcolor=STRUCTURE_COLORS.get(snapshot.primary_structure, "#757575"),
                 opacity=0.1,
                 line_width=0,
                 row=1, col=1
@@ -883,7 +883,7 @@ class MarketStructureUI:
                     )
                     history.append({
                         'period': f"Last {i} bars",
-                        'structure': snapshot.current_structure.value,
+                        'structure': snapshot.primary_structure.value,
                         'confidence': snapshot.structure_confidence
                     })
                 except:
@@ -959,7 +959,7 @@ def render_structure_widget(
             spot_price=spot_price or ohlc_df['close'].iloc[-1]
         )
 
-        structure = snapshot.current_structure
+        structure = snapshot.primary_structure
         confidence = snapshot.structure_confidence
         color = STRUCTURE_COLORS.get(structure, "#757575")
 
