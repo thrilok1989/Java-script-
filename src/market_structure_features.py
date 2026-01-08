@@ -411,6 +411,44 @@ class MarketStructureFeatureExtractor:
             derived_indicators=derived_indicators
         )
 
+    def extract_snapshot(
+        self,
+        ohlc_df: pd.DataFrame,
+        option_data: Optional[Dict] = None,
+        spot_price: Optional[float] = None,
+        symbol: str = "NIFTY"
+    ) -> MarketStructureSnapshot:
+        """
+        Alias for extract_features - for UI compatibility
+
+        Args:
+            ohlc_df: OHLCV DataFrame
+            option_data: Option chain and related data
+            spot_price: Current spot price
+            symbol: Symbol name
+
+        Returns:
+            MarketStructureSnapshot with all features
+        """
+        # Extract option chain and market depth from option_data if provided
+        option_chain = None
+        market_depth = None
+
+        if option_data:
+            if 'merged_df' in option_data:
+                option_chain = option_data
+            elif isinstance(option_data, dict):
+                option_chain = option_data
+            market_depth = option_data.get('market_depth')
+
+        return self.extract_features(
+            df=ohlc_df,
+            option_chain=option_chain,
+            market_depth=market_depth,
+            spot_price=spot_price,
+            symbol=symbol
+        )
+
     def _extract_price_features(
         self,
         df: pd.DataFrame,
