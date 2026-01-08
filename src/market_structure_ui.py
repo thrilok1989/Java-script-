@@ -652,11 +652,19 @@ class MarketStructureUI:
                 with col2:
                     st.metric("Confidence", f"{match.confidence:.1%}")
                 with col3:
-                    expected = pattern.expected_outcome
-                    st.metric("Expected", expected.get('direction', 'N/A'))
+                    # Get the most likely outcome from expected_outcomes dict
+                    outcomes = pattern.expected_outcomes if hasattr(pattern, 'expected_outcomes') else {}
+                    if outcomes:
+                        best_outcome = max(outcomes.items(), key=lambda x: x[1])
+                        st.metric("Expected", best_outcome[0])
+                    else:
+                        st.metric("Expected", "N/A")
                 with col4:
-                    prob = expected.get('probability', 0)
-                    st.metric("Probability", f"{prob:.0%}")
+                    if outcomes:
+                        prob = best_outcome[1]
+                        st.metric("Probability", f"{prob:.0%}")
+                    else:
+                        st.metric("Probability", "N/A")
 
         # Pattern summary
         st.markdown("#### 📊 Pattern Summary")
