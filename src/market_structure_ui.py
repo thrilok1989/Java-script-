@@ -204,9 +204,9 @@ class MarketStructureUI:
             price_features = snapshot.price_features
 
             metrics = {
-                "Range %": f"{price_features.range_pct:.2f}%",
-                "Position": f"{price_features.range_position:.1%}",
-                "Slope": f"{price_features.trend_slope:.4f}",
+                "Range/ATR": f"{price_features.price_range_atr_ratio:.2f}",
+                "CLV": f"{price_features.clv:.1%}",
+                "Momentum": f"{price_features.price_momentum_5:.2f}%",
             }
 
             for label, value in metrics.items():
@@ -217,9 +217,9 @@ class MarketStructureUI:
             st.markdown("**Volatility**")
             vol_features = snapshot.volatility_features
 
-            st.metric("ATR %", f"{vol_features.atr_pct:.2f}%")
-            st.metric("Vol Regime", vol_features.volatility_regime)
-            st.metric("Compression", f"{vol_features.compression_ratio:.2f}")
+            st.metric("ATR Ratio", f"{vol_features.atr_ratio:.2f}")
+            st.metric("VIX", f"{vol_features.vix_level:.1f}")
+            st.metric("Compression", f"{vol_features.compression_score:.0f}")
 
         # Structure visualization chart
         st.markdown("#### Structure Overlay Chart")
