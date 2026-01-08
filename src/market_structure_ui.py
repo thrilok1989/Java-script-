@@ -163,7 +163,7 @@ class MarketStructureUI:
 
             snapshot = self.feature_extractor.extract_snapshot(
                 ohlc_df=ohlc_df,
-                option_chain=option_data,
+                option_data=option_data,
                 spot_price=spot_price or ohlc_df['close'].iloc[-1]
             )
             return snapshot
@@ -878,7 +878,7 @@ class MarketStructureUI:
                 try:
                     snapshot = self.feature_extractor.extract_snapshot(
                         ohlc_df=df_slice,
-                        option_chain=option_data,
+                        option_data=option_data,
                         spot_price=df_slice['close'].iloc[-1]
                     )
                     history.append({
@@ -955,7 +955,7 @@ def render_structure_widget(
         extractor = MarketStructureFeatureExtractor()
         snapshot = extractor.extract_snapshot(
             ohlc_df=ohlc_df,
-            option_chain=option_data,
+            option_data=option_data,
             spot_price=spot_price or ohlc_df['close'].iloc[-1]
         )
 
@@ -999,7 +999,7 @@ def render_probability_widget(
         extractor = MarketStructureFeatureExtractor()
         snapshot = extractor.extract_snapshot(
             ohlc_df=ohlc_df,
-            option_chain=option_data,
+            option_data=option_data,
             spot_price=spot_price or ohlc_df['close'].iloc[-1]
         )
 
