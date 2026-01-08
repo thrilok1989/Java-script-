@@ -1025,10 +1025,10 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════
 
 # Native tabs - work seamlessly on mobile and desktop, no multiple clicks needed
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🌟 Overall Market Sentiment",
     "🎯 Trade Setup",
-    "📊 Active Signals",
+    "📊 Active Signals & Structure",
     "📈 Positions",
     "🎲 Bias Analysis Pro",
     "📉 Advanced Chart Analysis",
@@ -1036,8 +1036,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "🌐 Enhanced Market Data",
     "🔍 NSE Stock Screener",
     "📈 NIFTY Futures Analysis",
-    "🤖 AI Training & Models",
-    "🧠 Market Structure"
+    "🤖 AI Training & Models"
 ])
 
 
@@ -1337,6 +1336,96 @@ with tab3:
                                         st.error(f"Error: {result['error']}")
 
                 st.divider()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # MARKET STRUCTURE ANALYSIS SECTION (Inside Active Signals Tab)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    st.markdown("---")
+    st.markdown("## 🧠 Market Structure Analysis")
+    st.caption("Structure-based detection BEFORE price moves | Probability Engine | Expiry Patterns")
+
+    # Load Market Structure Analysis
+    try:
+        # Get OHLC data from multiple sources (prioritize freshest)
+        ohlc_df = None
+        option_data = None
+        spot_price = None
+        is_expiry = False
+        nifty_data_struct = None  # Initialize to avoid reference errors
+
+        # SOURCE 1: PRIMARY - st.session_state.chart_data (used by Unified ML - MOST RELIABLE)
+        if 'chart_data' in st.session_state:
+            chart_data = st.session_state.get('chart_data')
+            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                ohlc_df = chart_data.copy()
+
+        # SOURCE 2: data_df from Option Screener
+        if ohlc_df is None and 'data_df' in st.session_state:
+            chart_data = st.session_state.get('data_df')
+            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                ohlc_df = chart_data.copy()
+
+        # SOURCE 3: nifty_df alternative
+        if ohlc_df is None and 'nifty_df' in st.session_state:
+            chart_data = st.session_state.get('nifty_df')
+            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                ohlc_df = chart_data.copy()
+
+        # SOURCE 4: Try data cache manager
+        if ohlc_df is None:
+            nifty_data_struct = get_cached_nifty_data()
+            if nifty_data_struct and 'chart_data' in nifty_data_struct:
+                chart_data = nifty_data_struct['chart_data']
+                if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                    ohlc_df = chart_data
+
+        # Get spot price from multiple sources
+        if 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
+            spot_price = st.session_state['nifty_spot']
+        elif 'last_spot_price' in st.session_state and st.session_state.get('last_spot_price'):
+            spot_price = st.session_state.last_spot_price
+        elif nifty_data_struct and 'spot_price' in nifty_data_struct:
+            spot_price = nifty_data_struct['spot_price']
+        elif ohlc_df is not None and len(ohlc_df) > 0 and 'close' in ohlc_df.columns:
+            spot_price = float(ohlc_df['close'].iloc[-1])
+
+        # Get option data from multiple sources
+        if 'merged_df' in st.session_state:
+            merged = st.session_state.get('merged_df')
+            if isinstance(merged, pd.DataFrame) and len(merged) > 0:
+                option_data = {'merged_df': merged, 'source': 'option_screener'}
+
+        if option_data is None and 'overall_option_data' in st.session_state:
+            screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+            if screener_data:
+                option_data = screener_data
+
+        if option_data is None:
+            option_data = {}
+
+        # Add extras
+        if 'atm_strike' in st.session_state:
+            option_data['atm_strike'] = st.session_state['atm_strike']
+        if 'market_depth_data' in st.session_state:
+            option_data['market_depth'] = st.session_state['market_depth_data']
+
+        # Check expiry day
+        today = datetime.now()
+        is_expiry = today.weekday() == 3  # Thursday
+
+        if ohlc_df is not None and len(ohlc_df) > 20:
+            render_market_structure_section(
+                ohlc_df=ohlc_df,
+                option_data=option_data,
+                is_expiry=is_expiry,
+                spot_price=spot_price
+            )
+        else:
+            st.info("📊 Load chart data from **Overall Market Sentiment** or **NIFTY Option Screener** tab to see Market Structure Analysis.")
+
+    except Exception as e:
+        st.warning(f"Market Structure module loading: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 4: POSITIONS
@@ -4240,167 +4329,6 @@ with tab11:
             st.error(f"❌ Error loading AI Training: {e}")
     else:
         st.info("👆 Click 'Load AI Training Dashboard' to access AI model training and management.")
-
-# ═══════════════════════════════════════════════════════════════════════
-# TAB 12: MARKET STRUCTURE ANALYSIS
-# ═══════════════════════════════════════════════════════════════════════
-
-with tab12:
-    st.markdown("# 🧠 Market Structure Analysis")
-    st.caption("Structure-based detection BEFORE price moves | Probability Engine | Expiry Patterns")
-
-    # LAZY LOADING for performance
-    if st.button("🔄 Load Structure Analysis", type="primary", key="load_structure_btn"):
-        st.session_state.load_structure_analysis = True
-
-    if st.session_state.get('load_structure_analysis', False):
-        try:
-            with st.spinner("Loading Market Structure analysis..."):
-                # Get OHLC data from multiple sources (prioritize freshest)
-                ohlc_df = None
-                option_data = None
-                spot_price = None
-                is_expiry = False
-                nifty_data = None  # Initialize to avoid reference errors
-
-                # SOURCE 1: PRIMARY - st.session_state.chart_data (used by Unified ML - MOST RELIABLE)
-                if 'chart_data' in st.session_state:
-                    chart_data = st.session_state.get('chart_data')
-                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                        ohlc_df = chart_data.copy()
-
-                # SOURCE 2: data_df from Option Screener
-                if ohlc_df is None and 'data_df' in st.session_state:
-                    chart_data = st.session_state.get('data_df')
-                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                        ohlc_df = chart_data.copy()
-
-                # SOURCE 3: nifty_df alternative
-                if ohlc_df is None and 'nifty_df' in st.session_state:
-                    chart_data = st.session_state.get('nifty_df')
-                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                        ohlc_df = chart_data.copy()
-
-                # SOURCE 4: Try data cache manager (used by Overall Market Sentiment)
-                if ohlc_df is None:
-                    nifty_data = get_cached_nifty_data()
-                    if nifty_data and 'chart_data' in nifty_data:
-                        chart_data = nifty_data['chart_data']
-                        if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                            ohlc_df = chart_data
-
-                # SOURCE 5: Try Advanced Chart Analysis session_state
-                if ohlc_df is None and 'advanced_chart_data' in st.session_state:
-                    chart_data = st.session_state.get('advanced_chart_data')
-                    if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                        ohlc_df = chart_data
-
-                # Get spot price from multiple sources (prioritize session_state)
-                if 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
-                    spot_price = st.session_state['nifty_spot']  # From Option Screener - MOST RELIABLE
-                elif 'last_spot_price' in st.session_state and st.session_state.get('last_spot_price'):
-                    spot_price = st.session_state.last_spot_price
-                elif nifty_data and 'spot_price' in nifty_data:
-                    spot_price = nifty_data['spot_price']
-                elif ohlc_df is not None and len(ohlc_df) > 0 and 'close' in ohlc_df.columns:
-                    spot_price = float(ohlc_df['close'].iloc[-1])  # Fallback to last close
-
-                # Get option data from multiple sources
-                # SOURCE 1: merged_df from Option Screener (has Greeks, OI, etc.)
-                if 'merged_df' in st.session_state:
-                    merged = st.session_state.get('merged_df')
-                    if isinstance(merged, pd.DataFrame) and len(merged) > 0:
-                        option_data = {'merged_df': merged, 'source': 'option_screener'}
-
-                # SOURCE 2: NIFTY Option Screener overall data
-                if option_data is None and 'overall_option_data' in st.session_state:
-                    screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
-                    if screener_data:
-                        option_data = screener_data
-
-                # SOURCE 3: nifty_screener_data
-                if option_data is None and 'nifty_screener_data' in st.session_state:
-                    option_data = st.session_state.get('nifty_screener_data')
-
-                # SOURCE 4: Direct chain cache from screener
-                if option_data is None:
-                    current_expiry = st.session_state.get('current_expiry')
-                    if current_expiry:
-                        chain_key = f"option_chain_NIFTY_{current_expiry}"
-                        if chain_key in st.session_state:
-                            option_data = st.session_state[chain_key]
-
-                # SOURCE 5: Data cache
-                if option_data is None and nifty_data and 'option_chain' in nifty_data:
-                    option_data = nifty_data['option_chain']
-
-                # Enhance option_data with all available Greeks/OI from session state
-                if option_data is None:
-                    option_data = {}
-
-                # Add ATM strike
-                if 'atm_strike' in st.session_state:
-                    option_data['atm_strike'] = st.session_state['atm_strike']
-
-                # Add market depth
-                if 'market_depth_data' in st.session_state:
-                    option_data['market_depth'] = st.session_state['market_depth_data']
-
-                # Add max pain if available
-                if 'max_pain' in st.session_state:
-                    option_data['max_pain'] = st.session_state['max_pain']
-
-                # Check if it's expiry day (Thursday in India)
-                from datetime import datetime
-                today = datetime.now()
-                is_expiry = today.weekday() == 3  # Thursday
-
-                if ohlc_df is not None and len(ohlc_df) > 20:
-                    render_market_structure_section(
-                        ohlc_df=ohlc_df,
-                        option_data=option_data,
-                        is_expiry=is_expiry,
-                        spot_price=spot_price
-                    )
-                else:
-                    st.warning("⚠️ Insufficient OHLC data for structure analysis.")
-                    st.info("Please load data first by visiting:")
-                    st.markdown("""
-                    1. **Overall Market Sentiment** tab - Click to auto-load market data
-                    2. **Advanced Chart Analysis** tab - Load chart data
-                    3. **NIFTY Option Screener** tab - Load option chain for Greeks & OI
-                    """)
-
-        except ImportError as e:
-            st.error(f"❌ Market Structure module not available: {e}")
-            st.info("Required modules: src/market_structure_features.py, src/sequence_pattern_detector.py, src/probability_engine.py, src/expiry_structure_detector.py")
-        except Exception as e:
-            st.error(f"❌ Error loading Market Structure Analysis: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-    else:
-        st.info("👆 Click 'Load Structure Analysis' to access structure-based market analysis.")
-
-        # Show quick overview
-        st.markdown("""
-        ### What is Market Structure Analysis?
-
-        **Philosophy**: Detect market STRUCTURES before price moves, not after.
-
-        | Structure | Description |
-        |-----------|-------------|
-        | **Accumulation** | Smart money buying, volume absorption, range tightening |
-        | **Distribution** | Smart money selling, supply absorption, failed breakouts |
-        | **Compression** | Volatility contracting, coiling for expansion |
-        | **Expansion** | Breakout move, directional momentum |
-        | **Manipulation** | SL hunts, fake breaks, liquidity grabs |
-
-        ### Features:
-        - 🎯 **Pattern Detection**: Silent Buildup, Fake Break, Gamma Pin Snap, SL Hunt
-        - 📊 **Probability Engine**: Historical pattern matching with confidence scores
-        - ⏰ **Expiry Structure**: Special patterns for expiry day trading
-        - 📈 **No Deep Learning**: Fast, lightweight statistical matching
-        """)
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
