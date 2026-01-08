@@ -262,11 +262,16 @@ class MarketStructureUI:
         price_features = snapshot.price_features
         last_idx = len(df) - 1
 
+        # Calculate range from recent data (last 20 bars)
+        recent_df = df.tail(20)
+        range_high = recent_df['high'].max()
+        range_low = recent_df['low'].min()
+
         # Range box
-        if price_features.range_high > 0 and price_features.range_low > 0:
+        if range_high > 0 and range_low > 0:
             fig.add_hrect(
-                y0=price_features.range_low,
-                y1=price_features.range_high,
+                y0=range_low,
+                y1=range_high,
                 fillcolor=STRUCTURE_COLORS.get(snapshot.primary_structure, "#757575"),
                 opacity=0.1,
                 line_width=0,
@@ -275,14 +280,14 @@ class MarketStructureUI:
 
             # Range boundaries
             fig.add_hline(
-                y=price_features.range_high,
+                y=range_high,
                 line_dash="dash",
                 line_color="#FF9800",
                 annotation_text="Range High",
                 row=1, col=1
             )
             fig.add_hline(
-                y=price_features.range_low,
+                y=range_low,
                 line_dash="dash",
                 line_color="#2196F3",
                 annotation_text="Range Low",
