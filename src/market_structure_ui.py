@@ -848,11 +848,11 @@ class MarketStructureUI:
         # Detected expiry patterns
         st.markdown("#### 🔍 Expiry Patterns Detected")
 
-        if analysis.detected_patterns:
-            for pattern in analysis.detected_patterns:
+        if analysis.patterns_detected:
+            for p in analysis.patterns_detected:
                 st.markdown(f"""
-                - **{pattern.pattern_type.value.replace('_', ' ')}**
-                  (Strength: {pattern.strength:.1%}, Confidence: {pattern.confidence:.1%})
+                - **{p.pattern.value.replace('_', ' ')}**
+                  (Confidence: {p.confidence:.0f}%, Direction: {p.expected_direction})
                 """)
         else:
             st.info("No specific expiry patterns detected")
@@ -860,12 +860,15 @@ class MarketStructureUI:
         # Trading recommendations
         st.markdown("#### 💡 Expiry Trading Notes")
 
-        recommendations = analysis.trading_recommendations
-        if recommendations:
-            for rec in recommendations:
-                st.markdown(f"- {rec}")
-        else:
-            st.info("No specific recommendations for current phase")
+        if analysis.action_recommendation:
+            st.info(f"**Recommendation:** {analysis.action_recommendation}")
+
+        if analysis.overall_risk:
+            risk_colors = {
+                'LOW': '🟢', 'MEDIUM': '🟡', 'HIGH': '🟠', 'EXTREME': '🔴'
+            }
+            risk_icon = risk_colors.get(analysis.overall_risk.value, '⚪')
+            st.warning(f"{risk_icon} **Risk Level:** {analysis.overall_risk.value}")
 
     def _render_structure_history(
         self,
