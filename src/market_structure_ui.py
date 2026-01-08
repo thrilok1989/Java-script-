@@ -766,9 +766,9 @@ class MarketStructureUI:
 
         # Get expiry analysis
         analysis = self.expiry_detector.analyze(
-            ohlc_df=ohlc_df,
-            option_chain=option_data,
-            spot_price=spot_price or ohlc_df['close'].iloc[-1]
+            df=ohlc_df,
+            spot_price=spot_price or ohlc_df['close'].iloc[-1],
+            option_chain=option_data
         )
 
         # Current phase
