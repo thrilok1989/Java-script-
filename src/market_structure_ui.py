@@ -827,21 +827,21 @@ class MarketStructureUI:
 
         with col1:
             st.markdown("**🎯 Gamma Pin Analysis**")
-            gamma = analysis.gamma_pin_analysis
-            if gamma:
-                st.metric("Pin Level", f"{gamma.pin_level:,.0f}")
-                st.metric("Pin Strength", f"{gamma.pin_strength:.1%}")
-                st.metric("Distance to Pin", f"{gamma.distance_to_pin:.2f}%")
+            gamma = analysis.gamma_analysis
+            if gamma and gamma.is_pinned:
+                st.metric("Pin Strike", f"{gamma.pin_strike:,.0f}")
+                st.metric("Pin Strength", f"{gamma.pin_strength:.0f}%")
+                st.metric("Distance to Snap", f"{gamma.distance_to_snap:.1f} pts")
             else:
                 st.info("No gamma pin detected")
 
         with col2:
             st.markdown("**💰 Max Pain Analysis**")
             max_pain = analysis.max_pain_analysis
-            if max_pain:
-                st.metric("Max Pain Level", f"{max_pain.max_pain_level:,.0f}")
-                st.metric("Magnet Strength", f"{max_pain.magnet_strength:.1%}")
-                st.metric("Distance to MP", f"{max_pain.distance_to_max_pain:.2f}%")
+            if max_pain and max_pain.max_pain > 0:
+                st.metric("Max Pain Level", f"{max_pain.max_pain:,.0f}")
+                st.metric("Magnet Strength", f"{max_pain.magnet_strength:.0f}%")
+                st.metric("Distance to MP", f"{max_pain.distance_pct:.2f}%")
             else:
                 st.info("No max pain data available")
 
