@@ -3,7 +3,7 @@ Direct Trading App - Lightweight Trading Platform
 ==================================================
 
 A focused trading interface for NIFTY and SENSEX options with ATM ± 5 strikes.
-Reuses all data fetching and caching infrastructure from the main app.
+Fetches its own data using the same infrastructure as the main app.
 
 Features:
 - ATM ± 5 strike selection
@@ -23,9 +23,22 @@ import requests
 
 # Import shared modules from main app
 from config import *
-from data_cache_manager import get_cached_nifty_data, get_cached_sensex_data
-from dhan_data_fetcher import DhanDataFetcher
+from dhan_data_fetcher import DhanDataFetcher, get_nifty_data, get_sensex_data
 from market_hours_scheduler import is_within_trading_hours, get_market_status
+
+# ═══════════════════════════════════════════════════════════════════════
+# DATA FETCHING - Independent cache for this app
+# ═══════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=10)  # Cache for 10 seconds
+def fetch_nifty_data():
+    """Fetch fresh NIFTY data"""
+    return get_nifty_data()
+
+@st.cache_data(ttl=10)  # Cache for 10 seconds
+def fetch_sensex_data():
+    """Fetch fresh SENSEX data"""
+    return get_sensex_data()
 
 # ═══════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -119,27 +132,48 @@ with col1:
         key="trade_index"
     )
 
-# Get index data - Always fetch fresh from cache
-if trade_index == "NIFTY":
-    index_data = get_cached_nifty_data()
-    strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
-else:
-    index_data = get_cached_sensex_data()
-    strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
+# Get index data - Fetch fresh data with Streamlit caching
+with st.spinner(f"Loading {trade_index} data..."):
+    if trade_index == "NIFTY":
+        index_data = fetch_nifty_data()
+        strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
+    else:
+        index_data = fetch_sensex_data()
+        strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
 
 # Check if data is available
 if not index_data or not index_data.get('success'):
-    st.warning(f"⏳ Loading {trade_index} data from cache...")
+    st.error(f"❌ Failed to load {trade_index} data")
+
+    error_msg = index_data.get('error', 'Unknown error') if index_data else 'No data returned'
+    st.error(f"**Error:** {error_msg}")
+
+    # Show helpful messages
+    if 'credentials' in error_msg.lower() or 'secrets' in error_msg.lower():
+        st.info("""
+        **Dhan API Setup Required:**
+        1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
+        2. Add your Dhan API credentials
+        3. Restart the app
+        """)
+    else:
+        st.info("""
+        **Troubleshooting:**
+        - Check internet connection
+        - Verify Dhan API credentials in `.streamlit/secrets.toml`
+        - Wait a moment and click the Refresh button
+        - Check if market is open (data works better during trading hours)
+        """)
 
     with st.expander("🔍 Debug Info"):
         st.json({
             'data_exists': index_data is not None,
             'success': index_data.get('success') if index_data else None,
-            'error': index_data.get('error') if index_data else None
+            'error': error_msg,
+            'spot_price': index_data.get('spot_price') if index_data else None,
+            'atm_strike': index_data.get('atm_strike') if index_data else None
         })
 
-    st.info("💡 **Note:** This app uses the same data cache as the main app. "
-           "If data isn't loading, make sure the main app is running or has run recently.")
     st.stop()
 
 # Extract data
