@@ -229,19 +229,44 @@ ltp_map = {'CE': {}, 'PE': {}}
 if option_chain_data and option_chain_data.get('success'):
     option_data = option_chain_data.get('data', {})
 
-    # Parse CE data
-    for ce_option in option_data.get('CE', []):
-        strike = ce_option.get('strike_price')
-        ltp = ce_option.get('ltp', 0)
-        if strike:
-            ltp_map['CE'][int(strike)] = ltp
+    # Dhan API returns data in 'oc' (option chain) structure
+    # Structure: {"oc": {"25000": {"ce": {...}, "pe": {...}}, "25050": {...}}}
+    oc_data = option_data.get('oc', {})
 
-    # Parse PE data
-    for pe_option in option_data.get('PE', []):
-        strike = pe_option.get('strike_price')
-        ltp = pe_option.get('ltp', 0)
-        if strike:
-            ltp_map['PE'][int(strike)] = ltp
+    if oc_data:
+        # Parse each strike
+        for strike_str, strike_data in oc_data.items():
+            try:
+                strike = int(float(strike_str))
+            except (ValueError, TypeError):
+                continue
+
+            # Parse CE (Call) data
+            ce_data = strike_data.get('ce')
+            if ce_data:
+                ltp = ce_data.get('last_price', 0) or ce_data.get('ltp', 0)
+                if ltp:
+                    ltp_map['CE'][strike] = float(ltp)
+
+            # Parse PE (Put) data
+            pe_data = strike_data.get('pe')
+            if pe_data:
+                ltp = pe_data.get('last_price', 0) or pe_data.get('ltp', 0)
+                if ltp:
+                    ltp_map['PE'][strike] = float(ltp)
+    else:
+        # Show debug info if no option chain data
+        with st.expander("⚠️ No Option Chain Data - Click to Debug"):
+            st.warning("Option chain data structure is empty or unexpected.")
+            st.json({
+                'success': option_chain_data.get('success'),
+                'data_keys': list(option_data.keys()) if option_data else [],
+                'sample_data': str(option_data)[:500] if option_data else 'No data'
+            })
+else:
+    st.warning("⚠️ Unable to fetch option chain data. LTP will not be available.")
+    if option_chain_data:
+        st.error(f"Error: {option_chain_data.get('error', 'Unknown error')}")
 
 st.divider()
 
