@@ -37,30 +37,41 @@ def get_dhan_credentials():
         return None
 
 def get_telegram_credentials():
-    """Load Telegram credentials from secrets - supports dual chat IDs"""
+    """Load Telegram credentials from secrets - supports two separate bots"""
     try:
-        # Support for dual chat IDs (yours and your husband's)
-        chat_ids = []
+        # Support for two separate bots (yours and your husband's)
+        bots = []
 
-        # Primary chat ID (CHAT_ID_1 or legacy CHAT_ID)
-        if "CHAT_ID_1" in st.secrets["TELEGRAM"]:
-            chat_ids.append(st.secrets["TELEGRAM"]["CHAT_ID_1"])
-        elif "CHAT_ID" in st.secrets["TELEGRAM"]:
-            chat_ids.append(st.secrets["TELEGRAM"]["CHAT_ID"])
+        # Bot 1: Your bot
+        if "BOT_TOKEN_1" in st.secrets["TELEGRAM"] and "CHAT_ID_1" in st.secrets["TELEGRAM"]:
+            bots.append({
+                'bot_token': st.secrets["TELEGRAM"]["BOT_TOKEN_1"],
+                'chat_id': st.secrets["TELEGRAM"]["CHAT_ID_1"]
+            })
 
-        # Secondary chat ID (CHAT_ID_2)
-        if "CHAT_ID_2" in st.secrets["TELEGRAM"]:
-            chat_ids.append(st.secrets["TELEGRAM"]["CHAT_ID_2"])
+        # Bot 2: Husband's bot
+        if "BOT_TOKEN_2" in st.secrets["TELEGRAM"] and "CHAT_ID_2" in st.secrets["TELEGRAM"]:
+            bots.append({
+                'bot_token': st.secrets["TELEGRAM"]["BOT_TOKEN_2"],
+                'chat_id': st.secrets["TELEGRAM"]["CHAT_ID_2"]
+            })
+
+        # Fallback to legacy single bot configuration
+        if not bots and "BOT_TOKEN" in st.secrets["TELEGRAM"] and "CHAT_ID" in st.secrets["TELEGRAM"]:
+            bots.append({
+                'bot_token': st.secrets["TELEGRAM"]["BOT_TOKEN"],
+                'chat_id': st.secrets["TELEGRAM"]["CHAT_ID"]
+            })
 
         return {
-            'bot_token': st.secrets["TELEGRAM"]["BOT_TOKEN"],
-            'chat_ids': chat_ids,  # List of chat IDs
-            'chat_id': chat_ids[0] if chat_ids else None,  # Backward compatibility
-            'enabled': len(chat_ids) > 0
+            'bots': bots,  # List of bot configurations
+            'bot_token': bots[0]['bot_token'] if bots else None,  # Backward compatibility
+            'chat_id': bots[0]['chat_id'] if bots else None,  # Backward compatibility
+            'enabled': len(bots) > 0
         }
     except Exception as e:
         print(f"⚠️ Telegram credentials missing: {e}")
-        return {'enabled': False, 'chat_ids': []}
+        return {'enabled': False, 'bots': []}
 
 # ═══════════════════════════════════════════════════════════════════════
 # AI CONFIGURATION - Loaded from Streamlit Secrets

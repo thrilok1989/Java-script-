@@ -9,28 +9,27 @@ from typing import Dict, Any, Optional
 
 class TelegramBot:
     def __init__(self):
-        """Initialize Telegram bot with support for multiple chat IDs"""
+        """Initialize Telegram bot with support for two separate bots"""
         creds = get_telegram_credentials()
         self.enabled = creds['enabled']
 
         if self.enabled:
-            self.bot_token = creds['bot_token']
-            self.chat_ids = creds.get('chat_ids', [])  # List of chat IDs
+            self.bots = creds.get('bots', [])  # List of bot configs
+            self.bot_token = creds.get('bot_token')  # Backward compatibility
             self.chat_id = creds.get('chat_id')  # Backward compatibility
-            self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
 
     def send_message(self, message: str, parse_mode: str = "HTML"):
-        """Send Telegram message to all configured chat IDs"""
+        """Send Telegram message using all configured bots"""
         if not self.enabled:
             return False
 
         success = False
         try:
-            url = f"{self.base_url}/sendMessage"
-            # Send to all chat IDs
-            for chat_id in self.chat_ids:
+            # Send via each bot to its respective chat
+            for bot in self.bots:
+                url = f"https://api.telegram.org/bot{bot['bot_token']}/sendMessage"
                 payload = {
-                    "chat_id": chat_id,
+                    "chat_id": bot['chat_id'],
                     "text": message,
                     "parse_mode": parse_mode
                 }
@@ -45,18 +44,18 @@ class TelegramBot:
             return False
 
     async def send_message_async(self, message: str, parse_mode: str = "HTML"):
-        """Send Telegram message asynchronously to all configured chat IDs"""
+        """Send Telegram message asynchronously using all configured bots"""
         if not self.enabled:
             return False
 
         success = False
         try:
-            url = f"{self.base_url}/sendMessage"
             async with aiohttp.ClientSession() as session:
-                # Send to all chat IDs
-                for chat_id in self.chat_ids:
+                # Send via each bot to its respective chat
+                for bot in self.bots:
+                    url = f"https://api.telegram.org/bot{bot['bot_token']}/sendMessage"
                     payload = {
-                        "chat_id": chat_id,
+                        "chat_id": bot['chat_id'],
                         "text": message,
                         "parse_mode": parse_mode
                     }
