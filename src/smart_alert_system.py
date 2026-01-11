@@ -163,7 +163,7 @@ class SmartAlertSystem:
 
     def send_telegram(self, message: str, priority: str = "MEDIUM") -> Tuple[bool, str]:
         """
-        Send alert to Telegram
+        Send alert to Telegram (both configured recipients)
 
         Args:
             message: Alert message
@@ -173,39 +173,28 @@ class SmartAlertSystem:
             (success, response_message)
         """
         try:
-            # Get Telegram credentials
-            try:
-                bot_token = st.secrets["TELEGRAM"]["BOT_TOKEN"]
-                chat_id = st.secrets["TELEGRAM"]["CHAT_ID"]
-            except:
-                bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
-                chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+            # Import TelegramBot to use dual-bot support
+            from telegram_alerts import TelegramBot
 
-            if not bot_token or not chat_id:
+            bot = TelegramBot()
+            if not bot.enabled:
                 return False, "Telegram not configured"
 
             # Add priority emoji
             if priority == "HIGH":
-                message = f"🚨🚨 *HIGH PRIORITY* 🚨🚨\n\n{message}"
+                message = f"🚨🚨 <b>HIGH PRIORITY</b> 🚨🚨\n\n{message}"
             elif priority == "MEDIUM":
-                message = f"⚠️ *ALERT* ⚠️\n\n{message}"
+                message = f"⚠️ <b>ALERT</b> ⚠️\n\n{message}"
             else:
-                message = f"ℹ️ *INFO*\n\n{message}"
+                message = f"ℹ️ <b>INFO</b>\n\n{message}"
 
-            # Send message
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            payload = {
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "Markdown"
-            }
+            # Send message via TelegramBot (sends to all configured bots)
+            success = bot.send_message(message, parse_mode="HTML")
 
-            response = requests.post(url, json=payload, timeout=10)
-
-            if response.status_code == 200:
+            if success:
                 return True, "Sent successfully"
             else:
-                return False, f"Telegram API error: {response.status_code}"
+                return False, "Failed to send message"
 
         except Exception as e:
             return False, f"Error: {str(e)}"
@@ -480,7 +469,7 @@ class SmartAlertSystem:
             # Send Telegram if enabled
             if send_telegram:
                 success, msg = self.send_telegram(
-                    f"*{alert.title}*\n\n{alert.message}\n\n📊 Direction: {alert.direction}",
+                    f"<b>{alert.title}</b>\n\n{alert.message}\n\n📊 Direction: {alert.direction}",
                     priority=alert.priority
                 )
 
@@ -531,7 +520,7 @@ def check_and_send_alerts() -> Dict:
 
 def send_custom_alert(title: str, message: str, priority: str = "MEDIUM") -> Tuple[bool, str]:
     """
-    Send a custom alert to Telegram
+    Send a custom alert to Telegram (both configured recipients)
 
     Usage:
         from src.smart_alert_system import send_custom_alert
@@ -543,5 +532,5 @@ def send_custom_alert(title: str, message: str, priority: str = "MEDIUM") -> Tup
         )
     """
     system = get_alert_system()
-    full_message = f"*{title}*\n\n{message}"
+    full_message = f"<b>{title}</b>\n\n{message}"
     return system.send_telegram(full_message, priority)
