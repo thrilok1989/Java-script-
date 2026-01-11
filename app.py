@@ -1096,12 +1096,14 @@ with tab2:
 
         # Check if data is available
         if not index_data or not index_data.get('success'):
-            # Show loading message
-            st.warning(f"⏳ Waiting for {trade_index} data to load...")
+            # Check if we have a real error or just loading
+            error_msg = index_data.get('error', '') if index_data else ''
+            is_real_error = error_msg and error_msg.lower() not in ['loading...', 'loading', '']
 
-            if index_data and index_data.get('error'):
-                error_msg = index_data.get('error')
-                st.error(f"❌ **Error:** {error_msg}")
+            if is_real_error:
+                # Real error - show error message
+                st.error(f"❌ Failed to load {trade_index} data")
+                st.error(f"**Error:** {error_msg}")
 
                 # Show credentials help if needed
                 if 'credentials' in error_msg.lower() or 'secrets.toml' in error_msg.lower():
@@ -1116,10 +1118,19 @@ with tab2:
                        ```
                     3. Restart the application
                     """)
+                elif 'rate limit' in error_msg.lower() or '429' in error_msg:
+                    st.warning("⚠️ API rate limit reached. Please wait a few minutes and try again.")
+                else:
+                    st.info("💡 **Troubleshooting:**\n\n"
+                           "- Check your internet connection\n"
+                           "- Verify Dhan API credentials are correct\n"
+                           "- Try refreshing the page\n"
+                           "- Check if market is open (data loads better during trading hours)")
             else:
-                st.info("🔄 **Background data loading in progress...**\n\n"
-                       "The data will appear automatically when ready (typically 10-30 seconds).\n\n"
-                       "The page will refresh automatically.")
+                # Just loading - show friendly loading message
+                st.info("🔄 **Loading market data...**\n\n"
+                       f"Fetching {trade_index} data from Dhan API. This typically takes 10-30 seconds on first load.\n\n"
+                       "The page will refresh automatically when data is ready.")
 
             # Debug view (expandable)
             with st.expander("🔍 Debug: View Data Status"):
@@ -1128,7 +1139,8 @@ with tab2:
                     'success_flag': index_data.get('success') if index_data else None,
                     'spot_price': index_data.get('spot_price') if index_data else None,
                     'atm_strike': index_data.get('atm_strike') if index_data else None,
-                    'error': index_data.get('error') if index_data else None
+                    'error': error_msg if error_msg else 'No error',
+                    'is_real_error': is_real_error
                 })
 
         else:
