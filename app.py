@@ -1086,9 +1086,9 @@ with tab2:
                 key="trade_index"
             )
 
-        # Get index data
+        # Get index data - Always fetch fresh from cache
         if trade_index == "NIFTY":
-            index_data = nifty_data
+            index_data = get_cached_nifty_data()  # Fetch fresh data from cache
             strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
         else:
             index_data = get_cached_sensex_data()
