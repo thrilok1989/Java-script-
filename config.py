@@ -37,16 +37,30 @@ def get_dhan_credentials():
         return None
 
 def get_telegram_credentials():
-    """Load Telegram credentials from secrets"""
+    """Load Telegram credentials from secrets - supports dual chat IDs"""
     try:
+        # Support for dual chat IDs (yours and your husband's)
+        chat_ids = []
+
+        # Primary chat ID (CHAT_ID_1 or legacy CHAT_ID)
+        if "CHAT_ID_1" in st.secrets["TELEGRAM"]:
+            chat_ids.append(st.secrets["TELEGRAM"]["CHAT_ID_1"])
+        elif "CHAT_ID" in st.secrets["TELEGRAM"]:
+            chat_ids.append(st.secrets["TELEGRAM"]["CHAT_ID"])
+
+        # Secondary chat ID (CHAT_ID_2)
+        if "CHAT_ID_2" in st.secrets["TELEGRAM"]:
+            chat_ids.append(st.secrets["TELEGRAM"]["CHAT_ID_2"])
+
         return {
             'bot_token': st.secrets["TELEGRAM"]["BOT_TOKEN"],
-            'chat_id': st.secrets["TELEGRAM"]["CHAT_ID"],
-            'enabled': True
+            'chat_ids': chat_ids,  # List of chat IDs
+            'chat_id': chat_ids[0] if chat_ids else None,  # Backward compatibility
+            'enabled': len(chat_ids) > 0
         }
     except Exception as e:
         print(f"⚠️ Telegram credentials missing: {e}")
-        return {'enabled': False}
+        return {'enabled': False, 'chat_ids': []}
 
 # ═══════════════════════════════════════════════════════════════════════
 # AI CONFIGURATION - Loaded from Streamlit Secrets

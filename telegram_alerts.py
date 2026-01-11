@@ -9,47 +9,64 @@ from typing import Dict, Any, Optional
 
 class TelegramBot:
     def __init__(self):
-        """Initialize Telegram bot"""
+        """Initialize Telegram bot with support for multiple chat IDs"""
         creds = get_telegram_credentials()
         self.enabled = creds['enabled']
-        
+
         if self.enabled:
             self.bot_token = creds['bot_token']
-            self.chat_id = creds['chat_id']
+            self.chat_ids = creds.get('chat_ids', [])  # List of chat IDs
+            self.chat_id = creds.get('chat_id')  # Backward compatibility
             self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-    
+
     def send_message(self, message: str, parse_mode: str = "HTML"):
-        """Send Telegram message"""
+        """Send Telegram message to all configured chat IDs"""
         if not self.enabled:
             return False
-        
+
+        success = False
         try:
             url = f"{self.base_url}/sendMessage"
-            payload = {
-                "chat_id": self.chat_id,
-                "text": message,
-                "parse_mode": parse_mode
-            }
-            response = requests.post(url, json=payload, timeout=5)
-            return response.status_code == 200
+            # Send to all chat IDs
+            for chat_id in self.chat_ids:
+                payload = {
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": parse_mode
+                }
+                try:
+                    response = requests.post(url, json=payload, timeout=5)
+                    if response.status_code == 200:
+                        success = True
+                except:
+                    continue
+            return success
         except:
             return False
-    
+
     async def send_message_async(self, message: str, parse_mode: str = "HTML"):
-        """Send Telegram message asynchronously"""
+        """Send Telegram message asynchronously to all configured chat IDs"""
         if not self.enabled:
             return False
-        
+
+        success = False
         try:
             url = f"{self.base_url}/sendMessage"
-            payload = {
-                "chat_id": self.chat_id,
-                "text": message,
-                "parse_mode": parse_mode
-            }
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=10) as response:
-                    return response.status == 200
+                # Send to all chat IDs
+                for chat_id in self.chat_ids:
+                    payload = {
+                        "chat_id": chat_id,
+                        "text": message,
+                        "parse_mode": parse_mode
+                    }
+                    try:
+                        async with session.post(url, json=payload, timeout=10) as response:
+                            if response.status == 200:
+                                success = True
+                    except:
+                        continue
+            return success
         except:
             return False
     
