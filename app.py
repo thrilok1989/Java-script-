@@ -1095,7 +1095,41 @@ with tab2:
 
         # Check if data is available
         if not index_data or not index_data.get('success'):
-            st.error(f"❌ {trade_index} data not available. Please wait for data to load.")
+            # Show loading message
+            st.warning(f"⏳ Waiting for {trade_index} data to load...")
+
+            if index_data and index_data.get('error'):
+                error_msg = index_data.get('error')
+                st.error(f"❌ **Error:** {error_msg}")
+
+                # Show credentials help if needed
+                if 'credentials' in error_msg.lower() or 'secrets.toml' in error_msg.lower():
+                    st.info("""
+                    **Dhan API Setup Required:**
+                    1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
+                    2. Add your Dhan API credentials:
+                       ```
+                       [dhan]
+                       client_id = "your_client_id"
+                       access_token = "your_access_token"
+                       ```
+                    3. Restart the application
+                    """)
+            else:
+                st.info("🔄 **Background data loading in progress...**\n\n"
+                       "The data will appear automatically when ready (typically 10-30 seconds).\n\n"
+                       "The page will refresh automatically.")
+
+            # Debug view (expandable)
+            with st.expander("🔍 Debug: View Data Status"):
+                st.json({
+                    'index_data_exists': index_data is not None,
+                    'success_flag': index_data.get('success') if index_data else None,
+                    'spot_price': index_data.get('spot_price') if index_data else None,
+                    'atm_strike': index_data.get('atm_strike') if index_data else None,
+                    'error': index_data.get('error') if index_data else None
+                })
+
         else:
             spot_price = index_data.get('spot_price', 0)
             atm_strike = index_data.get('atm_strike', 0)
@@ -1214,34 +1248,87 @@ with tab2:
                     # Confirmation
                     if st.button("✅ Confirm Market Order", key="confirm_market"):
                         try:
-                            from dhan_api import DhanAPI
+                            # First, fetch option chain to get security ID
+                            from dhan_data_fetcher import DhanDataFetcher
 
-                            dhan = DhanAPI()
+                            fetcher = DhanDataFetcher()
+                            option_chain_result = fetcher.fetch_option_chain(trade_index, current_expiry)
 
-                            # Basic SL and target (30 points offset for demo)
-                            sl_offset = 30 if option_type == "CE" else -30
-                            target_offset = 50 if option_type == "CE" else -50
-
-                            sl_price = spot_price + sl_offset if option_type == "CE" else spot_price - abs(sl_offset)
-                            target_price = spot_price + target_offset if option_type == "CE" else spot_price - abs(target_offset)
-
-                            # Place order
-                            result = dhan.place_super_order(
-                                index=trade_index,
-                                strike=selected_strike,
-                                option_type=option_type,
-                                direction="BUY",
-                                quantity=total_quantity,
-                                sl_price=sl_price,
-                                target_price=target_price
-                            )
-
-                            if result.get('success'):
-                                st.success(f"✅ Order placed successfully! Order ID: {result.get('order_id')}")
+                            if not option_chain_result.get('success'):
+                                st.error(f"❌ Failed to fetch option chain: {option_chain_result.get('error', 'Unknown error')}")
+                                st.info("**Note:** Option chain data is required to get the security ID for order placement.")
                             else:
-                                st.error(f"❌ Order failed: {result.get('error', 'Unknown error')}")
+                                # Extract option chain data
+                                option_data = option_chain_result.get('data', {})
+
+                                # Find the security ID for the selected strike and option type
+                                security_id = None
+
+                                # Search in CE or PE data
+                                option_list = option_data.get('CE' if option_type == 'CE' else 'PE', [])
+
+                                for option in option_list:
+                                    if option.get('strike_price') == selected_strike:
+                                        security_id = option.get('security_id')
+                                        break
+
+                                if not security_id:
+                                    st.error(f"❌ Could not find security ID for {trade_index} {selected_strike} {option_type}")
+                                    st.info("**Debug Info:**\n\n"
+                                           f"Looking for strike: {selected_strike}\n"
+                                           f"Option type: {option_type}\n"
+                                           f"Expiry: {current_expiry}")
+                                else:
+                                    # Place order using Dhan API
+                                    from dhan_api import DhanAPI
+                                    import requests
+
+                                    creds = get_dhan_credentials()
+
+                                    if not creds:
+                                        st.error("❌ Dhan API credentials not found")
+                                    else:
+                                        # Prepare order request
+                                        order_data = {
+                                            "dhanClientId": creds['client_id'],
+                                            "transactionType": "BUY",
+                                            "exchangeSegment": "NSE_FNO" if trade_index == "NIFTY" else "BSE_FNO",
+                                            "productType": "INTRADAY",
+                                            "orderType": "MARKET",
+                                            "validity": "DAY",
+                                            "securityId": str(security_id),
+                                            "quantity": int(total_quantity),
+                                            "disclosedQuantity": 0,
+                                            "price": 0.0,
+                                            "triggerPrice": 0.0,
+                                            "afterMarketOrder": False
+                                        }
+
+                                        headers = {
+                                            'Content-Type': 'application/json',
+                                            'access-token': creds['access_token']
+                                        }
+
+                                        # Place order
+                                        response = requests.post(
+                                            "https://api.dhan.co/v2/orders",
+                                            json=order_data,
+                                            headers=headers,
+                                            timeout=10
+                                        )
+
+                                        if response.status_code == 200:
+                                            result = response.json()
+                                            st.success(f"✅ Order placed successfully!\n\n"
+                                                      f"Order ID: {result.get('orderId')}\n"
+                                                      f"Status: {result.get('orderStatus')}")
+                                        else:
+                                            st.error(f"❌ Order failed: {response.text}")
                         except Exception as e:
                             st.error(f"❌ Error placing order: {str(e)}")
+                            import traceback
+                            with st.expander("🔍 View Error Details"):
+                                st.code(traceback.format_exc())
 
             with col2:
                 limit_price = st.number_input(
