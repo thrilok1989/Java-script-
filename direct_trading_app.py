@@ -30,6 +30,12 @@ from market_hours_scheduler import is_within_trading_hours, get_market_status
 # DATA FETCHING - Independent cache for this app
 # ═══════════════════════════════════════════════════════════════════════
 
+# Updated lot sizes
+LOT_SIZES_TRADING = {
+    "NIFTY": 60,
+    "SENSEX": 20
+}
+
 @st.cache_data(ttl=10)  # Cache for 10 seconds
 def fetch_nifty_data():
     """Fetch fresh NIFTY data"""
@@ -39,6 +45,12 @@ def fetch_nifty_data():
 def fetch_sensex_data():
     """Fetch fresh SENSEX data"""
     return get_sensex_data()
+
+@st.cache_data(ttl=5)  # Cache for 5 seconds (more frequent for LTP)
+def fetch_option_chain(index, expiry):
+    """Fetch option chain for LTP data"""
+    fetcher = DhanDataFetcher()
+    return fetcher.fetch_option_chain(index, expiry)
 
 # ═══════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -182,8 +194,10 @@ atm_strike = index_data.get('atm_strike', 0)
 current_expiry = index_data.get('current_expiry', 'N/A')
 
 # Display key metrics
+lot_size = LOT_SIZES_TRADING.get(trade_index, 50)
+
 with col2:
-    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
 
     with metric_col1:
         st.metric("Spot Price", f"₹{spot_price:,.2f}")
@@ -195,7 +209,39 @@ with col2:
         st.metric("Strike Gap", f"{strike_gap}")
 
     with metric_col4:
+        st.metric("Lot Size", f"{lot_size}")
+
+    with metric_col5:
         st.metric("Expiry", current_expiry)
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════════════════
+# FETCH OPTION CHAIN FOR LTP DATA
+# ═══════════════════════════════════════════════════════════════════════
+
+# Fetch option chain to get LTP
+option_chain_data = fetch_option_chain(trade_index, current_expiry)
+
+# Parse option chain to get LTP for each strike
+ltp_map = {'CE': {}, 'PE': {}}
+
+if option_chain_data and option_chain_data.get('success'):
+    option_data = option_chain_data.get('data', {})
+
+    # Parse CE data
+    for ce_option in option_data.get('CE', []):
+        strike = ce_option.get('strike_price')
+        ltp = ce_option.get('ltp', 0)
+        if strike:
+            ltp_map['CE'][int(strike)] = ltp
+
+    # Parse PE data
+    for pe_option in option_data.get('PE', []):
+        strike = pe_option.get('strike_price')
+        ltp = pe_option.get('ltp', 0)
+        if strike:
+            ltp_map['PE'][int(strike)] = ltp
 
 st.divider()
 
@@ -215,22 +261,33 @@ for i in range(-5, 6):  # -5 to +5
         'is_atm': i == 0
     })
 
-# Create two columns for CE and PE
-col_ce, col_pe = st.columns(2)
+# Create columns for headers
+col_ce_btn, col_ce_ltp, col_pe_ltp, col_pe_btn = st.columns([3, 1, 1, 3])
 
-with col_ce:
+with col_ce_btn:
     st.markdown("### 📈 CALL (CE)")
 
-with col_pe:
+with col_ce_ltp:
+    st.markdown("**LTP**")
+
+with col_pe_ltp:
+    st.markdown("**LTP**")
+
+with col_pe_btn:
     st.markdown("### 📉 PUT (PE)")
 
-# Display strikes in a grid
+# Display strikes in a grid with LTP
 for strike_info in strikes:
     strike = strike_info['strike']
     offset = strike_info['offset']
     is_atm = strike_info['is_atm']
 
-    col_ce, col_pe = st.columns(2)
+    # Get LTP values
+    ce_ltp = ltp_map['CE'].get(strike, 0)
+    pe_ltp = ltp_map['PE'].get(strike, 0)
+
+    # 4 columns: CE Button | CE LTP | PE LTP | PE Button
+    col_ce_btn, col_ce_ltp, col_pe_ltp, col_pe_btn = st.columns([3, 1, 1, 3])
 
     # Strike label
     if offset == 0:
@@ -240,7 +297,7 @@ for strike_info in strikes:
     else:
         label = f"{strike:,} (ATM{offset})"
 
-    with col_ce:
+    with col_ce_btn:
         if st.button(
             f"BUY {label} CE",
             key=f"ce_{strike}",
@@ -251,7 +308,19 @@ for strike_info in strikes:
             st.session_state['selected_type'] = 'CE'
             st.session_state['show_order_dialog'] = True
 
-    with col_pe:
+    with col_ce_ltp:
+        if ce_ltp > 0:
+            st.markdown(f"**₹{ce_ltp:.2f}**")
+        else:
+            st.markdown("—")
+
+    with col_pe_ltp:
+        if pe_ltp > 0:
+            st.markdown(f"**₹{pe_ltp:.2f}**")
+        else:
+            st.markdown("—")
+
+    with col_pe_btn:
         if st.button(
             f"BUY {label} PE",
             key=f"pe_{strike}",
@@ -295,8 +364,8 @@ if st.session_state.get('show_order_dialog', False):
             key="order_type"
         )
 
-    lot_size = LOT_SIZES.get(trade_index, 50)
-    total_quantity = lots * lot_size
+    lot_size_dialog = LOT_SIZES_TRADING.get(trade_index, 50)
+    total_quantity = lots * lot_size_dialog
 
     if order_type == "LIMIT":
         limit_price = st.number_input(
@@ -307,7 +376,7 @@ if st.session_state.get('show_order_dialog', False):
             key="limit_price"
         )
 
-    st.markdown(f"**Total Quantity:** {total_quantity} ({lots} lots × {lot_size})")
+    st.markdown(f"**Total Quantity:** {total_quantity} ({lots} lots × {lot_size_dialog})")
 
     # Order buttons
     col1, col2, col3 = st.columns([1, 1, 2])
@@ -408,12 +477,80 @@ with st.sidebar:
 
                 if positions:
                     st.subheader("📈 Open Positions")
-                    for pos in positions:
-                        with st.expander(f"{pos.get('tradingSymbol', 'N/A')}"):
-                            st.write(f"Qty: {pos.get('quantity', 0)}")
-                            st.write(f"Avg: ₹{pos.get('avgPrice', 0):.2f}")
-                            st.write(f"LTP: ₹{pos.get('ltp', 0):.2f}")
-                            st.write(f"P&L: ₹{pos.get('realizedProfit', 0):.2f}")
+                    for idx, pos in enumerate(positions):
+                        symbol = pos.get('tradingSymbol', 'N/A')
+                        qty = pos.get('quantity', 0)
+                        avg_price = pos.get('avgPrice', 0)
+                        ltp = pos.get('ltp', 0)
+                        unrealized_pnl = pos.get('unrealizedProfit', 0)
+                        realized_pnl = pos.get('realizedProfit', 0)
+
+                        # Calculate P&L
+                        if ltp and avg_price and qty:
+                            pnl = (ltp - avg_price) * qty
+                            pnl_pct = ((ltp - avg_price) / avg_price * 100) if avg_price > 0 else 0
+                        else:
+                            pnl = unrealized_pnl or 0
+                            pnl_pct = 0
+
+                        # Color based on P&L
+                        pnl_color = "🟢" if pnl >= 0 else "🔴"
+
+                        with st.container():
+                            st.markdown(f"**{symbol}** {pnl_color}")
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Qty", f"{qty}")
+                                st.metric("Avg", f"₹{avg_price:.2f}")
+                            with col2:
+                                st.metric("LTP", f"₹{ltp:.2f}")
+                                st.metric("P&L", f"₹{pnl:.2f}", f"{pnl_pct:+.2f}%")
+
+                            # Exit button
+                            if st.button(
+                                f"🚪 Exit {symbol}",
+                                key=f"exit_{idx}_{symbol}",
+                                use_container_width=True,
+                                type="secondary"
+                            ):
+                                try:
+                                    # Place exit order (opposite side)
+                                    exit_transaction = "SELL" if qty > 0 else "BUY"
+                                    security_id = pos.get('securityId')
+                                    exchange_segment = pos.get('exchangeSegment')
+
+                                    exit_order_data = {
+                                        "dhanClientId": creds['client_id'],
+                                        "transactionType": exit_transaction,
+                                        "exchangeSegment": exchange_segment,
+                                        "productType": pos.get('productType', 'INTRADAY'),
+                                        "orderType": "MARKET",
+                                        "validity": "DAY",
+                                        "securityId": str(security_id),
+                                        "quantity": abs(qty),
+                                        "price": 0.0,
+                                        "triggerPrice": 0.0,
+                                        "afterMarketOrder": False
+                                    }
+
+                                    exit_response = requests.post(
+                                        "https://api.dhan.co/v2/orders",
+                                        json=exit_order_data,
+                                        headers=headers,
+                                        timeout=10
+                                    )
+
+                                    if exit_response.status_code == 200:
+                                        result = exit_response.json()
+                                        st.success(f"✅ Exit order placed! Order ID: {result.get('orderId')}")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Exit failed: {exit_response.text}")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
+
+                            st.divider()
                 else:
                     st.info("No open positions")
 
