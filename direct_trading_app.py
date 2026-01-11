@@ -342,12 +342,21 @@ if st.session_state.get('show_order_dialog', False):
     selected_strike = st.session_state.get('selected_strike')
     selected_type = st.session_state.get('selected_type')
 
-    col1, col2, col3 = st.columns([2, 2, 2])
+    # Get LTP for selected strike
+    selected_ltp = ltp_map[selected_type].get(selected_strike, 0)
+
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
 
     with col1:
         st.info(f"**Strike:** {selected_strike:,} {selected_type}")
 
     with col2:
+        if selected_ltp > 0:
+            st.metric("LTP", f"₹{selected_ltp:.2f}")
+        else:
+            st.warning("LTP: N/A")
+
+    with col3:
         lots = st.number_input(
             "Lots",
             min_value=1,
@@ -357,7 +366,7 @@ if st.session_state.get('show_order_dialog', False):
             key="order_lots"
         )
 
-    with col3:
+    with col4:
         order_type = st.selectbox(
             "Order Type",
             ["MARKET", "LIMIT"],
@@ -367,16 +376,48 @@ if st.session_state.get('show_order_dialog', False):
     lot_size_dialog = LOT_SIZES_TRADING.get(trade_index, 50)
     total_quantity = lots * lot_size_dialog
 
+    # Calculate estimated cost
+    if selected_ltp > 0:
+        estimated_cost = total_quantity * selected_ltp
+    else:
+        estimated_cost = 0
+
     if order_type == "LIMIT":
         limit_price = st.number_input(
             "Limit Price",
             min_value=0.05,
-            value=50.0,
+            value=float(selected_ltp) if selected_ltp > 0 else 50.0,
             step=0.05,
             key="limit_price"
         )
+        # Recalculate with limit price
+        estimated_cost = total_quantity * limit_price
 
-    st.markdown(f"**Total Quantity:** {total_quantity} ({lots} lots × {lot_size_dialog})")
+    # Display calculation breakdown
+    st.divider()
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.markdown("**Calculation:**")
+        st.markdown(f"• Lots: **{lots}**")
+        st.markdown(f"• Lot Size: **{lot_size_dialog}**")
+        st.markdown(f"• Total Quantity: **{total_quantity}** ({lots} × {lot_size_dialog})")
+        if order_type == "LIMIT":
+            st.markdown(f"• Limit Price: **₹{limit_price:.2f}**")
+        else:
+            st.markdown(f"• LTP: **₹{selected_ltp:.2f}**")
+
+    with col2:
+        st.markdown("**Cost Breakdown:**")
+        if order_type == "LIMIT":
+            st.markdown(f"• {total_quantity} × ₹{limit_price:.2f}")
+        else:
+            st.markdown(f"• {total_quantity} × ₹{selected_ltp:.2f}")
+        st.markdown(f"### **Total: ₹{estimated_cost:,.2f}**")
+
+        if selected_ltp > 0:
+            st.caption("💡 Estimated cost based on current LTP" if order_type == "MARKET" else "💡 Total cost at limit price")
 
     # Order buttons
     col1, col2, col3 = st.columns([1, 1, 2])
