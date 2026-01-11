@@ -942,122 +942,341 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab2:
-    st.header("🎯 Create New Trade Setup")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        selected_index = st.selectbox(
-            "Select Index",
-            ["NIFTY", "SENSEX"],
-            key="setup_index"
-        )
-    
-    with col2:
-        selected_direction = st.selectbox(
-            "Select Direction",
-            ["CALL", "PUT"],
-            key="setup_direction"
-        )
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Safe default value handling for VOB support level
-        try:
-            default_support = max(0.0, float(nifty_data['spot_price']) - 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25000.0
-        except (TypeError, ValueError):
-            default_support = 25000.0
+    st.header("🎯 Trade Setup")
 
-        vob_support = st.number_input(
-            "Support Level",
-            min_value=0.0,
-            value=default_support,
-            step=10.0,
-            key="vob_support"
-        )
+    # Create two sub-tabs: Signal Setup and Direct Trading
+    setup_subtabs = st.tabs(["📊 Signal Setup", "⚡ Direct Trading (ATM ± 5)"])
 
-    with col2:
-        # Safe default value handling for VOB resistance level
-        try:
-            default_resistance = max(0.0, float(nifty_data['spot_price']) + 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25100.0
-        except (TypeError, ValueError):
-            default_resistance = 25100.0
+    # ─────────────────────────────────────────────────────────────────────
+    # SUB-TAB 1: SIGNAL SETUP (Existing Functionality)
+    # ─────────────────────────────────────────────────────────────────────
+    with setup_subtabs[0]:
+        st.subheader("Create New Signal Setup")
 
-        vob_resistance = st.number_input(
-            "Resistance Level",
-            min_value=0.0,
-            value=default_resistance,
-            step=10.0,
-            key="vob_resistance"
-        )
-    
-    st.divider()
-    
-    # Preview calculated levels
-    st.subheader("📋 Preview Trade Levels")
-    
-    levels = calculate_levels(
-        selected_index,
-        selected_direction,
-        vob_support,
-        vob_resistance,
-        STOP_LOSS_OFFSET
-    )
+        col1, col2 = st.columns(2)
 
-    # Safe handling for spot price in strike calculation
-    safe_spot_price = 25000.0  # Default fallback value
-    if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
-        try:
-            safe_spot_price = float(nifty_data['spot_price'])
-        except (TypeError, ValueError):
-            safe_spot_price = 25000.0
+        with col1:
+            selected_index = st.selectbox(
+                "Select Index",
+                ["NIFTY", "SENSEX"],
+                key="setup_index"
+            )
 
-    strike_info = calculate_strike(
-        selected_index,
-        safe_spot_price,
-        selected_direction,
-        nifty_data.get('current_expiry', 'N/A')
-    )
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Entry Level", f"{levels['entry_level']:.2f}")
-    
-    with col2:
-        st.metric("Stop Loss", f"{levels['sl_level']:.2f}")
-    
-    with col3:
-        st.metric("Target", f"{levels['target_level']:.2f}")
-    
-    with col4:
-        st.metric("Risk:Reward", f"1:{levels['rr_ratio']}")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info(f"**Strike:** {strike_info['strike']} {strike_info['option_type']} ({strike_info['strike_type']})")
-    
-    with col2:
-        lot_size = LOT_SIZES[selected_index]
-        st.info(f"**Quantity:** {lot_size} ({selected_index} lot size)")
-    
-    st.divider()
-    
-    # Create setup button
-    if st.button("✅ Create Signal Setup", type="primary", use_container_width=True):
-        signal_id = st.session_state.signal_manager.create_setup(
+        with col2:
+            selected_direction = st.selectbox(
+                "Select Direction",
+                ["CALL", "PUT"],
+                key="setup_direction"
+            )
+
+        st.divider()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Safe default value handling for VOB support level
+            try:
+                default_support = max(0.0, float(nifty_data['spot_price']) - 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25000.0
+            except (TypeError, ValueError):
+                default_support = 25000.0
+
+            vob_support = st.number_input(
+                "Support Level",
+                min_value=0.0,
+                value=default_support,
+                step=10.0,
+                key="vob_support"
+            )
+
+        with col2:
+            # Safe default value handling for VOB resistance level
+            try:
+                default_resistance = max(0.0, float(nifty_data['spot_price']) + 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25100.0
+            except (TypeError, ValueError):
+                default_resistance = 25100.0
+
+            vob_resistance = st.number_input(
+                "Resistance Level",
+                min_value=0.0,
+                value=default_resistance,
+                step=10.0,
+                key="vob_resistance"
+            )
+
+        st.divider()
+
+        # Preview calculated levels
+        st.subheader("📋 Preview Trade Levels")
+
+        levels = calculate_levels(
             selected_index,
             selected_direction,
             vob_support,
-            vob_resistance
+            vob_resistance,
+            STOP_LOSS_OFFSET
         )
-        st.session_state.active_setup_id = signal_id
-        st.success(f"✅ Signal setup created! ID: {signal_id[:20]}...")
-        st.rerun()
+
+        # Safe handling for spot price in strike calculation
+        safe_spot_price = 25000.0  # Default fallback value
+        if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
+            try:
+                safe_spot_price = float(nifty_data['spot_price'])
+            except (TypeError, ValueError):
+                safe_spot_price = 25000.0
+
+        strike_info = calculate_strike(
+            selected_index,
+            safe_spot_price,
+            selected_direction,
+            nifty_data.get('current_expiry', 'N/A')
+        )
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Entry Level", f"{levels['entry_level']:.2f}")
+
+        with col2:
+            st.metric("Stop Loss", f"{levels['sl_level']:.2f}")
+
+        with col3:
+            st.metric("Target", f"{levels['target_level']:.2f}")
+
+        with col4:
+            st.metric("Risk:Reward", f"1:{levels['rr_ratio']}")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.info(f"**Strike:** {strike_info['strike']} {strike_info['option_type']} ({strike_info['strike_type']})")
+
+        with col2:
+            lot_size = LOT_SIZES[selected_index]
+            st.info(f"**Quantity:** {lot_size} ({selected_index} lot size)")
+
+        st.divider()
+
+        # Create setup button
+        if st.button("✅ Create Signal Setup", type="primary", use_container_width=True):
+            signal_id = st.session_state.signal_manager.create_setup(
+                selected_index,
+                selected_direction,
+                vob_support,
+                vob_resistance
+            )
+            st.session_state.active_setup_id = signal_id
+            st.success(f"✅ Signal setup created! ID: {signal_id[:20]}...")
+            st.rerun()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # SUB-TAB 2: DIRECT TRADING WITH ATM ± 5
+    # ─────────────────────────────────────────────────────────────────────
+    with setup_subtabs[1]:
+        st.subheader("⚡ Direct Trading with ATM ± 5 Strikes")
+        st.caption("Quick trade setup for NIFTY and SENSEX options with automatic ATM ± 5 strike selection")
+
+        # Select Index
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            trade_index = st.selectbox(
+                "Select Index",
+                ["NIFTY", "SENSEX"],
+                key="trade_index"
+            )
+
+        # Get index data
+        if trade_index == "NIFTY":
+            index_data = nifty_data
+            strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
+        else:
+            index_data = get_cached_sensex_data()
+            strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
+
+        # Check if data is available
+        if not index_data or not index_data.get('success'):
+            st.error(f"❌ {trade_index} data not available. Please wait for data to load.")
+        else:
+            spot_price = index_data.get('spot_price', 0)
+            atm_strike = index_data.get('atm_strike', 0)
+            current_expiry = index_data.get('current_expiry', 'N/A')
+
+            # Display spot price and ATM
+            with col2:
+                st.metric(f"{trade_index} Spot", f"₹{spot_price:,.2f}", help="Current index price")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("ATM Strike", f"{int(atm_strike):,}", help="At-The-Money strike price")
+            with col2:
+                st.metric("Current Expiry", current_expiry, help="Current weekly/monthly expiry")
+
+            st.divider()
+
+            # Generate ATM ± 5 strikes
+            strikes = []
+            for i in range(-5, 6):  # -5 to +5
+                strike = atm_strike + (i * strike_gap)
+                strikes.append({
+                    'strike': int(strike),
+                    'offset': i,
+                    'label': f"{int(strike):,} (ATM{i:+d})" if i != 0 else f"{int(strike):,} (ATM)"
+                })
+
+            # Trading controls
+            col1, col2, col3 = st.columns([2, 1, 1])
+
+            with col1:
+                selected_strike_idx = st.selectbox(
+                    "Select Strike (ATM ± 5)",
+                    range(len(strikes)),
+                    index=5,  # Default to ATM (index 5 in the list)
+                    format_func=lambda x: strikes[x]['label'],
+                    key="trade_strike_selector"
+                )
+                selected_strike = strikes[selected_strike_idx]['strike']
+                strike_offset = strikes[selected_strike_idx]['offset']
+
+            with col2:
+                option_type = st.selectbox(
+                    "Option Type",
+                    ["CE", "PE"],
+                    key="trade_option_type"
+                )
+
+            with col3:
+                lots = st.number_input(
+                    "Lots",
+                    min_value=1,
+                    max_value=100,
+                    value=1,
+                    step=1,
+                    key="trade_lots"
+                )
+
+            # Calculate quantities and costs
+            lot_size = LOT_SIZES.get(trade_index, 50)
+            total_quantity = lots * lot_size
+
+            # Estimate premium (placeholder - in real app, fetch from option chain)
+            # For now, use a rough estimate based on ATM offset
+            if strike_offset == 0:
+                est_premium = 100  # ATM premium estimate
+            elif abs(strike_offset) <= 2:
+                est_premium = max(50, 100 - (abs(strike_offset) * 20))  # Near ATM
+            else:
+                est_premium = max(10, 100 - (abs(strike_offset) * 30))  # OTM
+
+            est_cost = est_premium * total_quantity
+
+            # Display order summary
+            st.divider()
+            st.subheader("📋 Order Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric("Strike", f"{selected_strike:,}")
+
+            with col2:
+                st.metric("Option", f"{option_type}")
+
+            with col3:
+                st.metric("Quantity", f"{total_quantity} ({lots} lots)")
+
+            with col4:
+                st.metric("Est. Premium", f"₹{est_premium:.2f}")
+
+            st.info(f"**Estimated Total Cost:** ₹{est_cost:,.2f} | **{trade_index} {selected_strike} {option_type}** ({current_expiry})")
+
+            # Trading buttons
+            st.divider()
+            st.subheader("🚀 Place Order")
+
+            col1, col2, col3 = st.columns([2, 2, 4])
+
+            with col1:
+                if st.button(
+                    f"BUY {option_type} @ Market",
+                    type="primary",
+                    use_container_width=True,
+                    key="trade_market_button"
+                ):
+                    st.info(
+                        f"**Market Order Preview:**\n\n"
+                        f"Index: {trade_index}\n\n"
+                        f"Strike: {selected_strike} {option_type}\n\n"
+                        f"Expiry: {current_expiry}\n\n"
+                        f"Quantity: {total_quantity} ({lots} lots)\n\n"
+                        f"Order Type: MARKET"
+                    )
+
+                    # Confirmation
+                    if st.button("✅ Confirm Market Order", key="confirm_market"):
+                        try:
+                            from dhan_api import DhanAPI
+
+                            dhan = DhanAPI()
+
+                            # Basic SL and target (30 points offset for demo)
+                            sl_offset = 30 if option_type == "CE" else -30
+                            target_offset = 50 if option_type == "CE" else -50
+
+                            sl_price = spot_price + sl_offset if option_type == "CE" else spot_price - abs(sl_offset)
+                            target_price = spot_price + target_offset if option_type == "CE" else spot_price - abs(target_offset)
+
+                            # Place order
+                            result = dhan.place_super_order(
+                                index=trade_index,
+                                strike=selected_strike,
+                                option_type=option_type,
+                                direction="BUY",
+                                quantity=total_quantity,
+                                sl_price=sl_price,
+                                target_price=target_price
+                            )
+
+                            if result.get('success'):
+                                st.success(f"✅ Order placed successfully! Order ID: {result.get('order_id')}")
+                            else:
+                                st.error(f"❌ Order failed: {result.get('error', 'Unknown error')}")
+                        except Exception as e:
+                            st.error(f"❌ Error placing order: {str(e)}")
+
+            with col2:
+                limit_price = st.number_input(
+                    "Limit Price",
+                    min_value=0.05,
+                    value=float(est_premium) if est_premium > 0 else 10.0,
+                    step=0.05,
+                    key="trade_limit_price"
+                )
+
+                if st.button(
+                    f"BUY @ ₹{limit_price:.2f}",
+                    use_container_width=True,
+                    key="trade_limit_button"
+                ):
+                    st.info(
+                        f"**Limit Order Preview:**\n\n"
+                        f"Index: {trade_index}\n\n"
+                        f"Strike: {selected_strike} {option_type}\n\n"
+                        f"Expiry: {current_expiry}\n\n"
+                        f"Quantity: {total_quantity} ({lots} lots)\n\n"
+                        f"Limit Price: ₹{limit_price:.2f}"
+                    )
+                    st.warning("⚠️ Limit orders via Dhan API - ensure sufficient margin")
+
+            with col3:
+                st.info("**Quick Trade Info:**\n\n"
+                       f"• ATM Strike: {int(atm_strike):,}\n\n"
+                       f"• Selected: ATM{strike_offset:+d}\n\n"
+                       f"• Strike Gap: {strike_gap}\n\n"
+                       f"• Lot Size: {lot_size}")
+
+            st.divider()
+            st.caption("⚠️ **Important:** Orders are placed via Dhan API. Ensure you have sufficient margin and Dhan credentials configured.")
+            st.caption("📊 **Note:** Premium estimates are approximate. Actual LTP will be used during order placement.")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 3: ACTIVE SIGNALS
