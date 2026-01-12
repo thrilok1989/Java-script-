@@ -194,13 +194,8 @@ try:
     SUPABASE_TABLE = st.secrets.get("SUPABASE_TABLE", "option_snapshots")
     SUPABASE_TABLE_PCR = st.secrets.get("SUPABASE_TABLE_PCR", "strike_pcr_snapshots")
 
-    # Telegram credentials (optional)
-    try:
-        TELEGRAM_BOT_TOKEN = st.secrets["TELEGRAM"]["BOT_TOKEN"]
-        TELEGRAM_CHAT_ID = st.secrets["TELEGRAM"]["CHAT_ID"]
-    except:
-        TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
-        TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
+    # Telegram is now handled by TelegramBot class (supports dual recipients)
+    # No need to load credentials here - send_telegram_message handles it
 
     # Verify required credentials
     if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
@@ -7370,10 +7365,10 @@ def render_nifty_option_screener():
             # NEW SIGNAL DETECTED
             st.success("🎯 **NEW TRADE SIGNAL GENERATED!**")
 
-            # Auto-send to Telegram if enabled
-            if auto_send and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+            # Auto-send to Telegram if enabled (sends to both recipients)
+            if auto_send:
                 with st.spinner("Sending to Telegram..."):
-                    success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
+                    success, message = send_telegram_message(message=telegram_signal)
                     if success:
                         st.success(f"✅ {message}")
                         st.balloons()
@@ -7409,16 +7404,13 @@ def render_nifty_option_screener():
                 if st.button("📋 Copy to Clipboard", use_container_width=True, key="copy_clipboard"):
                     st.success("✅ Signal copied to clipboard!")
 
-                # Manual send to Telegram
+                # Manual send to Telegram (sends to both recipients)
                 if st.button("📱 Send to Telegram", use_container_width=True, key="send_telegram"):
-                    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                        success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
-                        if success:
-                            st.success(f"✅ {message}")
-                        else:
-                            st.error(f"❌ {message}")
+                    success, message = send_telegram_message(message=telegram_signal)
+                    if success:
+                        st.success(f"✅ {message}")
                     else:
-                        st.warning("Telegram credentials not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to secrets.")
+                        st.error(f"❌ {message}")
 
                 # Save to file
                 if st.button("💾 Save to File", use_container_width=True, key="save_file"):
