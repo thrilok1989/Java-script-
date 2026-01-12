@@ -147,11 +147,16 @@ with col1:
 # Get index data - Fetch once and cache in session state for instant access
 cache_key = f"index_data_{trade_index}"
 
-# Only fetch if not in session state or if data is stale (>15 seconds)
-if cache_key not in st.session_state or \
-   'last_fetch' not in st.session_state or \
-   (datetime.now().timestamp() - st.session_state.get('last_fetch', 0)) > 15:
+# Check if we have valid cached data
+has_valid_cache = (
+    cache_key in st.session_state and
+    'last_fetch' in st.session_state and
+    st.session_state.get(cache_key, {}).get('success') and  # Only use if previous fetch succeeded
+    (datetime.now().timestamp() - st.session_state.get('last_fetch', 0)) <= 15
+)
 
+if not has_valid_cache:
+    # Need to fetch fresh data
     with st.spinner(f"Loading {trade_index} data..."):
         if trade_index == "NIFTY":
             index_data = fetch_nifty_data()
@@ -160,9 +165,11 @@ if cache_key not in st.session_state or \
             index_data = fetch_sensex_data()
             strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
 
-        st.session_state[cache_key] = index_data
-        st.session_state['strike_gap'] = strike_gap
-        st.session_state['last_fetch'] = datetime.now().timestamp()
+        # Only cache if fetch was successful
+        if index_data and index_data.get('success'):
+            st.session_state[cache_key] = index_data
+            st.session_state['strike_gap'] = strike_gap
+            st.session_state['last_fetch'] = datetime.now().timestamp()
 else:
     # Use cached data from session state - INSTANT!
     index_data = st.session_state[cache_key]
@@ -176,21 +183,40 @@ if not index_data or not index_data.get('success'):
     st.error(f"**Error:** {error_msg}")
 
     # Show helpful messages
-    if 'credentials' in error_msg.lower() or 'secrets' in error_msg.lower():
-        st.info("""
-        **Dhan API Setup Required:**
-        1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
-        2. Add your Dhan API credentials
-        3. Restart the app
-        """)
-    else:
-        st.info("""
-        **Troubleshooting:**
-        - Check internet connection
-        - Verify Dhan API credentials in `.streamlit/secrets.toml`
-        - Wait a moment and click the Refresh button
-        - Check if market is open (data works better during trading hours)
-        """)
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        if 'credentials' in error_msg.lower() or 'secrets' in error_msg.lower():
+            st.info("""
+            **Dhan API Setup Required:**
+            1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
+            2. Add your Dhan API credentials
+            3. Restart the app
+            """)
+        elif 'rate limit' in error_msg.lower() or 'too many requests' in error_msg.lower():
+            st.warning("""
+            **Rate Limit Exceeded:**
+            - Dhan API has rate limits (1 req/sec for quotes)
+            - Wait 10-15 seconds before retrying
+            - Click the Retry button below
+            """)
+        else:
+            st.info("""
+            **Common Issues:**
+            - **API Issues:** Dhan API might be down or slow (retry in a moment)
+            - **Market Hours:** Data is more reliable during trading hours (9:15 AM - 3:30 PM IST)
+            - **Network:** Check your internet connection
+            - **Credentials:** Verify your Dhan API token is valid and not expired
+            """)
+
+    with col2:
+        if st.button("🔄 Retry Now", type="primary", use_container_width=True):
+            # Clear cache to force fresh fetch
+            if cache_key in st.session_state:
+                del st.session_state[cache_key]
+            if 'last_fetch' in st.session_state:
+                del st.session_state['last_fetch']
+            st.rerun()
 
     with st.expander("🔍 Debug Info"):
         st.json({
@@ -198,7 +224,9 @@ if not index_data or not index_data.get('success'):
             'success': index_data.get('success') if index_data else None,
             'error': error_msg,
             'spot_price': index_data.get('spot_price') if index_data else None,
-            'atm_strike': index_data.get('atm_strike') if index_data else None
+            'atm_strike': index_data.get('atm_strike') if index_data else None,
+            'cached_data_exists': cache_key in st.session_state,
+            'cache_age_seconds': datetime.now().timestamp() - st.session_state.get('last_fetch', 0) if 'last_fetch' in st.session_state else 'N/A'
         })
 
     st.stop()
@@ -238,17 +266,22 @@ st.divider()
 # Cache option chain data in session state for instant access
 oc_cache_key = f"option_chain_{trade_index}_{current_expiry}"
 
-# Only fetch if not in session state or if data is stale (>5 seconds for LTP freshness)
-if oc_cache_key not in st.session_state or \
-   'oc_last_fetch' not in st.session_state or \
-   (datetime.now().timestamp() - st.session_state.get('oc_last_fetch', 0)) > 5:
+# Check if we have valid cached option chain data
+has_valid_oc_cache = (
+    oc_cache_key in st.session_state and
+    'oc_last_fetch' in st.session_state and
+    st.session_state.get(oc_cache_key, {}).get('success') and  # Only use if previous fetch succeeded
+    (datetime.now().timestamp() - st.session_state.get('oc_last_fetch', 0)) <= 5
+)
 
+if not has_valid_oc_cache:
     # Fetch fresh option chain data
     option_chain_data = fetch_option_chain(trade_index, current_expiry)
 
-    # Cache in session state
-    st.session_state[oc_cache_key] = option_chain_data
-    st.session_state['oc_last_fetch'] = datetime.now().timestamp()
+    # Only cache if fetch was successful
+    if option_chain_data and option_chain_data.get('success'):
+        st.session_state[oc_cache_key] = option_chain_data
+        st.session_state['oc_last_fetch'] = datetime.now().timestamp()
 else:
     # Use cached data - INSTANT, no loading!
     option_chain_data = st.session_state[oc_cache_key]
