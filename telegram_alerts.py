@@ -529,5 +529,14 @@ async def send_ai_market_alert_async(report: Dict[str, Any], confidence_thresh: 
     return await bot.send_ai_market_alert(report, confidence_thresh)
 
 
+# Alias function for AI market engine (async)
+async def send_ai_market_alert(report: Dict[str, Any], confidence_thresh: float = 0.60) -> bool:
+    """
+    Send AI market alert - wrapper for ai_market_engine.py compatibility
+    Uses TelegramBot which sends to all configured recipients
+    """
+    return await send_ai_market_alert_async(report, confidence_thresh)
+
+
 # Alias for backward compatibility
 TelegramAlerts = TelegramBot
