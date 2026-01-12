@@ -144,14 +144,29 @@ with col1:
         key="trade_index"
     )
 
-# Get index data - Fetch fresh data with Streamlit caching
-with st.spinner(f"Loading {trade_index} data..."):
-    if trade_index == "NIFTY":
-        index_data = fetch_nifty_data()
-        strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
-    else:
-        index_data = fetch_sensex_data()
-        strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
+# Get index data - Fetch once and cache in session state for instant access
+cache_key = f"index_data_{trade_index}"
+
+# Only fetch if not in session state or if data is stale (>15 seconds)
+if cache_key not in st.session_state or \
+   'last_fetch' not in st.session_state or \
+   (datetime.now().timestamp() - st.session_state.get('last_fetch', 0)) > 15:
+
+    with st.spinner(f"Loading {trade_index} data..."):
+        if trade_index == "NIFTY":
+            index_data = fetch_nifty_data()
+            strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
+        else:
+            index_data = fetch_sensex_data()
+            strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
+
+        st.session_state[cache_key] = index_data
+        st.session_state['strike_gap'] = strike_gap
+        st.session_state['last_fetch'] = datetime.now().timestamp()
+else:
+    # Use cached data from session state - INSTANT!
+    index_data = st.session_state[cache_key]
+    strike_gap = st.session_state['strike_gap']
 
 # Check if data is available
 if not index_data or not index_data.get('success'):
@@ -217,11 +232,26 @@ with col2:
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
-# FETCH OPTION CHAIN FOR LTP DATA
+# FETCH OPTION CHAIN FOR LTP DATA - With session state caching
 # ═══════════════════════════════════════════════════════════════════════
 
-# Fetch option chain to get LTP
-option_chain_data = fetch_option_chain(trade_index, current_expiry)
+# Cache option chain data in session state for instant access
+oc_cache_key = f"option_chain_{trade_index}_{current_expiry}"
+
+# Only fetch if not in session state or if data is stale (>5 seconds for LTP freshness)
+if oc_cache_key not in st.session_state or \
+   'oc_last_fetch' not in st.session_state or \
+   (datetime.now().timestamp() - st.session_state.get('oc_last_fetch', 0)) > 5:
+
+    # Fetch fresh option chain data
+    option_chain_data = fetch_option_chain(trade_index, current_expiry)
+
+    # Cache in session state
+    st.session_state[oc_cache_key] = option_chain_data
+    st.session_state['oc_last_fetch'] = datetime.now().timestamp()
+else:
+    # Use cached data - INSTANT, no loading!
+    option_chain_data = st.session_state[oc_cache_key]
 
 # Parse option chain to get LTP for each strike
 ltp_map = {'CE': {}, 'PE': {}}
