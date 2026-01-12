@@ -56,13 +56,6 @@ def get_telegram_credentials():
                 'chat_id': st.secrets["TELEGRAM"]["CHAT_ID_2"]
             })
 
-        # Fallback to legacy single bot configuration
-        if not bots and "BOT_TOKEN" in st.secrets["TELEGRAM"] and "CHAT_ID" in st.secrets["TELEGRAM"]:
-            bots.append({
-                'bot_token': st.secrets["TELEGRAM"]["BOT_TOKEN"],
-                'chat_id': st.secrets["TELEGRAM"]["CHAT_ID"]
-            })
-
         return {
             'bots': bots,  # List of bot configurations
             'bot_token': bots[0]['bot_token'] if bots else None,  # Backward compatibility
