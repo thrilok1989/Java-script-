@@ -457,18 +457,35 @@ if st.session_state.get('show_order_dialog', False):
                 if not option_chain_result.get('success'):
                     st.error(f"❌ Failed to fetch option chain: {option_chain_result.get('error')}")
                 else:
-                    # Find security ID
+                    # Find security ID from 'oc' structure
                     option_data = option_chain_result.get('data', {})
-                    option_list = option_data.get(selected_type, [])
+                    oc_data = option_data.get('oc', {})
 
                     security_id = None
-                    for option in option_list:
-                        if option.get('strike_price') == selected_strike:
-                            security_id = option.get('security_id')
-                            break
+
+                    # Convert selected strike to string key
+                    strike_key = str(selected_strike)
+
+                    if strike_key in oc_data:
+                        strike_data = oc_data[strike_key]
+
+                        # Get CE or PE data based on selection
+                        option_type_key = 'ce' if selected_type == 'CE' else 'pe'
+                        option_info = strike_data.get(option_type_key)
+
+                        if option_info:
+                            # Dhan API uses 'SEM_EXM_EXCH_ID' for security ID
+                            security_id = option_info.get('SEM_EXM_EXCH_ID') or option_info.get('security_id')
 
                     if not security_id:
                         st.error(f"❌ Security ID not found for {trade_index} {selected_strike} {selected_type}")
+                        with st.expander("🔍 Debug - Option Chain Structure"):
+                            st.json({
+                                'strike_key': strike_key,
+                                'oc_keys': list(oc_data.keys())[:10] if oc_data else [],
+                                'strike_data_exists': strike_key in oc_data,
+                                'option_data_sample': str(oc_data.get(strike_key, {}))[:300] if strike_key in oc_data else 'Strike not found'
+                            })
                     else:
                         # Place order
                         creds = get_dhan_credentials()
