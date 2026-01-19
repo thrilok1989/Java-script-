@@ -423,10 +423,11 @@ if 'overall_option_data' not in st.session_state:
 # - Lazy loading for tab-specific data
 # - Streamlit caching for expensive computations
 
-# Auto-refresh every 1 minute (configurable via AUTO_REFRESH_INTERVAL)
+# Auto-refresh every 30 seconds (configurable via AUTO_REFRESH_INTERVAL)
 # This ensures the app stays updated with latest market data
 # The refresh is seamless - no blur/flash thanks to custom CSS above
-refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_refresh")
+# limit=None ensures continuous refresh without stopping
+refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, limit=None, key="data_refresh")
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER
