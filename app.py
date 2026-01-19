@@ -4036,34 +4036,23 @@ with tab6:
         st.error(f"Error loading multi-timeframe analysis: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 7: NIFTY OPTION SCREENER V7.0 (LAZY LOAD FOR PERFORMANCE)
+# TAB 7: NIFTY OPTION SCREENER V7.0 (AUTO-LOAD)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab7:
     st.header("🎯 NIFTY Option Screener v7.0")
     st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
 
-    # Lazy load only when tab is clicked (prevents slow initial page load)
-    # Use session state to track if user wants to load this heavy tab
-    if 'tab7_loaded' not in st.session_state:
-        st.session_state.tab7_loaded = False
-
-    if not st.session_state.tab7_loaded:
-        if st.button("🚀 Load NIFTY Option Screener (Click to activate)", key="load_tab7"):
-            st.session_state.tab7_loaded = True
-            st.rerun()
-        st.info("💡 **Performance Tip:** This tab contains heavy analytics. Click the button above to load it.")
-    else:
-        # Auto-load the Option Screener
-        try:
-            from NiftyOptionScreener import render_nifty_option_screener
-            render_nifty_option_screener()
-        except ImportError as e:
-            st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
-            st.info("Please ensure NiftyOptionScreener.py is in the project directory")
-        except Exception as e:
-            st.error(f"❌ Error rendering Nifty Option Screener: {e}")
-            st.exception(e)
+    # Auto-load the Option Screener (no lazy loading - loads immediately)
+    try:
+        from NiftyOptionScreener import render_nifty_option_screener
+        render_nifty_option_screener()
+    except ImportError as e:
+        st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
+        st.info("Please ensure NiftyOptionScreener.py is in the project directory")
+    except Exception as e:
+        st.error(f"❌ Error rendering Nifty Option Screener: {e}")
+        st.exception(e)
 
     # Force clean tab completion to ensure tabs 8 & 9 render
     st.write("")
