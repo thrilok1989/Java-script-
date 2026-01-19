@@ -4134,20 +4134,13 @@ with tab8:
 with tab9:
     st.markdown("# 🔍 NSE Stock Screener")
 
-    # LAZY LOADING - Only load when user clicks button (performance fix)
-    if st.button("🔄 Load Stock Screener", type="primary", key="load_screener_btn"):
-        st.session_state.load_stock_screener = True
-
-    if st.session_state.get('load_stock_screener', False):
-        try:
-            with st.spinner("Loading stock screener..."):
-                from nse_stock_screener_dhan import render_nse_stock_screener_tab
-                render_nse_stock_screener_tab()
-        except Exception as e:
-            st.error(f"❌ Error loading NSE Stock Screener: {e}")
-            st.info("Ensure nse_stock_screener_dhan.py exists and all dependencies are installed.")
-    else:
-        st.info("👆 Click 'Load Stock Screener' to start screening NSE stocks.")
+    # Auto-load stock screener (no lazy loading)
+    try:
+        from nse_stock_screener_dhan import render_nse_stock_screener_tab
+        render_nse_stock_screener_tab()
+    except Exception as e:
+        st.error(f"❌ Error loading NSE Stock Screener: {e}")
+        st.info("Ensure nse_stock_screener_dhan.py exists and all dependencies are installed.")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 10: NIFTY FUTURES ANALYSIS
@@ -4156,64 +4149,53 @@ with tab9:
 with tab10:
     st.markdown("# 📈 NIFTY Futures Analysis")
 
-    # LAZY LOADING - Only fetch when user clicks button (performance fix)
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        load_futures = st.button("🔄 Load Futures Data", type="primary", key="load_futures_btn")
-    with col2:
-        if 'futures_data_cache' in st.session_state:
-            st.caption("✅ Data loaded - Click to refresh")
+    # Auto-load futures analysis (no lazy loading)
+    try:
+        from src.nifty_futures_ui import render_nifty_futures_dashboard
 
-    if load_futures or 'futures_data_cache' in st.session_state:
-        try:
-            from src.nifty_futures_ui import render_nifty_futures_dashboard
+        spot_price = nifty_data.get('spot_price', 25000.0)
+        futures_data = None
 
-            spot_price = nifty_data.get('spot_price', 25000.0)
-            futures_data = None
+        # Auto-fetch on first load, cache for subsequent refreshes
+        if 'futures_data_cache' not in st.session_state:
+            with st.spinner("Loading futures data..."):
+                try:
+                    from dhan_data_fetcher import get_nifty_futures_data
+                    futures_result = get_nifty_futures_data()
 
-            # Only fetch if button clicked (not from cache)
-            if load_futures:
-                with st.spinner("Loading futures data..."):
-                    try:
-                        from dhan_data_fetcher import get_nifty_futures_data
-                        futures_result = get_nifty_futures_data()
+                    if futures_result.get('spot_price'):
+                        spot_price = futures_result['spot_price']
 
-                        if futures_result.get('spot_price'):
-                            spot_price = futures_result['spot_price']
+                    if futures_result.get('success'):
+                        futures_data = {
+                            'current_month': futures_result.get('current_month', {}),
+                            'next_month': futures_result.get('next_month', {}),
+                            'data_source': futures_result.get('data_source', 'unknown')
+                        }
+                        st.session_state.futures_data_cache = futures_data
+                        st.session_state.futures_spot_cache = spot_price
+                except Exception as e:
+                    st.warning(f"Could not fetch futures data: {e}")
+        else:
+            # Use cached data
+            futures_data = st.session_state.get('futures_data_cache')
+            spot_price = st.session_state.get('futures_spot_cache', spot_price)
 
-                        if futures_result.get('success'):
-                            futures_data = {
-                                'current_month': futures_result.get('current_month', {}),
-                                'next_month': futures_result.get('next_month', {}),
-                                'data_source': futures_result.get('data_source', 'unknown')
-                            }
-                            st.session_state.futures_data_cache = futures_data
-                            st.session_state.futures_spot_cache = spot_price
-                            st.success("✅ Futures data loaded!")
-                    except Exception as e:
-                        st.warning(f"Could not fetch futures data: {e}")
-            else:
-                # Use cached data
-                futures_data = st.session_state.get('futures_data_cache')
-                spot_price = st.session_state.get('futures_spot_cache', spot_price)
+        option_chain_data = st.session_state.get('option_chain')
 
-            option_chain_data = st.session_state.get('option_chain')
+        render_nifty_futures_dashboard(
+            spot_price=spot_price,
+            futures_data=futures_data,
+            participant_data=None,
+            option_chain_data=option_chain_data,
+            historical_data=None
+        )
 
-            render_nifty_futures_dashboard(
-                spot_price=spot_price,
-                futures_data=futures_data,
-                participant_data=None,
-                option_chain_data=option_chain_data,
-                historical_data=None
-            )
-
-        except ImportError as e:
-            st.error(f"❌ Error importing NIFTY Futures UI: {e}")
-            st.info("Required: src/nifty_futures_ui.py, src/nifty_futures_analyzer.py")
-        except Exception as e:
-            st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
-    else:
-        st.info("👆 Click 'Load Futures Data' to view NIFTY Futures analysis.")
+    except ImportError as e:
+        st.error(f"❌ Error importing NIFTY Futures UI: {e}")
+        st.info("Required: src/nifty_futures_ui.py, src/nifty_futures_analyzer.py")
+    except Exception as e:
+        st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 11: AI TRAINING & MODEL MANAGEMENT
@@ -4223,22 +4205,15 @@ with tab11:
     st.markdown("# 🤖 AI Training & Model Management")
     st.caption("Train XGBoost models on real trading data | Track predictions & outcomes | Manage model versions")
 
-    # LAZY LOADING - Only load when user clicks button (performance fix)
-    if st.button("🔄 Load AI Training Dashboard", type="primary", key="load_ai_training_btn"):
-        st.session_state.load_ai_training = True
-
-    if st.session_state.get('load_ai_training', False):
-        try:
-            with st.spinner("Loading AI Training dashboard..."):
-                from src.ai_training_ui import render_ai_training_dashboard
-                render_ai_training_dashboard()
-        except ImportError as e:
-            st.error(f"❌ AI Training module not available: {e}")
-            st.info("Required: src/ai_training_ui.py, src/training_data_collector.py, src/model_trainer_pipeline.py")
-        except Exception as e:
-            st.error(f"❌ Error loading AI Training: {e}")
-    else:
-        st.info("👆 Click 'Load AI Training Dashboard' to access AI model training and management.")
+    # Auto-load AI Training Dashboard (no lazy loading)
+    try:
+        from src.ai_training_ui import render_ai_training_dashboard
+        render_ai_training_dashboard()
+    except ImportError as e:
+        st.error(f"❌ AI Training module not available: {e}")
+        st.info("Required: src/ai_training_ui.py, src/training_data_collector.py, src/model_trainer_pipeline.py")
+    except Exception as e:
+        st.error(f"❌ Error loading AI Training: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
