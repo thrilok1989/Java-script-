@@ -95,12 +95,12 @@ MARKET_HOURS = {
 }
 
 # Session-based refresh intervals (seconds)
-# Optimized to prevent API rate limiting (HTTP 429)
+# Optimized for performance and to prevent API rate limiting (HTTP 429)
 REFRESH_INTERVALS = {
-    'pre_market': 60,      # 60 seconds during pre-market
-    'regular': 60,         # 60 seconds during regular trading
+    'pre_market': 30,      # 30 seconds during pre-market
+    'regular': 10,         # 10 seconds during regular trading (real-time updates)
     'post_market': 60,     # 60 seconds during post-market
-    'closed': 60           # 60 seconds when market is closed (1 minute)
+    'closed': 300          # 300 seconds (5 minutes) when market is closed
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -127,8 +127,8 @@ VOB_TOUCH_TOLERANCE = 5  # Points
 # UI SETTINGS
 # ═══════════════════════════════════════════════════════════════════════
 
-# Auto-refresh interval: 1 minute (60 seconds)
-AUTO_REFRESH_INTERVAL = 60  # seconds (1 minute - optimized for fast clicks)
+# Auto-refresh interval: 30 seconds for responsive updates
+AUTO_REFRESH_INTERVAL = 30  # seconds (30 seconds - optimized for responsive updates)
 
 # Spot price refresh interval: 10 seconds for real-time updates
 SPOT_PRICE_REFRESH_INTERVAL = 10  # seconds (10 seconds for spot price only)
