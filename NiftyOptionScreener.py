@@ -194,8 +194,13 @@ try:
     SUPABASE_TABLE = st.secrets.get("SUPABASE_TABLE", "option_snapshots")
     SUPABASE_TABLE_PCR = st.secrets.get("SUPABASE_TABLE_PCR", "strike_pcr_snapshots")
 
-    # Telegram is now handled by TelegramBot class (supports dual recipients)
-    # No need to load credentials here - send_telegram_message handles it
+    # Telegram credentials (optional)
+    try:
+        TELEGRAM_BOT_TOKEN = st.secrets["TELEGRAM"]["BOT_TOKEN"]
+        TELEGRAM_CHAT_ID = st.secrets["TELEGRAM"]["CHAT_ID"]
+    except:
+        TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+        TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
     # Verify required credentials
     if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
@@ -1977,25 +1982,27 @@ def calculate_overall_bias(atm_bias, support_bias, resistance_bias, seller_bias_
 # -----------------------
 #  TELEGRAM FUNCTIONS
 # -----------------------
-def send_telegram_message(bot_token=None, chat_id=None, message=""):
+def send_telegram_message(bot_token, chat_id, message):
     """
-    Send message to Telegram using TelegramBot class (supports dual recipients)
-    bot_token and chat_id params kept for backward compatibility but ignored
+    Actually send message to Telegram
     """
     try:
-        from telegram_alerts import TelegramBot
-
-        bot = TelegramBot()
-        if not bot.enabled:
+        if not bot_token or not chat_id:
             return False, "Telegram credentials not configured"
-
-        # Send to all configured bots/recipients
-        success = bot.send_message(message, parse_mode="Markdown")
-
-        if success:
-            return True, "Signal sent to Telegram channel(s)!"
+        
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return True, "Signal sent to Telegram channel!"
         else:
-            return False, "Failed to send message"
+            return False, f"Failed to send: {response.status_code}"
     except Exception as e:
         return False, f"Telegram error: {str(e)}"
 
@@ -7365,10 +7372,10 @@ def render_nifty_option_screener():
             # NEW SIGNAL DETECTED
             st.success("🎯 **NEW TRADE SIGNAL GENERATED!**")
 
-            # Auto-send to Telegram if enabled (sends to both recipients)
-            if auto_send:
+            # Auto-send to Telegram if enabled
+            if auto_send and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
                 with st.spinner("Sending to Telegram..."):
-                    success, message = send_telegram_message(message=telegram_signal)
+                    success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
                     if success:
                         st.success(f"✅ {message}")
                         st.balloons()
@@ -7404,13 +7411,16 @@ def render_nifty_option_screener():
                 if st.button("📋 Copy to Clipboard", use_container_width=True, key="copy_clipboard"):
                     st.success("✅ Signal copied to clipboard!")
 
-                # Manual send to Telegram (sends to both recipients)
+                # Manual send to Telegram
                 if st.button("📱 Send to Telegram", use_container_width=True, key="send_telegram"):
-                    success, message = send_telegram_message(message=telegram_signal)
-                    if success:
-                        st.success(f"✅ {message}")
+                    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                        success, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_signal)
+                        if success:
+                            st.success(f"✅ {message}")
+                        else:
+                            st.error(f"❌ {message}")
                     else:
-                        st.error(f"❌ {message}")
+                        st.warning("Telegram credentials not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to secrets.")
 
                 # Save to file
                 if st.button("💾 Save to File", use_container_width=True, key="save_file"):

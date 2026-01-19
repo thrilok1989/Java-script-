@@ -9,63 +9,47 @@ from typing import Dict, Any, Optional
 
 class TelegramBot:
     def __init__(self):
-        """Initialize Telegram bot with support for two separate bots"""
+        """Initialize Telegram bot"""
         creds = get_telegram_credentials()
         self.enabled = creds['enabled']
-
+        
         if self.enabled:
-            self.bots = creds.get('bots', [])  # List of bot configs
-            self.bot_token = creds.get('bot_token')  # Backward compatibility
-            self.chat_id = creds.get('chat_id')  # Backward compatibility
-
+            self.bot_token = creds['bot_token']
+            self.chat_id = creds['chat_id']
+            self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+    
     def send_message(self, message: str, parse_mode: str = "HTML"):
-        """Send Telegram message using all configured bots"""
+        """Send Telegram message"""
         if not self.enabled:
             return False
-
-        success = False
+        
         try:
-            # Send via each bot to its respective chat
-            for bot in self.bots:
-                url = f"https://api.telegram.org/bot{bot['bot_token']}/sendMessage"
-                payload = {
-                    "chat_id": bot['chat_id'],
-                    "text": message,
-                    "parse_mode": parse_mode
-                }
-                try:
-                    response = requests.post(url, json=payload, timeout=5)
-                    if response.status_code == 200:
-                        success = True
-                except:
-                    continue
-            return success
+            url = f"{self.base_url}/sendMessage"
+            payload = {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": parse_mode
+            }
+            response = requests.post(url, json=payload, timeout=5)
+            return response.status_code == 200
         except:
             return False
-
+    
     async def send_message_async(self, message: str, parse_mode: str = "HTML"):
-        """Send Telegram message asynchronously using all configured bots"""
+        """Send Telegram message asynchronously"""
         if not self.enabled:
             return False
-
-        success = False
+        
         try:
+            url = f"{self.base_url}/sendMessage"
+            payload = {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": parse_mode
+            }
             async with aiohttp.ClientSession() as session:
-                # Send via each bot to its respective chat
-                for bot in self.bots:
-                    url = f"https://api.telegram.org/bot{bot['bot_token']}/sendMessage"
-                    payload = {
-                        "chat_id": bot['chat_id'],
-                        "text": message,
-                        "parse_mode": parse_mode
-                    }
-                    try:
-                        async with session.post(url, json=payload, timeout=10) as response:
-                            if response.status == 200:
-                                success = True
-                    except:
-                        continue
-            return success
+                async with session.post(url, json=payload, timeout=10) as response:
+                    return response.status == 200
         except:
             return False
     
@@ -527,15 +511,6 @@ async def send_ai_market_alert_async(report: Dict[str, Any], confidence_thresh: 
     if not bot.enabled:
         return False
     return await bot.send_ai_market_alert(report, confidence_thresh)
-
-
-# Alias function for AI market engine (async)
-async def send_ai_market_alert(report: Dict[str, Any], confidence_thresh: float = 0.60) -> bool:
-    """
-    Send AI market alert - wrapper for ai_market_engine.py compatibility
-    Uses TelegramBot which sends to all configured recipients
-    """
-    return await send_ai_market_alert_async(report, confidence_thresh)
 
 
 # Alias for backward compatibility
