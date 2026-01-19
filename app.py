@@ -417,17 +417,20 @@ if 'overall_option_data' not in st.session_state:
 # ═══════════════════════════════════════════════════════════════════════
 # AUTO REFRESH & PERFORMANCE OPTIMIZATIONS
 # ═══════════════════════════════════════════════════════════════════════
-# Optimized for fast loading and refresh:
-# - Chart data cached for 60 seconds
-# - Signal checks reduced to 30-second intervals
-# - Lazy loading for tab-specific data
-# - Streamlit caching for expensive computations
+# Dynamic auto-refresh based on market session:
+# - Regular trading (9:15-3:30 PM): 10 seconds (real-time spot price)
+# - Pre-market (8:30-9:15 AM): 30 seconds
+# - Post-market (3:30-3:45 PM): 60 seconds
+# - Market closed: 300 seconds (5 minutes)
 
-# Auto-refresh every 30 seconds (configurable via AUTO_REFRESH_INTERVAL)
-# This ensures the app stays updated with latest market data
-# The refresh is seamless - no blur/flash thanks to custom CSS above
+# Get current market session to determine refresh interval
+current_session = scheduler.get_market_session()
+session_refresh_interval = scheduler.get_refresh_interval(current_session)
+
+# Auto-refresh with dynamic interval based on market hours
+# This ensures spot price updates every 10s during trading hours
 # limit=None ensures continuous refresh without stopping
-refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, limit=None, key="data_refresh")
+refresh_count = st_autorefresh(interval=session_refresh_interval * 1000, limit=None, key="data_refresh")
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER
@@ -557,7 +560,8 @@ with st.sidebar:
     
     # Settings
     st.subheader("⚙️ Settings")
-    st.write(f"**Auto Refresh:** {AUTO_REFRESH_INTERVAL}s")
+    st.write(f"**Auto Refresh:** {session_refresh_interval}s (Dynamic)")
+    st.caption("10s during trading • 30s pre-market • 60s post-market • 300s closed")
     st.write(f"**NIFTY Lot Size:** {LOT_SIZES['NIFTY']}")
     st.write(f"**SENSEX Lot Size:** {LOT_SIZES['SENSEX']}")
     st.write(f"**SL Offset:** {STOP_LOSS_OFFSET} points")
@@ -4032,23 +4036,34 @@ with tab6:
         st.error(f"Error loading multi-timeframe analysis: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 7: NIFTY OPTION SCREENER V7.0 (AUTO-LOAD WITH SMART CACHING)
+# TAB 7: NIFTY OPTION SCREENER V7.0 (LAZY LOAD FOR PERFORMANCE)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab7:
     st.header("🎯 NIFTY Option Screener v7.0")
     st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
 
-    # Auto-load the Option Screener
-    try:
-        from NiftyOptionScreener import render_nifty_option_screener
-        render_nifty_option_screener()
-    except ImportError as e:
-        st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
-        st.info("Please ensure NiftyOptionScreener.py is in the project directory")
-    except Exception as e:
-        st.error(f"❌ Error rendering Nifty Option Screener: {e}")
-        st.exception(e)
+    # Lazy load only when tab is clicked (prevents slow initial page load)
+    # Use session state to track if user wants to load this heavy tab
+    if 'tab7_loaded' not in st.session_state:
+        st.session_state.tab7_loaded = False
+
+    if not st.session_state.tab7_loaded:
+        if st.button("🚀 Load NIFTY Option Screener (Click to activate)", key="load_tab7"):
+            st.session_state.tab7_loaded = True
+            st.rerun()
+        st.info("💡 **Performance Tip:** This tab contains heavy analytics. Click the button above to load it.")
+    else:
+        # Auto-load the Option Screener
+        try:
+            from NiftyOptionScreener import render_nifty_option_screener
+            render_nifty_option_screener()
+        except ImportError as e:
+            st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
+            st.info("Please ensure NiftyOptionScreener.py is in the project directory")
+        except Exception as e:
+            st.error(f"❌ Error rendering Nifty Option Screener: {e}")
+            st.exception(e)
 
     # Force clean tab completion to ensure tabs 8 & 9 render
     st.write("")
@@ -4241,5 +4256,5 @@ with tab11:
 # ═══════════════════════════════════════════════════════════════════════
 
 st.divider()
-st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: {AUTO_REFRESH_INTERVAL}s")
+st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: {session_refresh_interval}s ({current_session.name.replace('_', ' ').title()})")
 st.caption(f"🤖 AI Market Analysis: Runs every 30 minutes during market hours | Last AI analysis: {datetime.fromtimestamp(st.session_state.last_ai_analysis_time).strftime('%H:%M:%S') if st.session_state.last_ai_analysis_time > 0 else 'Never'}")
