@@ -423,10 +423,11 @@ if 'overall_option_data' not in st.session_state:
 # - Lazy loading for tab-specific data
 # - Streamlit caching for expensive computations
 
-# Auto-refresh every 1 minute (configurable via AUTO_REFRESH_INTERVAL)
+# Auto-refresh every 30 seconds (configurable via AUTO_REFRESH_INTERVAL)
 # This ensures the app stays updated with latest market data
 # The refresh is seamless - no blur/flash thanks to custom CSS above
-refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_refresh")
+# limit=None ensures continuous refresh without stopping
+refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, limit=None, key="data_refresh")
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER
@@ -437,6 +438,18 @@ st.caption(APP_SUBTITLE)
 
 # Check and run AI analysis if needed
 check_and_run_ai_analysis()
+
+# ═══════════════════════════════════════════════════════════════════════
+# MARKET STATUS CACHE (Performance Optimization)
+# ═══════════════════════════════════════════════════════════════════════
+# Cache market status to avoid repeated calls (called 3+ times per refresh)
+@st.cache_data(ttl=10, show_spinner=False)  # Cache for 10 seconds
+def get_cached_market_status():
+    """Cached market status to avoid repeated calls"""
+    return get_market_status()
+
+# Get market status once and reuse throughout the page
+cached_market_status = get_cached_market_status()
 
 # ═══════════════════════════════════════════════════════════════════════
 # MARKET HOURS WARNING BANNER
@@ -459,13 +472,11 @@ if MARKET_HOURS_ENABLED:
         """)
 
         # Show next market open time if available
-        market_status = get_market_status()
-        if 'next_open' in market_status:
-            st.info(f"📅 **Next Market Open:** {market_status['next_open']}")
+        if 'next_open' in cached_market_status:
+            st.info(f"📅 **Next Market Open:** {cached_market_status['next_open']}")
     else:
         # Show market session info when market is open
-        market_status = get_market_status()
-        session = market_status.get('session', 'unknown')
+        session = cached_market_status.get('session', 'unknown')
 
         if session == 'pre_market':
             st.info(f"⏰ **{reason}** - Limited liquidity expected")
@@ -479,22 +490,27 @@ if MARKET_HOURS_ENABLED:
 
 with st.sidebar:
     st.header("⚙️ System Status")
-    
-    # Market status
-    market_status = get_market_status()
-    if market_status['open']:
-        st.success(f"{market_status['message']} | {market_status['time']}")
+
+    # Market status (use cached version)
+    if cached_market_status['open']:
+        st.success(f"{cached_market_status['message']} | {cached_market_status['time']}")
     else:
-        st.error(market_status['message'])
+        st.error(cached_market_status['message'])
     
     st.divider()
-    
-    # DhanHQ connection
+
+    # DhanHQ connection (with caching to avoid API calls on every refresh)
     st.subheader("🔌 DhanHQ API")
     if DEMO_MODE:
         st.info("🧪 DEMO MODE Active")
     else:
-        if check_dhan_connection():
+        # Cache connection status for 5 minutes to avoid expensive API calls
+        @st.cache_data(ttl=300, show_spinner=False)  # 5 minutes cache
+        def get_cached_connection_status():
+            """Check Dhan connection with caching to prevent repeated API calls"""
+            return check_dhan_connection()
+
+        if get_cached_connection_status():
             st.success("✅ Connected")
         else:
             st.error("❌ Connection Failed")
@@ -716,9 +732,9 @@ if current_time - st.session_state.sentiment_cache_time > 120:
         st.session_state.sentiment_cache_time = current_time
 
 # ═══════════════════════════════════════════════════════════════════════
-# MARKET STATUS
+# MARKET STATUS (use cached version from above)
 # ═══════════════════════════════════════════════════════════════════════
-market_status = get_market_status()
+market_status = cached_market_status
 
 # Display market data - Use session state fallbacks from NIFTY Option Screener
 col1, col2, col3, col4 = st.columns(4)
