@@ -25,8 +25,7 @@ from telegram_alerts import TelegramBot, send_test_message
 from dhan_api import check_dhan_connection
 from bias_analysis import BiasAnalysisPro
 from advanced_chart_analysis import AdvancedChartAnalysis
-from overall_market_sentiment import render_overall_market_sentiment, calculate_overall_sentiment
-from ai_analysis_adapter import run_ai_analysis, shutdown_ai_engine
+from overall_market_sentiment import render_overall_market_sentiment, calculate_overall_sentiment, run_ai_analysis, shutdown_ai_engine
 from advanced_proximity_alerts import get_proximity_alert_system
 from data_cache_manager import (
     get_cache_manager,
@@ -943,440 +942,122 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab2:
-    st.header("🎯 Trade Setup")
+    st.header("🎯 Create New Trade Setup")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_index = st.selectbox(
+            "Select Index",
+            ["NIFTY", "SENSEX"],
+            key="setup_index"
+        )
+    
+    with col2:
+        selected_direction = st.selectbox(
+            "Select Direction",
+            ["CALL", "PUT"],
+            key="setup_direction"
+        )
+    
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Safe default value handling for VOB support level
+        try:
+            default_support = max(0.0, float(nifty_data['spot_price']) - 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25000.0
+        except (TypeError, ValueError):
+            default_support = 25000.0
 
-    # Create two sub-tabs: Signal Setup and Direct Trading
-    setup_subtabs = st.tabs(["📊 Signal Setup", "⚡ Direct Trading (ATM ± 5)"])
+        vob_support = st.number_input(
+            "Support Level",
+            min_value=0.0,
+            value=default_support,
+            step=10.0,
+            key="vob_support"
+        )
 
-    # ─────────────────────────────────────────────────────────────────────
-    # SUB-TAB 1: SIGNAL SETUP (Existing Functionality)
-    # ─────────────────────────────────────────────────────────────────────
-    with setup_subtabs[0]:
-        st.subheader("Create New Signal Setup")
+    with col2:
+        # Safe default value handling for VOB resistance level
+        try:
+            default_resistance = max(0.0, float(nifty_data['spot_price']) + 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25100.0
+        except (TypeError, ValueError):
+            default_resistance = 25100.0
 
-        col1, col2 = st.columns(2)
+        vob_resistance = st.number_input(
+            "Resistance Level",
+            min_value=0.0,
+            value=default_resistance,
+            step=10.0,
+            key="vob_resistance"
+        )
+    
+    st.divider()
+    
+    # Preview calculated levels
+    st.subheader("📋 Preview Trade Levels")
+    
+    levels = calculate_levels(
+        selected_index,
+        selected_direction,
+        vob_support,
+        vob_resistance,
+        STOP_LOSS_OFFSET
+    )
 
-        with col1:
-            selected_index = st.selectbox(
-                "Select Index",
-                ["NIFTY", "SENSEX"],
-                key="setup_index"
-            )
+    # Safe handling for spot price in strike calculation
+    safe_spot_price = 25000.0  # Default fallback value
+    if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
+        try:
+            safe_spot_price = float(nifty_data['spot_price'])
+        except (TypeError, ValueError):
+            safe_spot_price = 25000.0
 
-        with col2:
-            selected_direction = st.selectbox(
-                "Select Direction",
-                ["CALL", "PUT"],
-                key="setup_direction"
-            )
-
-        st.divider()
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # Safe default value handling for VOB support level
-            try:
-                default_support = max(0.0, float(nifty_data['spot_price']) - 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25000.0
-            except (TypeError, ValueError):
-                default_support = 25000.0
-
-            vob_support = st.number_input(
-                "Support Level",
-                min_value=0.0,
-                value=default_support,
-                step=10.0,
-                key="vob_support"
-            )
-
-        with col2:
-            # Safe default value handling for VOB resistance level
-            try:
-                default_resistance = max(0.0, float(nifty_data['spot_price']) + 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25100.0
-            except (TypeError, ValueError):
-                default_resistance = 25100.0
-
-            vob_resistance = st.number_input(
-                "Resistance Level",
-                min_value=0.0,
-                value=default_resistance,
-                step=10.0,
-                key="vob_resistance"
-            )
-
-        st.divider()
-
-        # Preview calculated levels
-        st.subheader("📋 Preview Trade Levels")
-
-        levels = calculate_levels(
+    strike_info = calculate_strike(
+        selected_index,
+        safe_spot_price,
+        selected_direction,
+        nifty_data.get('current_expiry', 'N/A')
+    )
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Entry Level", f"{levels['entry_level']:.2f}")
+    
+    with col2:
+        st.metric("Stop Loss", f"{levels['sl_level']:.2f}")
+    
+    with col3:
+        st.metric("Target", f"{levels['target_level']:.2f}")
+    
+    with col4:
+        st.metric("Risk:Reward", f"1:{levels['rr_ratio']}")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info(f"**Strike:** {strike_info['strike']} {strike_info['option_type']} ({strike_info['strike_type']})")
+    
+    with col2:
+        lot_size = LOT_SIZES[selected_index]
+        st.info(f"**Quantity:** {lot_size} ({selected_index} lot size)")
+    
+    st.divider()
+    
+    # Create setup button
+    if st.button("✅ Create Signal Setup", type="primary", use_container_width=True):
+        signal_id = st.session_state.signal_manager.create_setup(
             selected_index,
             selected_direction,
             vob_support,
-            vob_resistance,
-            STOP_LOSS_OFFSET
+            vob_resistance
         )
-
-        # Safe handling for spot price in strike calculation
-        safe_spot_price = 25000.0  # Default fallback value
-        if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
-            try:
-                safe_spot_price = float(nifty_data['spot_price'])
-            except (TypeError, ValueError):
-                safe_spot_price = 25000.0
-
-        strike_info = calculate_strike(
-            selected_index,
-            safe_spot_price,
-            selected_direction,
-            nifty_data.get('current_expiry', 'N/A')
-        )
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("Entry Level", f"{levels['entry_level']:.2f}")
-
-        with col2:
-            st.metric("Stop Loss", f"{levels['sl_level']:.2f}")
-
-        with col3:
-            st.metric("Target", f"{levels['target_level']:.2f}")
-
-        with col4:
-            st.metric("Risk:Reward", f"1:{levels['rr_ratio']}")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.info(f"**Strike:** {strike_info['strike']} {strike_info['option_type']} ({strike_info['strike_type']})")
-
-        with col2:
-            lot_size = LOT_SIZES[selected_index]
-            st.info(f"**Quantity:** {lot_size} ({selected_index} lot size)")
-
-        st.divider()
-
-        # Create setup button
-        if st.button("✅ Create Signal Setup", type="primary", use_container_width=True):
-            signal_id = st.session_state.signal_manager.create_setup(
-                selected_index,
-                selected_direction,
-                vob_support,
-                vob_resistance
-            )
-            st.session_state.active_setup_id = signal_id
-            st.success(f"✅ Signal setup created! ID: {signal_id[:20]}...")
-            st.rerun()
-
-    # ─────────────────────────────────────────────────────────────────────
-    # SUB-TAB 2: DIRECT TRADING WITH ATM ± 5
-    # ─────────────────────────────────────────────────────────────────────
-    with setup_subtabs[1]:
-        st.subheader("⚡ Direct Trading with ATM ± 5 Strikes")
-        st.caption("Quick trade setup for NIFTY and SENSEX options with automatic ATM ± 5 strike selection")
-
-        # Select Index
-        col1, col2 = st.columns([1, 1])
-
-        with col1:
-            trade_index = st.selectbox(
-                "Select Index",
-                ["NIFTY", "SENSEX"],
-                key="trade_index"
-            )
-
-        # Get index data - Always fetch fresh from cache
-        if trade_index == "NIFTY":
-            index_data = get_cached_nifty_data()  # Fetch fresh data from cache
-            strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
-        else:
-            index_data = get_cached_sensex_data()
-            strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
-
-        # Check if data is available
-        if not index_data or not index_data.get('success'):
-            # Check if we have a real error or just loading
-            error_msg = index_data.get('error', '') if index_data else ''
-            is_real_error = error_msg and error_msg.lower() not in ['loading...', 'loading', '']
-
-            if is_real_error:
-                # Real error - show error message
-                st.error(f"❌ Failed to load {trade_index} data")
-                st.error(f"**Error:** {error_msg}")
-
-                # Show credentials help if needed
-                if 'credentials' in error_msg.lower() or 'secrets.toml' in error_msg.lower():
-                    st.info("""
-                    **Dhan API Setup Required:**
-                    1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
-                    2. Add your Dhan API credentials:
-                       ```
-                       [dhan]
-                       client_id = "your_client_id"
-                       access_token = "your_access_token"
-                       ```
-                    3. Restart the application
-                    """)
-                elif 'rate limit' in error_msg.lower() or '429' in error_msg:
-                    st.warning("⚠️ API rate limit reached. Please wait a few minutes and try again.")
-                else:
-                    st.info("💡 **Troubleshooting:**\n\n"
-                           "- Check your internet connection\n"
-                           "- Verify Dhan API credentials are correct\n"
-                           "- Try refreshing the page\n"
-                           "- Check if market is open (data loads better during trading hours)")
-            else:
-                # Just loading - show friendly loading message
-                st.info("🔄 **Loading market data...**\n\n"
-                       f"Fetching {trade_index} data from Dhan API. This typically takes 10-30 seconds on first load.\n\n"
-                       "The page will refresh automatically when data is ready.")
-
-            # Debug view (expandable)
-            with st.expander("🔍 Debug: View Data Status"):
-                st.json({
-                    'index_data_exists': index_data is not None,
-                    'success_flag': index_data.get('success') if index_data else None,
-                    'spot_price': index_data.get('spot_price') if index_data else None,
-                    'atm_strike': index_data.get('atm_strike') if index_data else None,
-                    'error': error_msg if error_msg else 'No error',
-                    'is_real_error': is_real_error
-                })
-
-        else:
-            spot_price = index_data.get('spot_price', 0)
-            atm_strike = index_data.get('atm_strike', 0)
-            current_expiry = index_data.get('current_expiry', 'N/A')
-
-            # Display spot price and ATM
-            with col2:
-                st.metric(f"{trade_index} Spot", f"₹{spot_price:,.2f}", help="Current index price")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("ATM Strike", f"{int(atm_strike):,}", help="At-The-Money strike price")
-            with col2:
-                st.metric("Current Expiry", current_expiry, help="Current weekly/monthly expiry")
-
-            st.divider()
-
-            # Generate ATM ± 5 strikes
-            strikes = []
-            for i in range(-5, 6):  # -5 to +5
-                strike = atm_strike + (i * strike_gap)
-                strikes.append({
-                    'strike': int(strike),
-                    'offset': i,
-                    'label': f"{int(strike):,} (ATM{i:+d})" if i != 0 else f"{int(strike):,} (ATM)"
-                })
-
-            # Trading controls
-            col1, col2, col3 = st.columns([2, 1, 1])
-
-            with col1:
-                selected_strike_idx = st.selectbox(
-                    "Select Strike (ATM ± 5)",
-                    range(len(strikes)),
-                    index=5,  # Default to ATM (index 5 in the list)
-                    format_func=lambda x: strikes[x]['label'],
-                    key="trade_strike_selector"
-                )
-                selected_strike = strikes[selected_strike_idx]['strike']
-                strike_offset = strikes[selected_strike_idx]['offset']
-
-            with col2:
-                option_type = st.selectbox(
-                    "Option Type",
-                    ["CE", "PE"],
-                    key="trade_option_type"
-                )
-
-            with col3:
-                lots = st.number_input(
-                    "Lots",
-                    min_value=1,
-                    max_value=100,
-                    value=1,
-                    step=1,
-                    key="trade_lots"
-                )
-
-            # Calculate quantities and costs
-            lot_size = LOT_SIZES.get(trade_index, 50)
-            total_quantity = lots * lot_size
-
-            # Estimate premium (placeholder - in real app, fetch from option chain)
-            # For now, use a rough estimate based on ATM offset
-            if strike_offset == 0:
-                est_premium = 100  # ATM premium estimate
-            elif abs(strike_offset) <= 2:
-                est_premium = max(50, 100 - (abs(strike_offset) * 20))  # Near ATM
-            else:
-                est_premium = max(10, 100 - (abs(strike_offset) * 30))  # OTM
-
-            est_cost = est_premium * total_quantity
-
-            # Display order summary
-            st.divider()
-            st.subheader("📋 Order Summary")
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric("Strike", f"{selected_strike:,}")
-
-            with col2:
-                st.metric("Option", f"{option_type}")
-
-            with col3:
-                st.metric("Quantity", f"{total_quantity} ({lots} lots)")
-
-            with col4:
-                st.metric("Est. Premium", f"₹{est_premium:.2f}")
-
-            st.info(f"**Estimated Total Cost:** ₹{est_cost:,.2f} | **{trade_index} {selected_strike} {option_type}** ({current_expiry})")
-
-            # Trading buttons
-            st.divider()
-            st.subheader("🚀 Place Order")
-
-            col1, col2, col3 = st.columns([2, 2, 4])
-
-            with col1:
-                if st.button(
-                    f"BUY {option_type} @ Market",
-                    type="primary",
-                    use_container_width=True,
-                    key="trade_market_button"
-                ):
-                    st.info(
-                        f"**Market Order Preview:**\n\n"
-                        f"Index: {trade_index}\n\n"
-                        f"Strike: {selected_strike} {option_type}\n\n"
-                        f"Expiry: {current_expiry}\n\n"
-                        f"Quantity: {total_quantity} ({lots} lots)\n\n"
-                        f"Order Type: MARKET"
-                    )
-
-                    # Confirmation
-                    if st.button("✅ Confirm Market Order", key="confirm_market"):
-                        try:
-                            # First, fetch option chain to get security ID
-                            from dhan_data_fetcher import DhanDataFetcher
-
-                            fetcher = DhanDataFetcher()
-                            option_chain_result = fetcher.fetch_option_chain(trade_index, current_expiry)
-
-                            if not option_chain_result.get('success'):
-                                st.error(f"❌ Failed to fetch option chain: {option_chain_result.get('error', 'Unknown error')}")
-                                st.info("**Note:** Option chain data is required to get the security ID for order placement.")
-                            else:
-                                # Extract option chain data
-                                option_data = option_chain_result.get('data', {})
-
-                                # Find the security ID for the selected strike and option type
-                                security_id = None
-
-                                # Search in CE or PE data
-                                option_list = option_data.get('CE' if option_type == 'CE' else 'PE', [])
-
-                                for option in option_list:
-                                    if option.get('strike_price') == selected_strike:
-                                        security_id = option.get('security_id')
-                                        break
-
-                                if not security_id:
-                                    st.error(f"❌ Could not find security ID for {trade_index} {selected_strike} {option_type}")
-                                    st.info("**Debug Info:**\n\n"
-                                           f"Looking for strike: {selected_strike}\n"
-                                           f"Option type: {option_type}\n"
-                                           f"Expiry: {current_expiry}")
-                                else:
-                                    # Place order using Dhan API
-                                    from dhan_api import DhanAPI
-                                    import requests
-
-                                    creds = get_dhan_credentials()
-
-                                    if not creds:
-                                        st.error("❌ Dhan API credentials not found")
-                                    else:
-                                        # Prepare order request
-                                        order_data = {
-                                            "dhanClientId": creds['client_id'],
-                                            "transactionType": "BUY",
-                                            "exchangeSegment": "NSE_FNO" if trade_index == "NIFTY" else "BSE_FNO",
-                                            "productType": "INTRADAY",
-                                            "orderType": "MARKET",
-                                            "validity": "DAY",
-                                            "securityId": str(security_id),
-                                            "quantity": int(total_quantity),
-                                            "disclosedQuantity": 0,
-                                            "price": 0.0,
-                                            "triggerPrice": 0.0,
-                                            "afterMarketOrder": False
-                                        }
-
-                                        headers = {
-                                            'Content-Type': 'application/json',
-                                            'access-token': creds['access_token']
-                                        }
-
-                                        # Place order
-                                        response = requests.post(
-                                            "https://api.dhan.co/v2/orders",
-                                            json=order_data,
-                                            headers=headers,
-                                            timeout=10
-                                        )
-
-                                        if response.status_code == 200:
-                                            result = response.json()
-                                            st.success(f"✅ Order placed successfully!\n\n"
-                                                      f"Order ID: {result.get('orderId')}\n"
-                                                      f"Status: {result.get('orderStatus')}")
-                                        else:
-                                            st.error(f"❌ Order failed: {response.text}")
-                        except Exception as e:
-                            st.error(f"❌ Error placing order: {str(e)}")
-                            import traceback
-                            with st.expander("🔍 View Error Details"):
-                                st.code(traceback.format_exc())
-
-            with col2:
-                limit_price = st.number_input(
-                    "Limit Price",
-                    min_value=0.05,
-                    value=float(est_premium) if est_premium > 0 else 10.0,
-                    step=0.05,
-                    key="trade_limit_price"
-                )
-
-                if st.button(
-                    f"BUY @ ₹{limit_price:.2f}",
-                    use_container_width=True,
-                    key="trade_limit_button"
-                ):
-                    st.info(
-                        f"**Limit Order Preview:**\n\n"
-                        f"Index: {trade_index}\n\n"
-                        f"Strike: {selected_strike} {option_type}\n\n"
-                        f"Expiry: {current_expiry}\n\n"
-                        f"Quantity: {total_quantity} ({lots} lots)\n\n"
-                        f"Limit Price: ₹{limit_price:.2f}"
-                    )
-                    st.warning("⚠️ Limit orders via Dhan API - ensure sufficient margin")
-
-            with col3:
-                st.info("**Quick Trade Info:**\n\n"
-                       f"• ATM Strike: {int(atm_strike):,}\n\n"
-                       f"• Selected: ATM{strike_offset:+d}\n\n"
-                       f"• Strike Gap: {strike_gap}\n\n"
-                       f"• Lot Size: {lot_size}")
-
-            st.divider()
-            st.caption("⚠️ **Important:** Orders are placed via Dhan API. Ensure you have sufficient margin and Dhan credentials configured.")
-            st.caption("📊 **Note:** Premium estimates are approximate. Actual LTP will be used during order placement.")
+        st.session_state.active_setup_id = signal_id
+        st.success(f"✅ Signal setup created! ID: {signal_id[:20]}...")
+        st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 3: ACTIVE SIGNALS

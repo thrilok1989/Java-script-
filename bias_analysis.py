@@ -18,19 +18,20 @@ warnings.filterwarnings('ignore')
 # Indian Standard Time (IST)
 IST = pytz.timezone('Asia/Kolkata')
 
+# === Telegram Config ===
+TELEGRAM_BOT_TOKEN = "8133685842:AAGdHCpi9QRIsS-fWW5Y1AJvS95QL9xU"
+TELEGRAM_CHAT_ID = "57096584"
+
 def send_telegram_message(message):
-    """Send Telegram message for indicator alignment alerts (dual recipient support)"""
+    """Send Telegram message for indicator alignment alerts"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        from telegram_alerts import TelegramBot
-        bot = TelegramBot()
-        if bot.enabled:
-            success = bot.send_message(message, parse_mode="HTML")
-            if success:
-                print(f"✅ Telegram message sent successfully")
-            else:
-                print(f"⚠️ Telegram message failed")
+        response = requests.post(url, data=data)
+        if response.status_code == 200:
+            print(f"✅ Telegram message sent successfully")
         else:
-            print(f"⚠️ Telegram not configured")
+            print(f"⚠️ Telegram message failed with status {response.status_code}")
     except Exception as e:
         print(f"❌ Telegram error: {e}")
 

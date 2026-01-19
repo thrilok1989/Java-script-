@@ -144,29 +144,14 @@ with col1:
         key="trade_index"
     )
 
-# Get index data - Fetch once and cache in session state for instant access
-cache_key = f"index_data_{trade_index}"
-
-# Only fetch if not in session state or if data is stale (>15 seconds)
-if cache_key not in st.session_state or \
-   'last_fetch' not in st.session_state or \
-   (datetime.now().timestamp() - st.session_state.get('last_fetch', 0)) > 15:
-
-    with st.spinner(f"Loading {trade_index} data..."):
-        if trade_index == "NIFTY":
-            index_data = fetch_nifty_data()
-            strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
-        else:
-            index_data = fetch_sensex_data()
-            strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
-
-        st.session_state[cache_key] = index_data
-        st.session_state['strike_gap'] = strike_gap
-        st.session_state['last_fetch'] = datetime.now().timestamp()
-else:
-    # Use cached data from session state - INSTANT!
-    index_data = st.session_state[cache_key]
-    strike_gap = st.session_state['strike_gap']
+# Get index data - Fetch fresh data with Streamlit caching
+with st.spinner(f"Loading {trade_index} data..."):
+    if trade_index == "NIFTY":
+        index_data = fetch_nifty_data()
+        strike_gap = STRIKE_INTERVALS.get("NIFTY", 50)
+    else:
+        index_data = fetch_sensex_data()
+        strike_gap = STRIKE_INTERVALS.get("SENSEX", 100)
 
 # Check if data is available
 if not index_data or not index_data.get('success'):
@@ -232,26 +217,11 @@ with col2:
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
-# FETCH OPTION CHAIN FOR LTP DATA - With session state caching
+# FETCH OPTION CHAIN FOR LTP DATA
 # ═══════════════════════════════════════════════════════════════════════
 
-# Cache option chain data in session state for instant access
-oc_cache_key = f"option_chain_{trade_index}_{current_expiry}"
-
-# Only fetch if not in session state or if data is stale (>5 seconds for LTP freshness)
-if oc_cache_key not in st.session_state or \
-   'oc_last_fetch' not in st.session_state or \
-   (datetime.now().timestamp() - st.session_state.get('oc_last_fetch', 0)) > 5:
-
-    # Fetch fresh option chain data
-    option_chain_data = fetch_option_chain(trade_index, current_expiry)
-
-    # Cache in session state
-    st.session_state[oc_cache_key] = option_chain_data
-    st.session_state['oc_last_fetch'] = datetime.now().timestamp()
-else:
-    # Use cached data - INSTANT, no loading!
-    option_chain_data = st.session_state[oc_cache_key]
+# Fetch option chain to get LTP
+option_chain_data = fetch_option_chain(trade_index, current_expiry)
 
 # Parse option chain to get LTP for each strike
 ltp_map = {'CE': {}, 'PE': {}}
@@ -487,35 +457,18 @@ if st.session_state.get('show_order_dialog', False):
                 if not option_chain_result.get('success'):
                     st.error(f"❌ Failed to fetch option chain: {option_chain_result.get('error')}")
                 else:
-                    # Find security ID from 'oc' structure
+                    # Find security ID
                     option_data = option_chain_result.get('data', {})
-                    oc_data = option_data.get('oc', {})
+                    option_list = option_data.get(selected_type, [])
 
                     security_id = None
-
-                    # Convert selected strike to string key
-                    strike_key = str(selected_strike)
-
-                    if strike_key in oc_data:
-                        strike_data = oc_data[strike_key]
-
-                        # Get CE or PE data based on selection
-                        option_type_key = 'ce' if selected_type == 'CE' else 'pe'
-                        option_info = strike_data.get(option_type_key)
-
-                        if option_info:
-                            # Dhan API uses 'SEM_EXM_EXCH_ID' for security ID
-                            security_id = option_info.get('SEM_EXM_EXCH_ID') or option_info.get('security_id')
+                    for option in option_list:
+                        if option.get('strike_price') == selected_strike:
+                            security_id = option.get('security_id')
+                            break
 
                     if not security_id:
                         st.error(f"❌ Security ID not found for {trade_index} {selected_strike} {selected_type}")
-                        with st.expander("🔍 Debug - Option Chain Structure"):
-                            st.json({
-                                'strike_key': strike_key,
-                                'oc_keys': list(oc_data.keys())[:10] if oc_data else [],
-                                'strike_data_exists': strike_key in oc_data,
-                                'option_data_sample': str(oc_data.get(strike_key, {}))[:300] if strike_key in oc_data else 'Strike not found'
-                            })
                     else:
                         # Place order
                         creds = get_dhan_credentials()
