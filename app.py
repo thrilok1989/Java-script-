@@ -3559,9 +3559,16 @@ with tab5:
     try:
         st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
 
-        # DISABLED AUTO-FETCH - Only fetch when user clicks Refresh
-        # This prevents tab from hanging when Dhan API is down (holidays, weekends)
-        # Auto-fetch code commented out to prevent blank tabs
+        # AUTO-LOAD on first access - fetch data immediately if not in cache
+        if 'enhanced_market_data' not in st.session_state:
+            with st.spinner("Loading enhanced market data..."):
+                try:
+                    from enhanced_market_data import get_enhanced_market_data
+                    enhanced_data = get_enhanced_market_data()
+                    st.session_state.enhanced_market_data = enhanced_data
+                except Exception as e:
+                    st.warning(f"⚠️ Could not auto-load data: {e}")
+                    st.info("Click the Refresh button to manually load data.")
 
         # Control buttons
         col1, col2 = st.columns([1, 1])
@@ -3594,7 +3601,7 @@ with tab5:
                 st.error(traceback.format_exc())
         else:
             st.info("""
-            ℹ️ Enhanced market data will auto-load on first visit and refresh every 5 minutes.
+            ℹ️ Click 'Refresh Data' button above to load enhanced market data.
 
             **Data Sources:**
             - 📊 **Dhan API:** India VIX, All Sector Indices (IT, Auto, Pharma, Metal, FMCG, Realty, Energy)
