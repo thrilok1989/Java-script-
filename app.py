@@ -446,21 +446,13 @@ session_refresh_interval = scheduler.get_refresh_interval(current_session)
 # Auto-refresh with dynamic interval based on market hours
 # This ensures spot price updates every 10s during trading hours
 # limit=None ensures continuous refresh without stopping
-# Added debounce to prevent multiple rapid refreshes
-if 'last_refresh_time' not in st.session_state:
-    st.session_state.last_refresh_time = 0
-
-current_time = time.time()
-if current_time - st.session_state.last_refresh_time > session_refresh_interval:
-    refresh_count = st_autorefresh(
-        interval=session_refresh_interval * 1000,
-        limit=None,
-        key="data_refresh",
-        debounce=True  # Prevent rapid re-runs
-    )
-    st.session_state.last_refresh_time = current_time
-else:
-    refresh_count = 0
+# Note: st_autorefresh runs client-side (in browser JavaScript)
+# It may pause on mobile when screen locks or tab is backgrounded
+refresh_count = st_autorefresh(
+    interval=session_refresh_interval * 1000,  # Convert seconds to milliseconds
+    limit=None,  # Run forever
+    key="data_refresh"
+)
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER
