@@ -33,11 +33,6 @@ from data_cache_manager import (
 from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
 from src.market_structure_ui import render_market_structure_section, render_structure_widget
 
-# Import tab-specific modules at startup (prevents slow loading when tabs are clicked)
-from NiftyOptionScreener import render_nifty_option_screener
-from enhanced_market_data import get_enhanced_market_data
-from enhanced_market_display import render_enhanced_market_data_tab
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -3426,12 +3421,20 @@ with tab4:
     st.header("🎯 NIFTY Option Screener v7.0")
     st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
 
-    # Render Option Screener (imports preloaded at startup for instant loading)
+    # Lazy load with immediate UI feedback
     try:
-        render_nifty_option_screener()
+        # Show immediately that tab is loading
+        with st.spinner("Loading NIFTY Option Screener..."):
+            from NiftyOptionScreener import render_nifty_option_screener
+            render_nifty_option_screener()
+    except ImportError as e:
+        st.error(f"❌ Failed to import NIFTY Option Screener module: {e}")
+        st.info("Please ensure NiftyOptionScreener.py exists and all dependencies are installed.")
+        st.code(str(e))
     except Exception as e:
-        st.error(f"❌ Error rendering Nifty Option Screener: {e}")
-        st.exception(e)
+        st.error(f"❌ Error rendering NIFTY Option Screener: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 5: ENHANCED MARKET DATA
@@ -3442,6 +3445,9 @@ with tab5:
     st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
 
     try:
+        # Import modules (lazy loaded when tab is accessed)
+        from enhanced_market_data import get_enhanced_market_data
+        from enhanced_market_display import render_enhanced_market_data_tab
 
         # AUTO-LOAD on first access - fetch data immediately if not in cache
         if 'enhanced_market_data' not in st.session_state:
@@ -3479,7 +3485,7 @@ with tab5:
             except Exception as e:
                 st.error(f"❌ Error displaying enhanced data: {e}")
                 import traceback
-                st.error(traceback.format_exc())
+                st.code(traceback.format_exc())
         else:
             st.info("""
             ℹ️ Click 'Refresh Data' button above to load enhanced market data.
@@ -3498,6 +3504,10 @@ with tab5:
 
             **All data is presented in comprehensive tables with bias scores and trading insights!**
             """)
+    except ImportError as e:
+        st.error(f"❌ Failed to import Enhanced Market Data modules: {e}")
+        st.info("Please ensure enhanced_market_data.py and enhanced_market_display.py exist with all dependencies.")
+        st.code(str(e))
     except Exception as e:
         st.error(f"❌ Critical error in Enhanced Market Data tab: {e}")
         import traceback
