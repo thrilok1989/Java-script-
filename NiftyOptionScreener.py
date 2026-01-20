@@ -202,16 +202,14 @@ try:
         TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
         TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
-    # Verify required credentials
-    if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
-        st.error("❌ Missing Dhan credentials. Please configure in .streamlit/secrets.toml")
-        st.info("Required: DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN")
-        st.stop()
+    # Store credential status for later check in render function
+    CREDENTIALS_LOADED = bool(DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN)
+    CREDENTIAL_ERROR = None
 
 except Exception as e:
-    st.error(f"❌ Error loading credentials: {e}")
-    st.info("Please check your .streamlit/secrets.toml configuration")
-    st.stop()
+    # Store error for later display in render function
+    CREDENTIALS_LOADED = False
+    CREDENTIAL_ERROR = str(e)
 
 try:
     if SUPABASE_URL and SUPABASE_ANON_KEY:
@@ -6005,6 +6003,15 @@ def render_nifty_option_screener():
     - Expiry Spike Detector
     - Enhanced OI/PCR Analytics
     """
+    # Check credentials first (moved from module level to avoid st.stop() during import)
+    if not CREDENTIALS_LOADED:
+        st.error("❌ Missing or Invalid Dhan Credentials")
+        st.info("Please configure DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN in .streamlit/secrets.toml")
+        if CREDENTIAL_ERROR:
+            st.code(f"Error: {CREDENTIAL_ERROR}")
+        st.warning("💡 **How to fix:**\n1. Create `.streamlit/secrets.toml` in your project root\n2. Add:\n```\n[DHAN]\nCLIENT_ID = \"your_client_id\"\nACCESS_TOKEN = \"your_access_token\"\n```")
+        return  # Exit gracefully instead of st.stop()
+
     # Display current IST time
     current_ist = get_ist_datetime_str()
     st.markdown(f"""
@@ -6118,8 +6125,10 @@ def render_nifty_option_screener():
                 spot = get_nifty_spot_price()
 
         if spot == 0.0:
-            st.error("Unable to fetch NIFTY spot")
-            st.stop()
+            st.error("❌ Unable to fetch NIFTY spot price")
+            st.info("Please check your Dhan API credentials and try refreshing the page.")
+            st.button("🔄 Retry", key="retry_spot", on_click=lambda: st.rerun())
+            return  # Exit gracefully
 
         # Get expiries - use session state if available to avoid redundant API calls
         expiries = st.session_state.get('expiry_list', None)
@@ -6128,8 +6137,10 @@ def render_nifty_option_screener():
             if expiries:
                 st.session_state['expiry_list'] = expiries
         if not expiries:
-            st.error("Unable to fetch expiry list")
-            st.stop()
+            st.error("❌ Unable to fetch expiry list")
+            st.info("The Dhan API may be temporarily unavailable. Please try again in a moment.")
+            st.button("🔄 Retry", key="retry_expiry", on_click=lambda: st.rerun())
+            return  # Exit gracefully
 
         expiry = st.selectbox("Select expiry", expiries, index=0, key="nifty_screener_expiry_selector")
         st.session_state['current_expiry'] = expiry  # Store for main dashboard
@@ -6172,13 +6183,20 @@ def render_nifty_option_screener():
             if chain:
                 st.session_state[chain_cache_key] = chain
     if chain is None:
-        st.error("Failed to fetch option chain")
-        st.stop()
-    
+        st.error("❌ Failed to fetch option chain")
+        st.warning("**Possible reasons:**\n- Dhan API rate limit exceeded\n- Network timeout\n- Invalid expiry date\n- Market closed")
+        st.info("Please wait a moment and click the button below to retry.")
+        if st.button("🔄 Retry Fetch", key="retry_chain"):
+            st.session_state.pop(chain_cache_key, None)  # Clear cache
+            st.rerun()
+        return  # Exit gracefully
+
     df_ce, df_pe = parse_dhan_option_chain(chain)
     if df_ce.empty or df_pe.empty:
-        st.error("Insufficient CE/PE data")
-        st.stop()
+        st.error("❌ Insufficient CE/PE option data")
+        st.warning("The option chain data is empty or incomplete.")
+        st.info("**Try:**\n- Select a different expiry date\n- Wait for market hours (9:15 AM - 3:30 PM IST)\n- Check if this expiry has active options")
+        return  # Exit gracefully
     
     # Filter ATM window
     strike_gap = strike_gap_from_series(df_ce["strikePrice"])
