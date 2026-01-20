@@ -443,3 +443,194 @@ def invalidate_all_caches():
     """Invalidate all caches (useful for manual refresh)"""
     cache_manager = get_cache_manager()
     cache_manager.clear_all()
+
+
+def start_background_signal_monitor():
+    """
+    Start 24/7 background signal monitoring with telegram alerts
+
+    This function runs continuously on the server (not in browser) and:
+    - Fetches option chain data every 60 seconds
+    - Runs signal detection logic
+    - Sends telegram messages when strong signals detected (confidence >= 70%)
+    - Tracks sent signals to prevent duplicates
+    - Runs even when browser is closed!
+    """
+    cache_manager = get_cache_manager()
+
+    # Track sent signals to avoid duplicates
+    sent_signals = {}
+
+    def monitor_signals():
+        """Background thread that monitors for trading signals"""
+        print("🚀 Starting 24/7 background signal monitor...")
+
+        while not cache_manager._stop_threads.is_set():
+            try:
+                # Only run during market hours (if enabled)
+                if cache_manager.market_hours_enabled:
+                    if not is_within_trading_hours():
+                        print("⏰ Market closed - signal monitoring paused")
+                        cache_manager._stop_threads.wait(300)  # Wait 5 minutes
+                        continue
+
+                print("🔍 Checking for trading signals...")
+
+                # Import here to avoid circular imports
+                from NiftyOptionScreener import (
+                    fetch_dhan_option_chain,
+                    calculate_seller_bias,
+                    calculate_max_pain_smart,
+                    find_support_resistance_with_buildup,
+                    calculate_entry_signal_extended,
+                    calculate_moment_detector_metrics,
+                    calculate_atm_bias,
+                    check_and_send_signal
+                )
+                from dhan_api import get_spot_nifty
+                from config import get_telegram_credentials
+                import os
+
+                # Get telegram credentials
+                telegram_creds = get_telegram_credentials()
+                if not telegram_creds['enabled']:
+                    print("⚠️ Telegram disabled - skipping signal check")
+                    cache_manager._stop_threads.wait(60)
+                    continue
+
+                # Get NIFTY spot price
+                spot = get_spot_nifty()
+                if spot == 0.0:
+                    print("❌ Unable to fetch NIFTY spot price")
+                    cache_manager._stop_threads.wait(60)
+                    continue
+
+                print(f"📊 NIFTY Spot: ₹{spot:,.2f}")
+
+                # Get current expiry (use nearest Thursday)
+                from datetime import datetime, timedelta
+                today = datetime.now()
+                days_until_thursday = (3 - today.weekday()) % 7
+                if days_until_thursday == 0 and today.hour >= 15:
+                    days_until_thursday = 7
+                expiry_date = today + timedelta(days=days_until_thursday)
+                expiry = expiry_date.strftime("%d-%b-%Y")
+
+                print(f"📅 Using expiry: {expiry}")
+
+                # Fetch option chain
+                chain = fetch_dhan_option_chain(expiry)
+                if chain is None or chain.empty:
+                    print("❌ Failed to fetch option chain")
+                    cache_manager._stop_threads.wait(60)
+                    continue
+
+                print(f"✅ Fetched option chain with {len(chain)} strikes")
+
+                # Calculate all signal components
+                seller_bias_result = calculate_seller_bias(chain, spot)
+                seller_max_pain = calculate_max_pain_smart(chain, spot)
+                seller_supports_df, seller_resists_df = find_support_resistance_with_buildup(chain, spot)
+
+                # Find nearest support/resistance
+                nearest_sup = seller_supports_df.iloc[0].to_dict() if not seller_supports_df.empty else None
+                nearest_res = seller_resists_df.iloc[0].to_dict() if not seller_resists_df.empty else None
+
+                # Calculate moment metrics
+                moment_metrics = calculate_moment_detector_metrics(chain, spot)
+
+                # Calculate ATM bias
+                atm_strike = round(spot / 50) * 50
+                strike_gap = 50
+                atm_bias = calculate_atm_bias(chain, atm_strike, spot, strike_gap)
+
+                # Calculate support/resistance bias
+                support_bias = None
+                resistance_bias = None
+                if nearest_sup:
+                    support_bias = calculate_atm_bias(chain, nearest_sup["strike"], spot, strike_gap)
+                if nearest_res:
+                    resistance_bias = calculate_atm_bias(chain, nearest_res["strike"], spot, strike_gap)
+
+                # Calculate breakout index
+                seller_breakout_index = 0
+                if seller_bias_result.get("polarity"):
+                    seller_breakout_index = abs(seller_bias_result["polarity"]) * 10
+
+                # Calculate entry signal
+                entry_signal = calculate_entry_signal_extended(
+                    spot, chain, atm_strike,
+                    seller_bias_result, seller_max_pain,
+                    seller_supports_df, seller_resists_df,
+                    nearest_sup, nearest_res,
+                    seller_breakout_index, moment_metrics,
+                    atm_bias, support_bias, resistance_bias
+                )
+
+                print(f"📈 Signal: {entry_signal['position_type']} | Confidence: {entry_signal['confidence']}%")
+
+                # Check if signal meets threshold (70%+) and is new
+                if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 70:
+                    signal_key = f"{entry_signal['position_type']}_{entry_signal['optimal_entry_price']:.0f}"
+
+                    # Check if we already sent this signal recently (within 1 hour)
+                    now = time.time()
+                    if signal_key in sent_signals:
+                        last_sent_time = sent_signals[signal_key]
+                        if now - last_sent_time < 3600:  # 1 hour = 3600 seconds
+                            print(f"⏭️ Signal already sent recently: {signal_key}")
+                            cache_manager._stop_threads.wait(60)
+                            continue
+
+                    # New signal - send telegram alert
+                    print(f"🚨 NEW SIGNAL DETECTED: {signal_key}")
+
+                    telegram_msg = check_and_send_signal(
+                        entry_signal, spot, seller_bias_result,
+                        seller_max_pain, nearest_sup, nearest_res,
+                        moment_metrics, seller_breakout_index, expiry, {},
+                        atm_bias, support_bias, resistance_bias
+                    )
+
+                    if telegram_msg:
+                        # Send to telegram
+                        from NiftyOptionScreener import send_telegram_message
+                        success, message = send_telegram_message(
+                            os.getenv("TELEGRAM_BOT_TOKEN"),
+                            os.getenv("TELEGRAM_CHAT_ID"),
+                            telegram_msg
+                        )
+
+                        if success:
+                            print(f"✅ Telegram message sent successfully!")
+                            # Mark signal as sent
+                            sent_signals[signal_key] = now
+
+                            # Clean up old signals (older than 2 hours)
+                            sent_signals_copy = sent_signals.copy()
+                            for key, timestamp in sent_signals_copy.items():
+                                if now - timestamp > 7200:  # 2 hours
+                                    del sent_signals[key]
+                        else:
+                            print(f"❌ Failed to send telegram message: {message}")
+                    else:
+                        print("⚠️ No telegram message generated")
+                else:
+                    print(f"⏭️ No signal or confidence too low")
+
+            except Exception as e:
+                print(f"❌ Error in background signal monitor: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # Wait 60 seconds before next check
+            print("⏰ Waiting 60 seconds before next check...")
+            cache_manager._stop_threads.wait(60)
+
+    # Start background thread
+    thread = threading.Thread(target=monitor_signals, daemon=True)
+    thread.start()
+    cache_manager._background_threads['signal_monitor'] = thread
+    print("✅ Background signal monitor started!")
+
+    return thread

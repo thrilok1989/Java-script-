@@ -392,6 +392,17 @@ if 'data_preloaded' not in st.session_state:
     thread.start()
     # Don't wait for it to complete - let app continue loading
 
+# Start 24/7 background signal monitoring (runs on server even when browser closed)
+if 'signal_monitor_started' not in st.session_state:
+    st.session_state.signal_monitor_started = False
+    from data_cache_manager import start_background_signal_monitor
+    try:
+        start_background_signal_monitor()
+        st.session_state.signal_monitor_started = True
+        print("✅ 24/7 background signal monitor is now running on server!")
+    except Exception as e:
+        print(f"❌ Failed to start signal monitor: {e}")
+
 # NSE Options Analyzer - Initialize instruments session state
 NSE_INSTRUMENTS = {
     'indices': {
