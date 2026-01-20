@@ -33,6 +33,11 @@ from data_cache_manager import (
 from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
 from src.market_structure_ui import render_market_structure_section, render_structure_widget
 
+# Import tab-specific modules at startup (prevents slow loading when tabs are clicked)
+from NiftyOptionScreener import render_nifty_option_screener
+from enhanced_market_data import get_enhanced_market_data
+from enhanced_market_display import render_enhanced_market_data_tab
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -3531,39 +3536,27 @@ with tab4:
     st.header("🎯 NIFTY Option Screener v7.0")
     st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
 
-    # Auto-load the Option Screener (no lazy loading - loads immediately)
+    # Render Option Screener (imports preloaded at startup for instant loading)
     try:
-        from NiftyOptionScreener import render_nifty_option_screener
         render_nifty_option_screener()
-    except ImportError as e:
-        st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
-        st.info("Please ensure NiftyOptionScreener.py is in the project directory")
     except Exception as e:
         st.error(f"❌ Error rendering Nifty Option Screener: {e}")
         st.exception(e)
-
-    # Force clean tab completion to ensure tabs 8 & 9 render
-    st.write("")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 5: ENHANCED MARKET DATA
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab5:
-    st.markdown("# 🌐 Enhanced Market Data Analysis")
-    st.markdown("### ✅ Tab 8 LOADED")
-    st.write("=" * 50)
-    st.info("If you see this, tab 8 is working!")
-    st.write("=" * 50)
+    st.header("🌐 Enhanced Market Data Analysis")
+    st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
 
     try:
-        st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
 
         # AUTO-LOAD on first access - fetch data immediately if not in cache
         if 'enhanced_market_data' not in st.session_state:
             with st.spinner("Loading enhanced market data..."):
                 try:
-                    from enhanced_market_data import get_enhanced_market_data
                     enhanced_data = get_enhanced_market_data()
                     st.session_state.enhanced_market_data = enhanced_data
                 except Exception as e:
@@ -3577,7 +3570,6 @@ with tab5:
             if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
                 with st.spinner("Refreshing market data..."):
                     try:
-                        from enhanced_market_data import get_enhanced_market_data
                         enhanced_data = get_enhanced_market_data()
                         st.session_state.enhanced_market_data = enhanced_data
                         st.success("✅ Data refreshed successfully!")
@@ -3593,7 +3585,6 @@ with tab5:
         # Display enhanced market data if available
         if 'enhanced_market_data' in st.session_state:
             try:
-                from enhanced_market_display import render_enhanced_market_data_tab
                 render_enhanced_market_data_tab(st.session_state.enhanced_market_data)
             except Exception as e:
                 st.error(f"❌ Error displaying enhanced data: {e}")
