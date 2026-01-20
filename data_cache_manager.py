@@ -453,13 +453,10 @@ def start_background_signal_monitor():
     - Fetches option chain data every 60 seconds
     - Runs signal detection logic
     - Sends telegram messages when strong signals detected (confidence >= 70%)
-    - Tracks sent signals to prevent duplicates
+    - Sends messages EVERY time (no deduplication) for continuous trade confirmation
     - Runs even when browser is closed!
     """
     cache_manager = get_cache_manager()
-
-    # Track sent signals to avoid duplicates
-    sent_signals = {}
 
     def monitor_signals():
         """Background thread that monitors for trading signals"""
@@ -569,21 +566,12 @@ def start_background_signal_monitor():
 
                 print(f"📈 Signal: {entry_signal['position_type']} | Confidence: {entry_signal['confidence']}%")
 
-                # Check if signal meets threshold (70%+) and is new
+                # Check if signal meets threshold (70%+)
                 if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 70:
                     signal_key = f"{entry_signal['position_type']}_{entry_signal['optimal_entry_price']:.0f}"
 
-                    # Check if we already sent this signal recently (within 1 hour)
-                    now = time.time()
-                    if signal_key in sent_signals:
-                        last_sent_time = sent_signals[signal_key]
-                        if now - last_sent_time < 3600:  # 1 hour = 3600 seconds
-                            print(f"⏭️ Signal already sent recently: {signal_key}")
-                            cache_manager._stop_threads.wait(60)
-                            continue
-
-                    # New signal - send telegram alert
-                    print(f"🚨 NEW SIGNAL DETECTED: {signal_key}")
+                    # Send telegram alert (no deduplication - send every time!)
+                    print(f"🚨 SIGNAL DETECTED: {signal_key}")
 
                     telegram_msg = check_and_send_signal(
                         entry_signal, spot, seller_bias_result,
@@ -603,14 +591,6 @@ def start_background_signal_monitor():
 
                         if success:
                             print(f"✅ Telegram message sent successfully!")
-                            # Mark signal as sent
-                            sent_signals[signal_key] = now
-
-                            # Clean up old signals (older than 2 hours)
-                            sent_signals_copy = sent_signals.copy()
-                            for key, timestamp in sent_signals_copy.items():
-                                if now - timestamp > 7200:  # 2 hours
-                                    del sent_signals[key]
                         else:
                             print(f"❌ Failed to send telegram message: {message}")
                     else:
