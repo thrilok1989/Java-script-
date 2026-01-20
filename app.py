@@ -3421,18 +3421,20 @@ with tab4:
     st.header("🎯 NIFTY Option Screener v7.0")
     st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
 
-    # Lazy load with immediate UI feedback
+    # Import module (lazy loaded when tab is accessed)
     try:
-        # Show immediately that tab is loading
-        with st.spinner("Loading NIFTY Option Screener..."):
-            from NiftyOptionScreener import render_nifty_option_screener
-            render_nifty_option_screener()
+        from NiftyOptionScreener import render_nifty_option_screener
+
+        # Render the screener (let it handle its own spinners and errors internally)
+        render_nifty_option_screener()
+
     except ImportError as e:
         st.error(f"❌ Failed to import NIFTY Option Screener module: {e}")
         st.info("Please ensure NiftyOptionScreener.py exists and all dependencies are installed.")
         st.code(str(e))
     except Exception as e:
         st.error(f"❌ Error rendering NIFTY Option Screener: {e}")
+        st.info("This error occurred in the render function. Check logs for details.")
         import traceback
         st.code(traceback.format_exc())
 
