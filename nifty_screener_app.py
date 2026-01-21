@@ -1553,8 +1553,8 @@ def display_overall_market_sentiment_summary(overall_bias, atm_bias, seller_max_
     Organized in a clean tabulation format
     """
     st.markdown("---")
-    st.markdown("## 📈 OVERALL MARKET SENTIMENT SUMMARY")
-    st.markdown("*Consolidated view of essential option chain metrics*")
+    st.markdown("## 📊 KEY METRICS DASHBOARD")
+    st.markdown("*Comprehensive analysis of critical option chain data*")
     st.markdown("---")
 
     # ATM ±2 Strike Tabulation
@@ -6864,7 +6864,7 @@ def render_nifty_option_screener():
     st.markdown("---")
 
     # ============================================
-    # 📊 OVERALL MARKET SENTIMENT SUMMARY
+    # 📊 KEY METRICS DASHBOARD PREPARATION
     # ============================================
 
     # Create ATM ±2 strikes tabulation
@@ -6873,12 +6873,8 @@ def render_nifty_option_screener():
     # Calculate expiry spike data
     expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
 
-    # Get sector rotation data from enhanced market data if available
+    # Sector rotation data (not available in standalone app)
     sector_rotation_data = None
-    if 'enhanced_market_data' in st.session_state:
-        enhanced_data = st.session_state.enhanced_market_data
-        if 'sector_rotation' in enhanced_data:
-            sector_rotation_data = enhanced_data['sector_rotation']
 
     # Calculate Overall Bias from all analyses
     overall_bias = calculate_overall_bias(atm_bias, support_bias, resistance_bias, seller_bias_result)
