@@ -2778,6 +2778,8 @@ with tab6:
                 indicator_tabs = []
                 # Always show Market Regime tab
                 indicator_tabs.append("🎯 Market Regime")
+                # Always show HTF Analysis tab
+                indicator_tabs.append("📊 HTF Analysis")
                 if show_rsi:
                     indicator_tabs.append("📈 Ultimate RSI")
                 if show_om:
@@ -3163,6 +3165,346 @@ with tab6:
                             with signal_cols[1]:
                                 for signal in regime_result.signals[mid:]:
                                     st.markdown(f"• {signal}")
+
+                    tab_idx += 1
+
+                    # HTF Analysis Tab
+                    with tabs[tab_idx]:
+                        st.markdown("### 📊 Higher Timeframe (HTF) Analysis")
+                        st.caption("🎯 Multi-timeframe Support/Resistance with 14-source confluence and 10-factor strength scoring")
+
+                        with st.spinner("Analyzing multiple timeframes..."):
+                            try:
+                                from src.multi_timeframe_analysis import MultiTimeframeAnalyzer
+                                from sr_extractor_advanced import AdvancedSRExtractor
+                                from src.comprehensive_sr_analysis import analyze_sr_strength_comprehensive
+
+                                # Initialize HTF analyzer
+                                htf_analyzer = MultiTimeframeAnalyzer()
+
+                                # Analyze all timeframes
+                                htf_results = htf_analyzer.analyze_all_timeframes(df_stats)
+
+                                if htf_results:
+                                    # Display timeframe overview
+                                    st.markdown("#### 🕐 Multi-Timeframe Overview")
+
+                                    tf_cols = st.columns(4)
+                                    for idx, (tf_name, tf_result) in enumerate(htf_results.items()):
+                                        with tf_cols[idx]:
+                                            trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
+                                            st.metric(
+                                                f"{tf_name}",
+                                                f"{trend_emoji} {tf_result.trend_direction}",
+                                                delta=f"{tf_result.trend_strength:.0f}%"
+                                            )
+
+                                    st.divider()
+
+                                    # Current price for calculations
+                                    current_price = df_stats['close'].iloc[-1]
+
+                                    # Display detailed HTF S/R levels
+                                    st.markdown("#### 📊 HTF Support & Resistance Levels")
+
+                                    for tf_name, tf_result in htf_results.items():
+                                        with st.expander(f"🕐 {tf_name} Timeframe", expanded=(tf_name == "1h")):
+                                            col1, col2 = st.columns(2)
+
+                                            with col1:
+                                                st.markdown("**📈 Resistance Levels**")
+                                                res_data = []
+                                                for i, res in enumerate([tf_result.resistance_1, tf_result.resistance_2, tf_result.resistance_3], 1):
+                                                    if res and res > current_price:
+                                                        distance_pct = ((res - current_price) / current_price) * 100
+                                                        res_data.append({
+                                                            'Level': f'R{i}',
+                                                            'Price': f"₹{res:.2f}",
+                                                            'Distance': f"+{distance_pct:.2f}%"
+                                                        })
+                                                if res_data:
+                                                    st.dataframe(pd.DataFrame(res_data), use_container_width=True, hide_index=True)
+                                                else:
+                                                    st.info("No resistance levels")
+
+                                            with col2:
+                                                st.markdown("**📉 Support Levels**")
+                                                sup_data = []
+                                                for i, sup in enumerate([tf_result.support_1, tf_result.support_2, tf_result.support_3], 1):
+                                                    if sup and sup < current_price:
+                                                        distance_pct = ((current_price - sup) / current_price) * 100
+                                                        sup_data.append({
+                                                            'Level': f'S{i}',
+                                                            'Price': f"₹{sup:.2f}",
+                                                            'Distance': f"-{distance_pct:.2f}%"
+                                                        })
+                                                if sup_data:
+                                                    st.dataframe(pd.DataFrame(sup_data), use_container_width=True, hide_index=True)
+                                                else:
+                                                    st.info("No support levels")
+
+                                    st.divider()
+
+                                    # Extract all S/R sources using AdvancedSRExtractor
+                                    st.markdown("#### 🎯 14-Source Confluence Analysis")
+
+                                    sr_extractor = AdvancedSRExtractor()
+                                    all_sr_data = sr_extractor.extract_all_sources(
+                                        df_stats,
+                                        st.session_state.get('merged_df'),
+                                        st.session_state.get('market_depth_data'),
+                                        htf_results
+                                    )
+
+                                    if all_sr_data:
+                                        supports = all_sr_data.get('support', [])
+                                        resistances = all_sr_data.get('resistance', [])
+
+                                        col1, col2 = st.columns(2)
+
+                                        with col1:
+                                            st.markdown("**📉 Top Support Levels (Confluence)**")
+                                            if supports:
+                                                sup_conf_data = []
+                                                for sup in supports[:5]:
+                                                    distance_pct = ((current_price - sup['level']) / current_price) * 100
+                                                    sup_conf_data.append({
+                                                        'Price': f"₹{sup['level']:.2f}",
+                                                        'Strength': f"{sup['strength']:.0f}%",
+                                                        'Sources': sup['count'],
+                                                        'Distance': f"-{distance_pct:.2f}%"
+                                                    })
+                                                st.dataframe(pd.DataFrame(sup_conf_data), use_container_width=True, hide_index=True)
+                                            else:
+                                                st.info("No confluence support detected")
+
+                                        with col2:
+                                            st.markdown("**📈 Top Resistance Levels (Confluence)**")
+                                            if resistances:
+                                                res_conf_data = []
+                                                for res in resistances[:5]:
+                                                    distance_pct = ((res['level'] - current_price) / current_price) * 100
+                                                    res_conf_data.append({
+                                                        'Price': f"₹{res['level']:.2f}",
+                                                        'Strength': f"{res['strength']:.0f}%",
+                                                        'Sources': res['count'],
+                                                        'Distance': f"+{distance_pct:.2f}%"
+                                                    })
+                                                st.dataframe(pd.DataFrame(res_conf_data), use_container_width=True, hide_index=True)
+                                            else:
+                                                st.info("No confluence resistance detected")
+
+                                    st.divider()
+
+                                    # 10-Factor Strength Analysis
+                                    st.markdown("#### 💪 10-Factor Strength Analysis")
+                                    st.caption("Comprehensive S/R strength analysis using 10 independent factors")
+
+                                    # Build features dict for strength analysis
+                                    features = {
+                                        'current_price': current_price,
+                                        'nearest_support': supports[0]['level'] if supports else None,
+                                        'nearest_resistance': resistances[0]['level'] if resistances else None,
+                                        'volume': df_stats['volume'].iloc[-1],
+                                        'avg_volume': df_stats['volume'].mean(),
+                                        # Add more features from session state if available
+                                        'cvd_result': st.session_state.get('cvd_diamond_result'),
+                                        'gamma_result': st.session_state.get('gamma_flip_result'),
+                                        'block_result': st.session_state.get('block_trade_result'),
+                                        'merged_df': st.session_state.get('merged_df'),
+                                        'market_depth': st.session_state.get('market_depth_data'),
+                                    }
+
+                                    strength_result = analyze_sr_strength_comprehensive(features)
+
+                                    if strength_result:
+                                        col1, col2 = st.columns(2)
+
+                                        with col1:
+                                            # Support analysis
+                                            st.markdown("**📉 Support Strength**")
+                                            sup_status = strength_result.get('support_status', 'UNKNOWN')
+                                            sup_strength = strength_result.get('support_strength', 0)
+
+                                            status_color = {
+                                                'BUILDING': '🟢',
+                                                'TESTING': '🟡',
+                                                'BREAKING': '🔴'
+                                            }.get(sup_status, '⚪')
+
+                                            st.metric(
+                                                "Status",
+                                                f"{status_color} {sup_status}",
+                                                delta=f"{sup_strength:.0f}% strength"
+                                            )
+
+                                            if strength_result.get('entry_zone_support_lower'):
+                                                st.info(f"📍 Entry Zone: ₹{strength_result['entry_zone_support_lower']:.2f} - ₹{strength_result['entry_zone_support_upper']:.2f}")
+
+                                        with col2:
+                                            # Resistance analysis
+                                            st.markdown("**📈 Resistance Strength**")
+                                            res_status = strength_result.get('resistance_status', 'UNKNOWN')
+                                            res_strength = strength_result.get('resistance_strength', 0)
+
+                                            status_color = {
+                                                'BUILDING': '🟢',
+                                                'TESTING': '🟡',
+                                                'BREAKING': '🔴'
+                                            }.get(res_status, '⚪')
+
+                                            st.metric(
+                                                "Status",
+                                                f"{status_color} {res_status}",
+                                                delta=f"{res_strength:.0f}% strength"
+                                            )
+
+                                            if strength_result.get('entry_zone_resistance_lower'):
+                                                st.info(f"📍 Entry Zone: ₹{strength_result['entry_zone_resistance_lower']:.2f} - ₹{strength_result['entry_zone_resistance_upper']:.2f}")
+
+                                        # Display analysis reasons
+                                        if strength_result.get('reasons'):
+                                            st.markdown("**💡 Analysis Factors**")
+                                            reasons_col1, reasons_col2 = st.columns(2)
+                                            mid = len(strength_result['reasons']) // 2
+
+                                            with reasons_col1:
+                                                for reason in strength_result['reasons'][:mid]:
+                                                    st.markdown(f"• {reason}")
+
+                                            with reasons_col2:
+                                                for reason in strength_result['reasons'][mid:]:
+                                                    st.markdown(f"• {reason}")
+
+                                        # Overall confidence
+                                        confidence = strength_result.get('confidence', 0)
+                                        confidence_color = "🟢" if confidence >= 80 else "🟡" if confidence >= 70 else "🔴"
+                                        st.metric("Overall Confidence", f"{confidence_color} {confidence:.0f}%")
+
+                                        # Store HTF results in session state for Telegram alerts
+                                        st.session_state['htf_analysis_result'] = {
+                                            'htf_results': htf_results,
+                                            'confluence_support': supports[:3] if supports else [],
+                                            'confluence_resistance': resistances[:3] if resistances else [],
+                                            'strength_analysis': strength_result,
+                                            'current_price': current_price,
+                                            'timestamp': datetime.now().isoformat()
+                                        }
+
+                                        # AUTOMATIC TELEGRAM ALERTS - Check for significant HTF conditions
+                                        try:
+                                            # Check if we should send HTF alert (cooldown: 15 minutes)
+                                            last_htf_alert_time = st.session_state.get('last_htf_alert_time')
+                                            current_time_for_alert = datetime.now()
+
+                                            should_send_alert = False
+                                            alert_reason = ""
+
+                                            # Cooldown check (15 minutes = 900 seconds)
+                                            if last_htf_alert_time is None or (current_time_for_alert - last_htf_alert_time).total_seconds() >= 900:
+
+                                                # Alert Condition 1: Price near strong confluence level (within 0.5%)
+                                                for sup in supports[:2]:
+                                                    distance_pct = abs((current_price - sup['level']) / current_price) * 100
+                                                    if distance_pct <= 0.5 and sup['strength'] >= 75:
+                                                        should_send_alert = True
+                                                        alert_reason = f"Price near strong support confluence ({sup['count']} sources)"
+                                                        break
+
+                                                if not should_send_alert:
+                                                    for res in resistances[:2]:
+                                                        distance_pct = abs((res['level'] - current_price) / current_price) * 100
+                                                        if distance_pct <= 0.5 and res['strength'] >= 75:
+                                                            should_send_alert = True
+                                                            alert_reason = f"Price near strong resistance confluence ({res['count']} sources)"
+                                                            break
+
+                                                # Alert Condition 2: Support/Resistance status change (TESTING or BREAKING)
+                                                if not should_send_alert:
+                                                    sup_status = strength_result.get('support_status', '')
+                                                    res_status = strength_result.get('resistance_status', '')
+
+                                                    if sup_status in ['TESTING', 'BREAKING'] and strength_result.get('support_strength', 0) >= 70:
+                                                        should_send_alert = True
+                                                        alert_reason = f"Support {sup_status}"
+                                                    elif res_status in ['TESTING', 'BREAKING'] and strength_result.get('resistance_strength', 0) >= 70:
+                                                        should_send_alert = True
+                                                        alert_reason = f"Resistance {res_status}"
+
+                                                # Alert Condition 3: All 4 timeframes aligned (rare confluence)
+                                                if not should_send_alert:
+                                                    trends = [tf.trend_direction for tf in htf_results.values()]
+                                                    if trends.count('UPTREND') == 4 or trends.count('DOWNTREND') == 4:
+                                                        strong_trends = [tf for tf in htf_results.values() if tf.trend_strength >= 70]
+                                                        if len(strong_trends) >= 3:
+                                                            should_send_alert = True
+                                                            trend_direction = 'UPTREND' if trends.count('UPTREND') == 4 else 'DOWNTREND'
+                                                            alert_reason = f"All timeframes aligned: {trend_direction}"
+
+                                            # Send alert if conditions met
+                                            if should_send_alert:
+                                                from telegram_alerts import TelegramBot
+
+                                                telegram = TelegramBot()
+
+                                                # Build HTF alert message
+                                                alert_msg = f"⚠️ *HTF ALERT* ⚠️\n\n"
+                                                alert_msg += f"🎯 *Trigger:* {alert_reason}\n\n"
+
+                                                # Add timeframe trends
+                                                alert_msg += "📊 *Multi-Timeframe Trends:*\n"
+                                                for tf_name, tf_result in htf_results.items():
+                                                    trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
+                                                    alert_msg += f"• {tf_name}: {trend_emoji} {tf_result.trend_direction} ({tf_result.trend_strength:.0f}%)\n"
+
+                                                alert_msg += f"\n💰 *Current Price:* ₹{current_price:.2f}\n\n"
+
+                                                # Add confluence levels
+                                                if supports:
+                                                    alert_msg += "📉 *Top Support (Confluence):*\n"
+                                                    for sup in supports[:3]:
+                                                        distance_pct = ((current_price - sup['level']) / current_price) * 100
+                                                        alert_msg += f"• ₹{sup['level']:.2f} ({sup['strength']:.0f}% | {sup['count']} src | -{distance_pct:.2f}%)\n"
+                                                    alert_msg += "\n"
+
+                                                if resistances:
+                                                    alert_msg += "📈 *Top Resistance (Confluence):*\n"
+                                                    for res in resistances[:3]:
+                                                        distance_pct = ((res['level'] - current_price) / current_price) * 100
+                                                        alert_msg += f"• ₹{res['level']:.2f} ({res['strength']:.0f}% | {res['count']} src | +{distance_pct:.2f}%)\n"
+                                                    alert_msg += "\n"
+
+                                                # Add strength analysis
+                                                if strength_result:
+                                                    sup_status = strength_result.get('support_status', 'UNKNOWN')
+                                                    res_status = strength_result.get('resistance_status', 'UNKNOWN')
+                                                    confidence_val = strength_result.get('confidence', 0)
+
+                                                    alert_msg += f"💪 *Strength Analysis:*\n"
+                                                    alert_msg += f"• Support: {sup_status} ({strength_result.get('support_strength', 0):.0f}%)\n"
+                                                    alert_msg += f"• Resistance: {res_status} ({strength_result.get('resistance_strength', 0):.0f}%)\n"
+                                                    alert_msg += f"• Confidence: {confidence_val:.0f}%\n"
+
+                                                # Send alert
+                                                success = telegram.send_message(alert_msg, parse_mode='Markdown')
+
+                                                if success:
+                                                    st.session_state['last_htf_alert_time'] = current_time_for_alert
+                                                    st.success(f"✅ HTF alert sent automatically: {alert_reason}")
+                                                else:
+                                                    logger.warning("Failed to send automatic HTF alert")
+
+                                        except Exception as e:
+                                            logger.error(f"Automatic HTF alert error: {e}", exc_info=True)
+
+                                    st.divider()
+
+                                else:
+                                    st.warning("Unable to analyze HTF - insufficient data")
+
+                            except Exception as e:
+                                st.error(f"❌ Error in HTF analysis: {e}")
+                                logger.error(f"HTF analysis error: {e}", exc_info=True)
 
                     tab_idx += 1
 
