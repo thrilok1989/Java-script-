@@ -6489,32 +6489,37 @@ def render_nifty_option_screener():
     oi_pcr_metrics = analyze_oi_pcr_metrics(merged, spot, atm_strike)
 
     # ============================================
-    # 🎯 RUN ALL-DAY SPIKE DETECTION FOR ML SIGNAL
+    # 🎯 RUN ALL-DAY SPIKE DETECTION (LAZY LOAD - ONLY IF TAB 7 LOADED)
     # ============================================
-    try:
-        all_day_spike_result = detect_all_market_spikes(
-            merged_df=merged,
-            spot=spot,
-            atm_strike=atm_strike,
-            days_to_expiry=days_to_expiry,
-            total_gex_net=total_gex_net
-        )
-        # Store for ML Signal integration
-        st.session_state['all_day_spike_result'] = {
-            'primary_spike': all_day_spike_result.get('primary_spike', {}),
-            'active_spikes': all_day_spike_result.get('all_spikes', []),
-            'active_spike_count': all_day_spike_result.get('active_spike_count', 0),
-            'overall_spike_probability': all_day_spike_result.get('primary_spike', {}).get('probability', 0),
-            'dominant_direction': all_day_spike_result.get('primary_spike', {}).get('direction', 'NEUTRAL'),
-            'support_spike': all_day_spike_result.get('support_spike', {}),
-            'resistance_spike': all_day_spike_result.get('resistance_spike', {}),
-            'time_analysis': all_day_spike_result.get('time_analysis', {}),
-            'recommendation': all_day_spike_result.get('recommendation', ''),
-            'key_levels': all_day_spike_result.get('key_levels', {}),
-            'timestamp': datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.warning(f"All-day spike detection failed: {e}")
+    # This is a HEAVY function - only run when user clicks on All-Day Spike Detector tab
+    if st.session_state.get('all_day_spike_loaded', False):
+        try:
+            all_day_spike_result = detect_all_market_spikes(
+                merged_df=merged,
+                spot=spot,
+                atm_strike=atm_strike,
+                days_to_expiry=days_to_expiry,
+                total_gex_net=total_gex_net
+            )
+            # Store for ML Signal integration
+            st.session_state['all_day_spike_result'] = {
+                'primary_spike': all_day_spike_result.get('primary_spike', {}),
+                'active_spikes': all_day_spike_result.get('all_spikes', []),
+                'active_spike_count': all_day_spike_result.get('active_spike_count', 0),
+                'overall_spike_probability': all_day_spike_result.get('primary_spike', {}).get('probability', 0),
+                'dominant_direction': all_day_spike_result.get('primary_spike', {}).get('direction', 'NEUTRAL'),
+                'support_spike': all_day_spike_result.get('support_spike', {}),
+                'resistance_spike': all_day_spike_result.get('resistance_spike', {}),
+                'time_analysis': all_day_spike_result.get('time_analysis', {}),
+                'recommendation': all_day_spike_result.get('recommendation', ''),
+                'key_levels': all_day_spike_result.get('key_levels', {}),
+                'timestamp': datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.warning(f"All-day spike detection failed: {e}")
+            st.session_state['all_day_spike_result'] = None
+    else:
+        # Placeholder when tab not loaded (performance optimization)
         st.session_state['all_day_spike_result'] = None
 
     # ============================================
@@ -6768,8 +6773,26 @@ def render_nifty_option_screener():
     # Create ATM ±2 strikes tabulation
     strike_analyses = create_atm_strikes_tabulation(merged, spot, atm_strike, strike_gap)
 
-    # Calculate expiry spike data
-    expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
+    # Calculate expiry spike data (LAZY LOAD - only if tab 6 is loaded)
+    if st.session_state.get('expiry_analysis_loaded', False):
+        expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
+    else:
+        # Minimal placeholder data when tab not loaded
+        expiry_spike_data = {
+            "active": False,
+            "probability": 0,
+            "message": "Not loaded",
+            "type": None,
+            "key_levels": [],
+            "score": 0,
+            "color": "#00ff00",
+            "intensity": "NOT LOADED",
+            "factors": [],
+            "days_to_expiry": days_to_expiry,
+            "expiry_date": expiry,
+            "resistance_spike_range": {"start": None, "end": None, "strikes": [], "total_oi": 0},
+            "support_spike_range": {"start": None, "end": None, "strikes": [], "total_oi": 0}
+        }
 
     # Get sector rotation data from enhanced market data if available
     sector_rotation_data = None
@@ -6871,27 +6894,33 @@ def render_nifty_option_screener():
             display_bias_dashboard(atm_bias, support_bias, resistance_bias)
 
     # ============================================
-    # 📅 EXPIRY SPIKE DETECTION
+    # 📅 EXPIRY SPIKE DETECTION (LAZY LOAD)
     # ============================================
 
-    # Expiry spike data already calculated in Tab 0
+    # Advanced spike detection (LAZY LOAD - only if Expiry Analysis tab is loaded)
+    if st.session_state.get('expiry_analysis_loaded', False):
+        violent_unwinding_signals = detect_violent_unwinding(merged, spot, atm_strike)
+        gamma_spike_risk = calculate_gamma_exposure_spike(total_gex_net, days_to_expiry)
+        pinning_probability = predict_expiry_pinning_probability(
+            spot, seller_max_pain.get("max_pain_strike", 0) if seller_max_pain else None,
+            nearest_sup["strike"] if nearest_sup else None,
+            nearest_res["strike"] if nearest_res else None
+        )
+    else:
+        violent_unwinding_signals = []
+        gamma_spike_risk = {"risk": "Not loaded", "score": 0, "message": "Load Expiry Analysis tab first"}
+        pinning_probability = 0
 
-    # Advanced spike detection (optional)
-    violent_unwinding_signals = detect_violent_unwinding(merged, spot, atm_strike)
-    gamma_spike_risk = calculate_gamma_exposure_spike(total_gex_net, days_to_expiry)
-    pinning_probability = predict_expiry_pinning_probability(
-        spot, seller_max_pain.get("max_pain_strike", 0) if seller_max_pain else None,
-        nearest_sup["strike"] if nearest_sup else None,
-        nearest_res["strike"] if nearest_res else None
-    )
-
-    # Check for new Telegram signal
-    telegram_signal = check_and_send_signal(
-        entry_signal, spot, seller_bias_result,
-        seller_max_pain, nearest_sup, nearest_res,
-        moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
-        atm_bias, support_bias, resistance_bias
-    )
+    # Check for new Telegram signal (LAZY LOAD - only if Telegram Signals tab is loaded)
+    if st.session_state.get('telegram_signals_loaded', False):
+        telegram_signal = check_and_send_signal(
+            entry_signal, spot, seller_bias_result,
+            seller_max_pain, nearest_sup, nearest_res,
+            moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
+            atm_bias, support_bias, resistance_bias
+        )
+    else:
+        telegram_signal = None
 
     # ═══════════════════════════════════════════════════════════════════
     # SUB-TAB 5: MARKET DEPTH ANALYZER
@@ -6970,6 +6999,17 @@ def render_nifty_option_screener():
 
     with screener_tabs[6]:
         st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
+
+        # LAZY LOADING: Only compute when user clicks Load button
+        if 'expiry_analysis_loaded' not in st.session_state:
+            st.session_state.expiry_analysis_loaded = False
+
+        if not st.session_state.expiry_analysis_loaded:
+            st.info("⚡ **Performance Optimization:** Click the button below to load Expiry Analysis")
+            if st.button("🚀 Load Expiry Analysis", type="primary", use_container_width=True, key="load_expiry_analysis"):
+                st.session_state.expiry_analysis_loaded = True
+                st.rerun()
+            st.stop()
 
         # Main spike card
         spike_col1, spike_col2, spike_col3 = st.columns([2, 1, 1])
@@ -7200,6 +7240,17 @@ def render_nifty_option_screener():
         st.markdown("## 🎯 ALL-DAY SPIKE DETECTOR")
         st.caption("Detects Support, Resistance, Opening, Breakout, Momentum & Squeeze spikes on ANY trading day")
 
+        # LAZY LOADING: Only compute when user clicks Load button
+        if 'all_day_spike_loaded' not in st.session_state:
+            st.session_state.all_day_spike_loaded = False
+
+        if not st.session_state.all_day_spike_loaded:
+            st.info("⚡ **Performance Optimization:** Click the button below to load All-Day Spike Detector")
+            if st.button("🚀 Load All-Day Spike Detector", type="primary", use_container_width=True, key="load_all_day_spike"):
+                st.session_state.all_day_spike_loaded = True
+                st.rerun()
+            st.stop()
+
         # Call the new spike detector function
         try:
             spike_result = detect_all_market_spikes(
@@ -7385,6 +7436,17 @@ def render_nifty_option_screener():
 
     with screener_tabs[8]:
         st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
+
+        # LAZY LOADING: Only compute when user clicks Load button
+        if 'telegram_signals_loaded' not in st.session_state:
+            st.session_state.telegram_signals_loaded = False
+
+        if not st.session_state.telegram_signals_loaded:
+            st.info("⚡ **Performance Optimization:** Click the button below to load Telegram Signals")
+            if st.button("🚀 Load Telegram Signals", type="primary", use_container_width=True, key="load_telegram_signals"):
+                st.session_state.telegram_signals_loaded = True
+                st.rerun()
+            st.stop()
 
         if telegram_signal:
             # NEW SIGNAL DETECTED
