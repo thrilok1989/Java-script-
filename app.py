@@ -2674,16 +2674,11 @@ with tab6:
 
                                 if should_send_alert:
                                     try:
-                                        # Force reload telegram_alerts to get new method
-                                        import telegram_alerts
-                                        import importlib
-                                        importlib.reload(telegram_alerts)
-                                        from telegram_alerts import TelegramBot
-
+                                        # Use the same TelegramBot that's used elsewhere in the app
                                         telegram = TelegramBot()
                                         current_price = st.session_state.chart_data['close'].iloc[-1]
 
-                                        # Try to send alert
+                                        # Send ICT indicator alert
                                         alert_sent = telegram.send_ict_indicator_alert(
                                             symbol=symbol_code.split()[0],
                                             ict_signals=signals,
@@ -2694,13 +2689,8 @@ with tab6:
                                             st.session_state.last_ict_alert = get_current_time_ist()
                                             st.session_state.last_ict_bias = overall_bias
                                             st.success("✅ ICT Indicator alert sent to Telegram!")
-                                    except AttributeError:
-                                        # Method doesn't exist - user needs to restart
-                                        if 'ict_restart_warning_shown' not in st.session_state:
-                                            st.warning("⚠️ Telegram alerts for ICT indicator require app restart. Run: ./restart_app.sh")
-                                            st.session_state.ict_restart_warning_shown = True
                                     except Exception as telegram_error:
-                                        st.warning(f"⚠️ Telegram alert failed: {str(telegram_error)}")
+                                        st.warning(f"⚠️ Could not send ICT alert: {str(telegram_error)}")
 
                             # Display ICT indicator data below chart for debugging
                             with st.expander("📊 ICT Indicator Detected Signals", expanded=False):
