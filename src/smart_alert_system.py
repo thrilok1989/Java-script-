@@ -314,18 +314,36 @@ class SmartAlertSystem:
             if cvd_result:
                 score = cvd_result.get('score', 50)
                 institutional_activity = cvd_result.get('institutional_activity', 'NONE')
+                smart_money_direction = cvd_result.get('smart_money_direction', 'UNKNOWN')
 
                 # Alert on significant divergence
                 if institutional_activity in ['ACCUMULATION', 'DISTRIBUTION']:
                     if self._can_send_alert('cvd_divergence'):
                         direction = 'BULLISH' if institutional_activity == 'ACCUMULATION' else 'BEARISH'
 
+                        # Cross-reference with option block activity if available
+                        block_result = st.session_state.get('block_trade_result', {})
+                        option_context = ""
+                        if block_result:
+                            call_blocks = block_result.get('call_blocks', 0)
+                            put_blocks = block_result.get('put_blocks', 0)
+                            if call_blocks > 0 or put_blocks > 0:
+                                # Check if options confirm or contradict CVD
+                                if direction == 'BULLISH' and call_blocks > put_blocks:
+                                    option_context = f"\n✓ Confirmed by CALL blocks ({call_blocks})"
+                                elif direction == 'BULLISH' and put_blocks > call_blocks:
+                                    option_context = f"\n⚠ Contradicted by PUT blocks ({put_blocks})"
+                                elif direction == 'BEARISH' and put_blocks > call_blocks:
+                                    option_context = f"\n✓ Confirmed by PUT blocks ({put_blocks})"
+                                elif direction == 'BEARISH' and call_blocks > put_blocks:
+                                    option_context = f"\n⚠ Contradicted by CALL blocks ({call_blocks})"
+
                         alerts.append(Alert(
                             alert_id=self._generate_alert_id(),
                             alert_type='CVD_DIVERGENCE',
                             priority='MEDIUM',
                             title=f'💎 CVD: {institutional_activity}',
-                            message=f"Institutional {institutional_activity} detected!\nCVD Score: {score:.0f}\nSmart Money: {cvd_result.get('smart_money_direction', 'UNKNOWN')}",
+                            message=f"Institutional {institutional_activity} detected!\nCVD Score: {score:.0f}\nSmart Money: {smart_money_direction}{option_context}",
                             value=score,
                             threshold=self.config.cvd_divergence_threshold,
                             direction=direction,
@@ -350,16 +368,37 @@ class SmartAlertSystem:
             if block_result:
                 activity_level = block_result.get('activity_level', 'NONE')
                 institutional_bias = block_result.get('institutional_bias', 'NEUTRAL')
+                call_blocks = block_result.get('call_blocks', 0)
+                put_blocks = block_result.get('put_blocks', 0)
+                bullish_blocks = block_result.get('bullish_blocks', 0)
+                bearish_blocks = block_result.get('bearish_blocks', 0)
 
                 if activity_level in ['HEAVY', 'MODERATE'] and self._can_send_alert('block_trade'):
-                    direction = 'BULLISH' if institutional_bias == 'ACCUMULATING' else 'BEARISH'
+                    # Determine direction based on CALL vs PUT accumulation
+                    # CALL accumulation = BULLISH, PUT accumulation = BEARISH
+                    if call_blocks > put_blocks:
+                        direction = 'BULLISH'
+                        dominant_type = 'CALL'
+                    elif put_blocks > call_blocks:
+                        direction = 'BEARISH'
+                        dominant_type = 'PUT'
+                    else:
+                        # If equal or no option type data, use institutional bias
+                        direction = 'BULLISH' if institutional_bias == 'ACCUMULATING' else 'BEARISH'
+                        dominant_type = 'MIXED'
+
+                    # Build message with CALL/PUT breakdown
+                    if call_blocks > 0 or put_blocks > 0:
+                        option_info = f"\nCALL Blocks: {call_blocks}\nPUT Blocks: {put_blocks}"
+                    else:
+                        option_info = f"\nBullish Blocks: {bullish_blocks}\nBearish Blocks: {bearish_blocks}"
 
                     alerts.append(Alert(
                         alert_id=self._generate_alert_id(),
                         alert_type='BLOCK_TRADE',
                         priority='MEDIUM',
                         title=f'📦 Block Trade: {activity_level}',
-                        message=f"Institutional {institutional_bias}\nBullish Blocks: {block_result.get('bullish_blocks', 0)}\nBearish Blocks: {block_result.get('bearish_blocks', 0)}\nTotal Volume: {block_result.get('total_volume', 0):,}",
+                        message=f"Institutional {institutional_bias}{option_info}\nTotal Volume: {block_result.get('total_volume', 0):,}",
                         value=block_result.get('score', 50),
                         threshold=50,
                         direction=direction,
@@ -473,6 +512,70 @@ class SmartAlertSystem:
         sent_count = 0
         failed_count = 0
 
+        # Check if we have both CVD and Block Trade alerts to combine
+        cvd_alert = next((a for a in alerts if a.alert_type == 'CVD_DIVERGENCE'), None)
+        block_alert = next((a for a in alerts if a.alert_type == 'BLOCK_TRADE'), None)
+
+        # If both CVD and Block Trade alerts exist, combine them
+        if cvd_alert and block_alert:
+            # Remove individual alerts from list
+            alerts = [a for a in alerts if a.alert_type not in ['CVD_DIVERGENCE', 'BLOCK_TRADE']]
+
+            # Determine overall direction (prioritize when both agree)
+            if cvd_alert.direction == block_alert.direction:
+                combined_direction = cvd_alert.direction
+                confidence_indicator = "🔥 STRONG CONFLUENCE"
+            else:
+                combined_direction = cvd_alert.direction  # CVD takes precedence
+                confidence_indicator = "⚠️ MIXED SIGNALS"
+
+            # Build combined message
+            combined_message = f"{confidence_indicator}\n\n"
+            combined_message += f"💎 *CVD: {cvd_alert.title.split(': ')[1]}*\n"
+            combined_message += f"Score: {cvd_alert.value:.0f} | {cvd_alert.message.split('Smart Money: ')[1].split('\\n')[0] if 'Smart Money:' in cvd_alert.message else 'N/A'}\n\n"
+            combined_message += f"📦 *Block Trade: {block_alert.title.split(': ')[1]}*\n"
+
+            # Extract block data
+            block_msg_lines = block_alert.message.split('\n')
+            for line in block_msg_lines:
+                if 'CALL Blocks:' in line or 'PUT Blocks:' in line or 'Total Volume:' in line or 'Bullish Blocks:' in line or 'Bearish Blocks:' in line:
+                    combined_message += f"{line}\n"
+
+            combined_message += f"\n📊 Direction: *{combined_direction}*"
+
+            # Create combined alert
+            combined_alert = Alert(
+                alert_id=self._generate_alert_id(),
+                alert_type='COMBINED_INSTITUTIONAL',
+                priority='MEDIUM',
+                title='💎📦 Institutional Activity',
+                message=combined_message,
+                value=(cvd_alert.value + block_alert.value) / 2,
+                threshold=50,
+                direction=combined_direction,
+                timestamp=datetime.now().isoformat()
+            )
+
+            # Add to history
+            self.alert_history.append(asdict(combined_alert))
+
+            # Send combined alert
+            if send_telegram:
+                success, msg = self.send_telegram(
+                    combined_message,
+                    priority=combined_alert.priority
+                )
+
+                if success:
+                    combined_alert.sent = True
+                    self._record_alert_sent('CVD_DIVERGENCE')
+                    self._record_alert_sent('BLOCK_TRADE')
+                    sent_count += 1
+                else:
+                    failed_count += 1
+                    logger.warning(f"Failed to send combined alert: {msg}")
+
+        # Process remaining alerts individually
         for alert in alerts:
             # Add to history
             self.alert_history.append(asdict(alert))
