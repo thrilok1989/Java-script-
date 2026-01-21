@@ -127,11 +127,11 @@ VOB_TOUCH_TOLERANCE = 5  # Points
 # UI SETTINGS
 # ═══════════════════════════════════════════════════════════════════════
 
-# Auto-refresh interval: 1 minute (60 seconds)
-AUTO_REFRESH_INTERVAL = 60  # seconds (1 minute - optimized for fast clicks)
+# Auto-refresh interval: 5 minutes (300 seconds)
+AUTO_REFRESH_INTERVAL = 300  # seconds (5 minutes - single refresh for entire app and all tabs)
 
-# Spot price refresh interval: 10 seconds for real-time updates
-SPOT_PRICE_REFRESH_INTERVAL = 10  # seconds (10 seconds for spot price only)
+# Spot price refresh interval: 60 seconds for live updates aligned with 5-min refresh
+SPOT_PRICE_REFRESH_INTERVAL = 60  # seconds (60 seconds for spot price, aligned with main refresh)
 
 DEMO_MODE = False
 

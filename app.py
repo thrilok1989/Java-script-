@@ -439,7 +439,7 @@ if 'overall_option_data' not in st.session_state:
 # - Lazy loading for tab-specific data
 # - Streamlit caching for expensive computations
 
-# Auto-refresh every 1 minute (configurable via AUTO_REFRESH_INTERVAL)
+# Auto-refresh every 5 minutes (configurable via AUTO_REFRESH_INTERVAL)
 # This ensures the app stays updated with latest market data
 # The refresh is seamless - no blur/flash thanks to custom CSS above
 refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_refresh")
@@ -450,6 +450,22 @@ refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_
 
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
+
+# ═══════════════════════════════════════════════════════════════════════
+# MANUAL REFRESH BUTTON - SINGLE REFRESH FOR ENTIRE APP AND ALL TABS
+# ═══════════════════════════════════════════════════════════════════════
+
+col_refresh1, col_refresh2, col_refresh3 = st.columns([1, 1, 1])
+with col_refresh2:
+    if st.button("🔄 REFRESH NOW", type="primary", use_container_width=True, key="main_app_refresh_button"):
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.rerun()
+
+from datetime import datetime
+current_time_ist = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+st.markdown(f"<div style='text-align: center; margin: 10px 0;'><small>⏱️ Auto-refresh: Every 5 minutes | ⏰ Last refresh: {current_time_ist} IST</small></div>", unsafe_allow_html=True)
+st.markdown("---")
 
 # Check and run AI analysis if needed
 check_and_run_ai_analysis()
@@ -557,7 +573,7 @@ with st.sidebar:
     
     # Settings
     st.subheader("⚙️ Settings")
-    st.write(f"**Auto Refresh:** {AUTO_REFRESH_INTERVAL}s")
+    st.write(f"**Auto Refresh:** Every 5 minutes ({AUTO_REFRESH_INTERVAL}s)")
     st.write(f"**NIFTY Lot Size:** {LOT_SIZES['NIFTY']}")
     st.write(f"**SENSEX Lot Size:** {LOT_SIZES['SENSEX']}")
     st.write(f"**SL Offset:** {STOP_LOSS_OFFSET} points")
@@ -4136,29 +4152,25 @@ with tab8:
     try:
         st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
 
-        # DISABLED AUTO-FETCH - Only fetch when user clicks Refresh
+        # LAZY LOAD - Fetch enhanced market data on button click
         # This prevents tab from hanging when Dhan API is down (holidays, weekends)
-        # Auto-fetch code commented out to prevent blank tabs
 
-        # Control buttons
-        col1, col2 = st.columns([1, 1])
+        st.info("⚡ Enhanced market data requires API calls. Click below to fetch live data, or use the 'REFRESH NOW' button at the top.")
 
-        with col1:
-            if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
-                with st.spinner("Refreshing market data..."):
-                    try:
-                        from enhanced_market_data import get_enhanced_market_data
-                        enhanced_data = get_enhanced_market_data()
-                        st.session_state.enhanced_market_data = enhanced_data
-                        st.success("✅ Data refreshed successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Failed to refresh data: {e}")
+        if st.button("📊 Fetch Enhanced Market Data", type="primary", use_container_width=True, key="fetch_enhanced_data_btn"):
+            with st.spinner("Fetching market data..."):
+                try:
+                    from enhanced_market_data import get_enhanced_market_data
+                    enhanced_data = get_enhanced_market_data()
+                    st.session_state.enhanced_market_data = enhanced_data
+                    st.success("✅ Data fetched successfully!")
+                except Exception as e:
+                    st.error(f"❌ Failed to fetch data: {e}")
 
-        with col2:
-            if 'enhanced_market_data' in st.session_state:
-                data = st.session_state.enhanced_market_data
-                st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
+        # Display last updated time if data exists
+        if 'enhanced_market_data' in st.session_state:
+            data = st.session_state.enhanced_market_data
+            st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
 
         # Display enhanced market data if available
         if 'enhanced_market_data' in st.session_state:
@@ -4310,5 +4322,5 @@ with tab11:
 # ═══════════════════════════════════════════════════════════════════════
 
 st.divider()
-st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: {AUTO_REFRESH_INTERVAL}s")
+st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: Every 5 minutes ({AUTO_REFRESH_INTERVAL}s)")
 st.caption(f"🤖 AI Market Analysis: Runs every 30 minutes during market hours | Last AI analysis: {datetime.fromtimestamp(st.session_state.last_ai_analysis_time).strftime('%H:%M:%S') if st.session_state.last_ai_analysis_time > 0 else 'Never'}")
