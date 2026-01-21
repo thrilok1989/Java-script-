@@ -6873,12 +6873,8 @@ def render_nifty_option_screener():
     # Calculate expiry spike data
     expiry_spike_data = detect_expiry_spikes(merged, spot, atm_strike, days_to_expiry, expiry)
 
-    # Get sector rotation data from enhanced market data if available
+    # Sector rotation data (not available in standalone app)
     sector_rotation_data = None
-    if 'enhanced_market_data' in st.session_state:
-        enhanced_data = st.session_state.enhanced_market_data
-        if 'sector_rotation' in enhanced_data:
-            sector_rotation_data = enhanced_data['sector_rotation']
 
     # Calculate Overall Bias from all analyses
     overall_bias = calculate_overall_bias(atm_bias, support_bias, resistance_bias, seller_bias_result)
