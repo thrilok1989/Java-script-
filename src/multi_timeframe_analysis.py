@@ -2,6 +2,7 @@
 Multi-Timeframe Trend and Support/Resistance Analysis
 
 Analyzes trend direction and support/resistance levels across multiple timeframes:
+- 5 minutes
 - 15 minutes
 - 1 hour
 - 4 hours
@@ -72,7 +73,8 @@ class MultiTimeframeAnalyzer:
         data_1d: pd.DataFrame,
         data_4h: Optional[pd.DataFrame] = None,
         data_1h: Optional[pd.DataFrame] = None,
-        data_15m: Optional[pd.DataFrame] = None
+        data_15m: Optional[pd.DataFrame] = None,
+        data_5m: Optional[pd.DataFrame] = None
     ) -> Dict[str, TimeframeTrendResult]:
         """
         Analyze all timeframes and return results
@@ -82,6 +84,7 @@ class MultiTimeframeAnalyzer:
             data_4h: 4-hour OHLC data (optional)
             data_1h: 1-hour OHLC data (optional)
             data_15m: 15-minute OHLC data (optional)
+            data_5m: 5-minute OHLC data (optional)
 
         Returns:
             Dict mapping timeframe to analysis result
@@ -89,7 +92,10 @@ class MultiTimeframeAnalyzer:
         results = {}
 
         try:
-            # Analyze each timeframe
+            # Analyze each timeframe (ordered from smallest to largest)
+            if data_5m is not None and not data_5m.empty:
+                results['5m'] = self.analyze_timeframe(data_5m, '5m')
+
             if data_15m is not None and not data_15m.empty:
                 results['15m'] = self.analyze_timeframe(data_15m, '15m')
 
