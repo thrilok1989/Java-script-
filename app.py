@@ -392,6 +392,17 @@ if 'data_preloaded' not in st.session_state:
     thread.start()
     # Don't wait for it to complete - let app continue loading
 
+# Start 24/7 background signal monitoring (runs on server even when browser closed)
+if 'signal_monitor_started' not in st.session_state:
+    st.session_state.signal_monitor_started = False
+    from data_cache_manager import start_background_signal_monitor
+    try:
+        start_background_signal_monitor()
+        st.session_state.signal_monitor_started = True
+        print("✅ 24/7 background signal monitor is now running on server!")
+    except Exception as e:
+        print(f"❌ Failed to start signal monitor: {e}")
+
 # NSE Options Analyzer - Initialize instruments session state
 NSE_INSTRUMENTS = {
     'indices': {
@@ -446,7 +457,13 @@ session_refresh_interval = scheduler.get_refresh_interval(current_session)
 # Auto-refresh with dynamic interval based on market hours
 # This ensures spot price updates every 10s during trading hours
 # limit=None ensures continuous refresh without stopping
-refresh_count = st_autorefresh(interval=session_refresh_interval * 1000, limit=None, key="data_refresh")
+# Note: st_autorefresh runs client-side (in browser JavaScript)
+# It may pause on mobile when screen locks or tab is backgrounded
+refresh_count = st_autorefresh(
+    interval=session_refresh_interval * 1000,  # Convert seconds to milliseconds
+    limit=None,  # Run forever
+    key="data_refresh"
+)
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER
