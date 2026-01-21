@@ -152,7 +152,7 @@ def compute_greeks(spot, strike, tau, risk_free_rate, ltp, option_type):
 # -----------------------
 #  CONFIG
 # -----------------------
-AUTO_REFRESH_SEC = 30  # 30 seconds for responsive auto-refresh
+AUTO_REFRESH_SEC = 60
 LOT_SIZE = 50
 RISK_FREE_RATE = 0.06
 ATM_STRIKE_WINDOW = 8
@@ -202,14 +202,16 @@ try:
         TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
         TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
-    # Store credential status for later check in render function
-    CREDENTIALS_LOADED = bool(DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN)
-    CREDENTIAL_ERROR = None
+    # Verify required credentials
+    if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
+        st.error("❌ Missing Dhan credentials. Please configure in .streamlit/secrets.toml")
+        st.info("Required: DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN")
+        st.stop()
 
 except Exception as e:
-    # Store error for later display in render function
-    CREDENTIALS_LOADED = False
-    CREDENTIAL_ERROR = str(e)
+    st.error(f"❌ Error loading credentials: {e}")
+    st.info("Please check your .streamlit/secrets.toml configuration")
+    st.stop()
 
 try:
     if SUPABASE_URL and SUPABASE_ANON_KEY:
@@ -2121,40 +2123,40 @@ def generate_telegram_signal_option3(entry_signal, spot, seller_bias_result, sel
 """
     return message
 
-def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pain,
-                         nearest_sup, nearest_res, moment_metrics, seller_breakout_index,
+def check_and_send_signal(entry_signal, spot, seller_bias_result, seller_max_pain, 
+                         nearest_sup, nearest_res, moment_metrics, seller_breakout_index, 
                          expiry, expiry_spike_data, atm_bias=None, support_bias=None, resistance_bias=None):
     """
-    Check if a signal exists and return it for telegram
-    Returns signal message EVERY TIME if valid signal exists (no deduplication)
-    User wants continuous messages for trade confirmation
+    Check if a new signal is generated and return it (simulated)
+    Returns signal message if new signal, None otherwise
     """
-    # Store last signal for display purposes only (not for blocking)
+    # Store previous signal in session state
     if "last_signal" not in st.session_state:
         st.session_state["last_signal"] = None
-
+    
     # Check if we have a valid signal
     if entry_signal["position_type"] != "NEUTRAL" and entry_signal["confidence"] >= 40:
         current_signal = f"{entry_signal['position_type']}_{entry_signal['optimal_entry_price']:.0f}"
-
-        # ALWAYS generate telegram message (no deduplication check)
-        # User wants continuous messages even if same signal repeats
-        telegram_msg = generate_telegram_signal_option3(
-            entry_signal, spot, seller_bias_result,
-            seller_max_pain, nearest_sup, nearest_res,
-            moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
-            atm_bias, support_bias, resistance_bias
-        )
-
-        if telegram_msg:
-            # Update last signal (for display only)
-            st.session_state["last_signal"] = current_signal
-            return telegram_msg
-
+        
+        # Check if this is a new signal (different from last one)
+        if st.session_state["last_signal"] != current_signal:
+            # Generate Telegram message
+            telegram_msg = generate_telegram_signal_option3(
+                entry_signal, spot, seller_bias_result, 
+                seller_max_pain, nearest_sup, nearest_res, 
+                moment_metrics, seller_breakout_index, expiry, expiry_spike_data,
+                atm_bias, support_bias, resistance_bias
+            )
+            
+            if telegram_msg:
+                # Update last signal
+                st.session_state["last_signal"] = current_signal
+                return telegram_msg
+    
     # Reset if signal is gone
-    else:
+    elif st.session_state["last_signal"] is not None:
         st.session_state["last_signal"] = None
-
+    
     return None
 
 # -----------------------
@@ -6003,15 +6005,6 @@ def render_nifty_option_screener():
     - Expiry Spike Detector
     - Enhanced OI/PCR Analytics
     """
-    # Check credentials first (moved from module level to avoid st.stop() during import)
-    if not CREDENTIALS_LOADED:
-        st.error("❌ Missing or Invalid Dhan Credentials")
-        st.info("Please configure DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN in .streamlit/secrets.toml")
-        if CREDENTIAL_ERROR:
-            st.code(f"Error: {CREDENTIAL_ERROR}")
-        st.warning("💡 **How to fix:**\n1. Create `.streamlit/secrets.toml` in your project root\n2. Add:\n```\n[DHAN]\nCLIENT_ID = \"your_client_id\"\nACCESS_TOKEN = \"your_access_token\"\n```")
-        return  # Exit gracefully instead of st.stop()
-
     # Display current IST time
     current_ist = get_ist_datetime_str()
     st.markdown(f"""
@@ -6125,10 +6118,8 @@ def render_nifty_option_screener():
                 spot = get_nifty_spot_price()
 
         if spot == 0.0:
-            st.error("❌ Unable to fetch NIFTY spot price")
-            st.info("Please check your Dhan API credentials and try refreshing the page.")
-            st.button("🔄 Retry", key="retry_spot", on_click=lambda: st.rerun())
-            return  # Exit gracefully
+            st.error("Unable to fetch NIFTY spot")
+            st.stop()
 
         # Get expiries - use session state if available to avoid redundant API calls
         expiries = st.session_state.get('expiry_list', None)
@@ -6137,10 +6128,8 @@ def render_nifty_option_screener():
             if expiries:
                 st.session_state['expiry_list'] = expiries
         if not expiries:
-            st.error("❌ Unable to fetch expiry list")
-            st.info("The Dhan API may be temporarily unavailable. Please try again in a moment.")
-            st.button("🔄 Retry", key="retry_expiry", on_click=lambda: st.rerun())
-            return  # Exit gracefully
+            st.error("Unable to fetch expiry list")
+            st.stop()
 
         expiry = st.selectbox("Select expiry", expiries, index=0, key="nifty_screener_expiry_selector")
         st.session_state['current_expiry'] = expiry  # Store for main dashboard
@@ -6183,20 +6172,13 @@ def render_nifty_option_screener():
             if chain:
                 st.session_state[chain_cache_key] = chain
     if chain is None:
-        st.error("❌ Failed to fetch option chain")
-        st.warning("**Possible reasons:**\n- Dhan API rate limit exceeded\n- Network timeout\n- Invalid expiry date\n- Market closed")
-        st.info("Please wait a moment and click the button below to retry.")
-        if st.button("🔄 Retry Fetch", key="retry_chain"):
-            st.session_state.pop(chain_cache_key, None)  # Clear cache
-            st.rerun()
-        return  # Exit gracefully
-
+        st.error("Failed to fetch option chain")
+        st.stop()
+    
     df_ce, df_pe = parse_dhan_option_chain(chain)
     if df_ce.empty or df_pe.empty:
-        st.error("❌ Insufficient CE/PE option data")
-        st.warning("The option chain data is empty or incomplete.")
-        st.info("**Try:**\n- Select a different expiry date\n- Wait for market hours (9:15 AM - 3:30 PM IST)\n- Check if this expiry has active options")
-        return  # Exit gracefully
+        st.error("Insufficient CE/PE data")
+        st.stop()
     
     # Filter ATM window
     strike_gap = strike_gap_from_series(df_ce["strikePrice"])
@@ -8958,7 +8940,7 @@ def render_nifty_option_screener():
     """, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.markdown("**🔄 Last update:** Auto-refreshing every 30 seconds")
+    st.markdown("**🔄 Last update:** Auto-refreshing every 60 seconds")
 
 # -----------------------
 #  STANDALONE EXECUTION
