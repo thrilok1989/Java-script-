@@ -6210,10 +6210,6 @@ def render_nifty_option_screener():
         st.markdown("### 🤖 TELEGRAM SETTINGS")
         auto_send = st.checkbox("Auto-send signals to Telegram", value=True, key="nifty_screener_auto_send_telegram")
         show_signal_preview = st.checkbox("Show signal preview", value=True, key="nifty_screener_show_signal_preview")
-        
-        if st.button("Clear Caches"):
-            st.cache_data.clear()
-            st.rerun()
     
     # Fetch data - Use shared spot price from session state if available (avoids redundant API calls)
     col1, col2 = st.columns([1, 2])
@@ -6228,8 +6224,7 @@ def render_nifty_option_screener():
 
         if spot == 0.0:
             st.error("❌ Unable to fetch NIFTY spot price")
-            st.info("Please check your Dhan API credentials and try refreshing the page.")
-            st.button("🔄 Retry", key="retry_spot", on_click=lambda: st.rerun())
+            st.info("Please check your Dhan API credentials and use the 'REFRESH NOW' button at the top to retry.")
             return  # Exit gracefully
 
         # Get expiries - use session state if available to avoid redundant API calls
@@ -6240,8 +6235,7 @@ def render_nifty_option_screener():
                 st.session_state['expiry_list'] = expiries
         if not expiries:
             st.error("❌ Unable to fetch expiry list")
-            st.info("The Dhan API may be temporarily unavailable. Please try again in a moment.")
-            st.button("🔄 Retry", key="retry_expiry", on_click=lambda: st.rerun())
+            st.info("The Dhan API may be temporarily unavailable. Use the 'REFRESH NOW' button at the top to retry.")
             return  # Exit gracefully
 
         expiry = st.selectbox("Select expiry", expiries, index=0, key="nifty_screener_expiry_selector")
@@ -6287,10 +6281,7 @@ def render_nifty_option_screener():
     if chain is None:
         st.error("❌ Failed to fetch option chain")
         st.warning("**Possible reasons:**\n- Dhan API rate limit exceeded\n- Network timeout\n- Invalid expiry date\n- Market closed")
-        st.info("Please wait a moment and click the button below to retry.")
-        if st.button("🔄 Retry Fetch", key="retry_chain"):
-            st.session_state.pop(chain_cache_key, None)  # Clear cache
-            st.rerun()
+        st.info("Please wait a moment and use the 'REFRESH NOW' button at the top to retry.")
         return  # Exit gracefully
 
     df_ce, df_pe = parse_dhan_option_chain(chain)
@@ -7863,21 +7854,17 @@ def render_nifty_option_screener():
         
         # Action buttons
         st.markdown("<br>", unsafe_allow_html=True)
-        action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
-        
+        action_col1, action_col2 = st.columns([2, 1])
+
         with action_col1:
-            if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
+            if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}",
                         use_container_width=True, type="primary", key="place_order"):
                 st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
                 st.balloons()
-        
+
         with action_col2:
             if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
                 st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
-        
-        with action_col3:
-            if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
-                st.rerun()
         
         # Signal Reasons
         with st.expander("📋 View Detailed Signal Reasoning", expanded=False):
