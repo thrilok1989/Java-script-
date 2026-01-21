@@ -2671,36 +2671,85 @@ with tab6:
 
                             # Only send alert if there are significant signals
                             if signals.get('bullish_count', 0) > 0 or signals.get('bearish_count', 0) > 0:
-                                # Check if we should send alert (don't spam)
-                                # Only send if bias changed or significant new signals
-                                if 'last_ict_alert' not in st.session_state or \
-                                   st.session_state.get('last_ict_bias') != overall_bias:
-                                    # Force reload telegram_alerts to get new method
-                                    import telegram_alerts
-                                    import importlib
-                                    importlib.reload(telegram_alerts)
-                                    from telegram_alerts import TelegramBot
+                                # Send alert every 5 minutes or on bias change
+                                should_send_alert = False
 
-                                    telegram = TelegramBot()
-                                    current_price = st.session_state.chart_data['close'].iloc[-1]
+                                # Check if bias changed
+                                if st.session_state.get('last_ict_bias') != overall_bias:
+                                    should_send_alert = True
 
-                                    # Check if method exists
-                                    if hasattr(telegram, 'send_ict_indicator_alert'):
+                                # Or if 5 minutes passed since last alert
+                                elif 'last_ict_alert' in st.session_state:
+                                    time_since_alert = (get_current_time_ist() - st.session_state.last_ict_alert).total_seconds()
+                                    if time_since_alert >= 300:  # 5 minutes
+                                        should_send_alert = True
+                                else:
+                                    # First time - always send
+                                    should_send_alert = True
+
+                                if should_send_alert:
+                                    try:
+                                        # Force reload telegram_alerts to get new method
+                                        import telegram_alerts
+                                        import importlib
+                                        importlib.reload(telegram_alerts)
+                                        from telegram_alerts import TelegramBot
+
+                                        telegram = TelegramBot()
+                                        current_price = st.session_state.chart_data['close'].iloc[-1]
+
+                                        # Try to send alert
                                         alert_sent = telegram.send_ict_indicator_alert(
                                             symbol=symbol_code.split()[0],
                                             ict_signals=signals,
                                             current_price=current_price
                                         )
-                                    else:
-                                        st.error("🔄 Please restart the app to enable Telegram alerts for ICT indicator")
-                                        alert_sent = False
 
-                                    if alert_sent:
-                                        st.session_state.last_ict_alert = get_current_time_ist()
-                                        st.session_state.last_ict_bias = overall_bias
-                                        st.success("✅ ICT Indicator alert sent to Telegram!")
+                                        if alert_sent:
+                                            st.session_state.last_ict_alert = get_current_time_ist()
+                                            st.session_state.last_ict_bias = overall_bias
+                                            st.success("✅ ICT Indicator alert sent to Telegram!")
+                                    except AttributeError:
+                                        # Method doesn't exist - user needs to restart
+                                        if 'ict_restart_warning_shown' not in st.session_state:
+                                            st.warning("⚠️ Telegram alerts for ICT indicator require app restart. Run: ./restart_app.sh")
+                                            st.session_state.ict_restart_warning_shown = True
+                                    except Exception as telegram_error:
+                                        st.warning(f"⚠️ Telegram alert failed: {str(telegram_error)}")
+
+                            # Display ICT indicator data below chart for debugging
+                            with st.expander("📊 ICT Indicator Detected Signals", expanded=False):
+                                st.markdown(f"### Overall Bias: **{overall_bias}**")
+
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("🟢 Bullish Signals", signals.get('bullish_count', 0))
+                                with col2:
+                                    st.metric("🔴 Bearish Signals", signals.get('bearish_count', 0))
+
+                                if signals.get('bullish_signals'):
+                                    st.markdown("#### 🟢 Active Bullish Signals:")
+                                    for sig in signals['bullish_signals'][:10]:
+                                        level_badge = f" `[{sig.get('level')}]`" if sig.get('level') else ""
+                                        poi_info = f" - POI: {sig.get('poi')}" if sig.get('poi') else ""
+                                        st.markdown(f"- **{sig['type']}**{level_badge}: {sig['price']}{poi_info}")
+
+                                if signals.get('bearish_signals'):
+                                    st.markdown("#### 🔴 Active Bearish Signals:")
+                                    for sig in signals['bearish_signals'][:10]:
+                                        level_badge = f" `[{sig.get('level')}]`" if sig.get('level') else ""
+                                        poi_info = f" - POI: {sig.get('poi')}" if sig.get('poi') else ""
+                                        st.markdown(f"- **{sig['type']}**{level_badge}: {sig['price']}{poi_info}")
+
+                                st.markdown(f"**POC (Point of Control):** {ict_data.get('poc_price', 'N/A')}")
+                                st.markdown(f"**Order Blocks (Swing):** {len(ict_data.get('swing_order_blocks', []))}")
+                                st.markdown(f"**Order Blocks (Internal):** {len(ict_data.get('internal_order_blocks', []))}")
+                                st.markdown(f"**Fair Value Gaps:** {len(ict_data.get('fvgs', []))}")
+                                st.markdown(f"**Supply Zones:** {len(ict_data.get('supply_zones', []))}")
+                                st.markdown(f"**Demand Zones:** {len(ict_data.get('demand_zones', []))}")
+
                     except Exception as e:
-                        st.warning(f"⚠️ Could not send ICT indicator alert: {str(e)}")
+                        st.warning(f"⚠️ ICT indicator error: {str(e)}")
 
                 # Display chart
                 st.plotly_chart(fig, use_container_width=True)
