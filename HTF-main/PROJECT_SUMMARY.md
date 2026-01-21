@@ -198,8 +198,6 @@ Price near SUPPORT at 15min timeframe
 
 ### Instruments Supported
 - ✅ NIFTY 50
-- ✅ BANK NIFTY
-- ✅ SENSEX
 
 ### Timeframes Monitored
 - ✅ 5-minute

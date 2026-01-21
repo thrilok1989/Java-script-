@@ -123,7 +123,7 @@ Visit: `https://yourusername-htf-signal-bot.streamlit.app`
 
 In the **sidebar**:
 
-1. **Instruments**: Select NIFTY, BANKNIFTY, SENSEX
+1. **Instruments**: NIFTY
 2. **Auto-send to Telegram**: Enable ✅
 3. **Scan Interval**: 30 seconds (recommended)
 4. **Signal Cooldown**: 15 minutes (recommended)

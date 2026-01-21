@@ -24,7 +24,7 @@ A signal is only generated when **at least 2 of these conditions** are met:
 - 📊 **Streamlit Dashboard**: Real-time monitoring interface
 - 🔄 **Auto-Refresh**: Continuous market scanning (30-second intervals)
 - 🎨 **Visual Dashboard**: Clean UI with signal history and metrics
-- ⚡ **DhanHQ Integration**: Real-time Indian market data (NIFTY, BANKNIFTY, SENSEX)
+- ⚡ **DhanHQ Integration**: Real-time Indian market data (NIFTY)
 
 ## 📋 Signal Example
 
@@ -126,10 +126,8 @@ The app will open at `http://localhost:8501`
 ## 🔧 Configuration
 
 ### Instruments
-Select which instruments to monitor:
+Monitors:
 - **NIFTY 50**
-- **BANK NIFTY**
-- **SENSEX**
 
 ### Settings
 - **Auto-send to Telegram**: Enable/disable automatic alerts
