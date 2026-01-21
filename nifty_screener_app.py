@@ -254,7 +254,7 @@ def compute_greeks(spot, strike, tau, risk_free_rate, ltp, option_type):
 # -----------------------
 #  CONFIG
 # -----------------------
-AUTO_REFRESH_SEC = 30  # 30 seconds for responsive auto-refresh
+AUTO_REFRESH_SEC = 300  # 5 minutes for app-wide refresh
 LOT_SIZE = 50
 RISK_FREE_RATE = 0.06
 ATM_STRIKE_WINDOW = 8
@@ -4046,7 +4046,7 @@ def bs_theta(S,K,r,sigma,tau,option_type="call"):
 # -----------------------
 # 🔥 NEW: ORDERBOOK PRESSURE FUNCTIONS
 # -----------------------
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60)  # 60 seconds - orderbook depth aligned with 5-min refresh
 def get_nifty_orderbook_depth():
     """
     Best-effort depth fetch from Dhan API
@@ -5745,7 +5745,7 @@ def rank_support_resistance_seller(pcr_df):
 # -----------------------
 # DHAN API
 # -----------------------
-@st.cache_data(ttl=2)  # 2 seconds - real-time spot price updates
+@st.cache_data(ttl=60)  # 60 seconds - live spot price updates aligned with 5-min refresh
 def get_nifty_spot_price():
     """Fetch NIFTY spot price with retry logic and rate limiting"""
     max_retries = 3
@@ -5797,7 +5797,7 @@ def get_nifty_spot_price():
 
     return 0.0
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)  # 5 minutes - expiry list doesn't change frequently
 def get_expiry_list():
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain/expirylist"
@@ -5818,7 +5818,7 @@ def get_expiry_list():
         st.warning(f"Expiry list failed: {e}")
         return []
 
-@st.cache_data(ttl=45)  # 45 seconds - faster refresh for option chain data
+@st.cache_data(ttl=60)  # 60 seconds - option chain live data aligned with 5-min refresh
 def fetch_dhan_option_chain(expiry_date):
     """Fetch option chain with retry logic and rate limiting"""
     max_retries = 3
@@ -6999,66 +6999,71 @@ def render_nifty_option_screener():
         # Display Basic Market Depth Dashboard
         display_market_depth_dashboard(spot, depth_analysis, depth_signals, depth_enhanced_pressure)
 
-        # Display Comprehensive Advanced Depth Analysis
+        # Display Comprehensive Advanced Depth Analysis - LAZY LOAD WITH BUTTON
         if ADVANCED_DEPTH_AVAILABLE:
             st.markdown("---")
             st.markdown("## 🎯 ADVANCED DEPTH ANALYSIS (ATM ±2 Strikes)")
 
-            # Prepare Dhan config
-            dhan_config = {
-                "base_url": DHAN_BASE_URL,
-                "access_token": DHAN_ACCESS_TOKEN,
-                "client_id": DHAN_CLIENT_ID
-            }
+            # Add button to trigger advanced depth analysis
+            st.info("⚡ Advanced depth analysis requires API calls (~12 seconds). Click below to fetch live depth data.")
 
-            # Run comprehensive analysis for ATM ±2 strikes
-            atm_strikes_to_analyze = [atm_strike + (i * strike_gap) for i in range(-2, 3)]
+            if st.button("📊 Fetch Advanced Depth Analysis", type="primary", use_container_width=True, key="fetch_advanced_depth"):
+                # Prepare Dhan config
+                dhan_config = {
+                    "base_url": DHAN_BASE_URL,
+                    "access_token": DHAN_ACCESS_TOKEN,
+                    "client_id": DHAN_CLIENT_ID
+                }
 
-            # Rate limiting info
-            st.info("⏱️ Fetching depth data with rate limiting (1 req/sec) - This may take ~10 seconds...")
+                # Run comprehensive analysis for ATM ±2 strikes
+                atm_strikes_to_analyze = [atm_strike + (i * strike_gap) for i in range(-2, 3)]
 
-            for idx, strike in enumerate(atm_strikes_to_analyze):
-                with st.expander(f"📊 Strike {strike} - Comprehensive Depth Analysis", expanded=(idx == 2)):  # Expand ATM by default
-                    st.markdown(f"### Analyzing {strike} CE & PE")
+                # Rate limiting info
+                with st.spinner("⏱️ Fetching depth data with rate limiting (1 req/sec) - This may take ~10 seconds..."):
+                    for idx, strike in enumerate(atm_strikes_to_analyze):
+                        with st.expander(f"📊 Strike {strike} - Comprehensive Depth Analysis", expanded=(idx == 2)):  # Expand ATM by default
+                            st.markdown(f"### Analyzing {strike} CE & PE")
 
-                    # Rate limiting: 1.2 seconds between strikes
-                    if idx > 0:
-                        time.sleep(1.2)
+                            # Rate limiting: 1.2 seconds between strikes
+                            if idx > 0:
+                                time.sleep(1.2)
 
-                    # Analyze CE
-                    st.markdown("#### 📈 CALL Option (CE)")
-                    ce_analysis = run_comprehensive_depth_analysis(
-                        strike=strike,
-                        expiry=expiry,
-                        option_type="CE",
-                        dhan_config=dhan_config,
-                        depth_history=None  # TODO: Implement depth history tracking
-                    )
+                            # Analyze CE
+                            st.markdown("#### 📈 CALL Option (CE)")
+                            ce_analysis = run_comprehensive_depth_analysis(
+                                strike=strike,
+                                expiry=expiry,
+                                option_type="CE",
+                                dhan_config=dhan_config,
+                                depth_history=None  # TODO: Implement depth history tracking
+                            )
 
-                    if ce_analysis.get("available"):
-                        display_comprehensive_depth_analysis(ce_analysis)
-                    else:
-                        st.warning(f"CE analysis unavailable: {ce_analysis.get('error', 'Unknown error')}")
+                            if ce_analysis.get("available"):
+                                display_comprehensive_depth_analysis(ce_analysis)
+                            else:
+                                st.warning(f"CE analysis unavailable: {ce_analysis.get('error', 'Unknown error')}")
 
-                    st.markdown("---")
+                            st.markdown("---")
 
-                    # Rate limiting before PE call
-                    time.sleep(1.2)
+                            # Rate limiting before PE call
+                            time.sleep(1.2)
 
-                    # Analyze PE
-                    st.markdown("#### 📉 PUT Option (PE)")
-                    pe_analysis = run_comprehensive_depth_analysis(
-                        strike=strike,
-                        expiry=expiry,
-                        option_type="PE",
-                        dhan_config=dhan_config,
-                        depth_history=None
-                    )
+                            # Analyze PE
+                            st.markdown("#### 📉 PUT Option (PE)")
+                            pe_analysis = run_comprehensive_depth_analysis(
+                                strike=strike,
+                                expiry=expiry,
+                                option_type="PE",
+                                dhan_config=dhan_config,
+                                depth_history=None
+                            )
 
-                    if pe_analysis.get("available"):
-                        display_comprehensive_depth_analysis(pe_analysis)
-                    else:
-                        st.warning(f"PE analysis unavailable: {pe_analysis.get('error', 'Unknown error')}")
+                            if pe_analysis.get("available"):
+                                display_comprehensive_depth_analysis(pe_analysis)
+                            else:
+                                st.warning(f"PE analysis unavailable: {pe_analysis.get('error', 'Unknown error')}")
+
+                st.success("✅ Advanced depth analysis completed!")
         else:
             st.info("ℹ️ Advanced depth analysis module not available. Install `market_depth_advanced.py` for full functionality.")
 
@@ -9041,7 +9046,7 @@ def render_nifty_option_screener():
     
     # Footer
     st.markdown("---")
-    st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
+    st.caption(f"🔄 Auto-refresh: Every 5 minutes | ⏰ {get_ist_datetime_str()}")
     st.caption("🎯 **NIFTY Option Screener v7.0 — SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
     
     # Requirements note
@@ -9054,57 +9059,13 @@ def render_nifty_option_screener():
     """, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.markdown("**🔄 Last update:** Auto-refreshing every 30 seconds")
+    st.markdown("**🔄 Last update:** Auto-refreshing every 5 minutes")
 
 # ═══════════════════════════════════════════════════════════════════════
-#  AUTO-REFRESH SYSTEM - DYNAMIC INTERVALS BASED ON MARKET HOURS
+#  AUTO-REFRESH SYSTEM - SINGLE 5-MINUTE REFRESH FOR ENTIRE APP
 # ═══════════════════════════════════════════════════════════════════════
-
-def get_auto_refresh_interval():
-    """
-    Determines auto-refresh interval based on market hours:
-    - During trading hours (9:15 AM - 3:30 PM IST): 10 seconds
-    - Outside trading hours: 60 seconds
-    - Late night (11 PM - 6 AM IST): 300 seconds (5 minutes)
-    """
-    try:
-        now = get_ist_now()
-        hour = now.hour
-        minute = now.minute
-
-        # Trading hours: 9:15 AM - 3:30 PM IST
-        if (hour == 9 and minute >= 15) or (10 <= hour < 15) or (hour == 15 and minute <= 30):
-            return 10000  # 10 seconds during market hours
-
-        # Late night: 11 PM - 6 AM IST
-        elif hour >= 23 or hour < 6:
-            return 300000  # 5 minutes late night
-
-        # Outside trading hours
-        else:
-            return 60000  # 1 minute
-
-    except Exception as e:
-        return 60000  # Default to 1 minute
-
-# Try to import auto-refresh, but make it optional
-try:
-    from streamlit_autorefresh import st_autorefresh
-    AUTO_REFRESH_AVAILABLE = True
-except ImportError:
-    AUTO_REFRESH_AVAILABLE = False
-    st.warning("⚠️ streamlit-autorefresh not installed. Install it for auto-refresh: `pip install streamlit-autorefresh`")
-
-# Initialize auto-refresh if available
-if AUTO_REFRESH_AVAILABLE:
-    refresh_interval = get_auto_refresh_interval()
-    count = st_autorefresh(interval=refresh_interval, limit=None, key="nifty_screener_refresh")
-
-    # Display refresh status
-    refresh_status = "🟢 Live (10s refresh)" if refresh_interval == 10000 else "🟡 Monitoring (60s refresh)" if refresh_interval == 60000 else "🔵 Low Activity (5m refresh)"
-    st.caption(f"{refresh_status} | Auto-refresh enabled | Count: {count}")
-else:
-    st.caption("🔴 Manual refresh only - Install streamlit-autorefresh for auto-updates")
+# Auto-refresh is handled by the auto_refresh() function at line 3905
+# Refresh interval: 5 minutes (300 seconds)
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER AND TITLE
@@ -9116,6 +9077,20 @@ st.markdown("""
     <h4 style='color: #667eea;'>100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR</h4>
 </div>
 """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════
+#  MANUAL REFRESH BUTTON
+# ═══════════════════════════════════════════════════════════════════════
+
+col_refresh1, col_refresh2, col_refresh3 = st.columns([1, 1, 1])
+with col_refresh2:
+    if st.button("🔄 REFRESH NOW", type="primary", use_container_width=True, key="manual_refresh_button"):
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.rerun()
+
+st.markdown(f"<div style='text-align: center; margin: 10px 0;'><small>⏱️ Auto-refresh: Every 5 minutes | ⏰ Last refresh: {get_ist_datetime_str()}</small></div>", unsafe_allow_html=True)
+st.markdown("---")
 
 # ═══════════════════════════════════════════════════════════════════════
 #  MAIN EXECUTION
