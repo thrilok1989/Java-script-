@@ -6688,22 +6688,22 @@ def render_nifty_option_screener():
     # ═══════════════════════════════════════════════════════════════════
 
     screener_tabs = st.tabs([
+        "📅 Expiry Analysis",
+        "🎯 All-Day Spike Detector",
+        "📱 Telegram Signals",
         "📊 Option Chain Table",
         "📊 OI/PCR Analytics",
         "🎯 ATM Bias Analyzer",
         "🎪 Seller's Perspective",
         "🚀 Moment Detector",
-        "📊 Market Depth Analyzer",
-        "📅 Expiry Analysis",
-        "🎯 All-Day Spike Detector",
-        "📱 Telegram Signals"
+        "📊 Market Depth Analyzer"
     ])
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 0: OPTION CHAIN TABLE (NEW)
+    # SUB-TAB 3: OPTION CHAIN TABLE
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[0]:
+    with screener_tabs[3]:
         if OPTION_CHAIN_TABLE_AVAILABLE:
             render_option_chain_table_tab(
                 merged_df=merged,
@@ -6718,10 +6718,10 @@ def render_nifty_option_screener():
             st.error("Option Chain Table module not available. Please ensure option_chain_table.py is in the project directory.")
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 1: OI/PCR ANALYTICS
+    # SUB-TAB 4: OI/PCR ANALYTICS
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[1]:
+    with screener_tabs[4]:
         st.markdown("## 📊 ENHANCED OI & PCR ANALYTICS DASHBOARD")
     
     # Row 1: Totals
@@ -6962,10 +6962,10 @@ def render_nifty_option_screener():
     """, unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 2: ATM BIAS ANALYZER
+    # SUB-TAB 5: ATM BIAS ANALYZER
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[2]:
+    with screener_tabs[5]:
         st.markdown("## 🎯 ATM BIAS ANALYZER")
 
         # Display ATM Bias Dashboard
@@ -6996,10 +6996,10 @@ def render_nifty_option_screener():
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 5: MARKET DEPTH ANALYZER
+    # SUB-TAB 8: MARKET DEPTH ANALYZER
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[5]:
+    with screener_tabs[8]:
         # Display Basic Market Depth Dashboard
         display_market_depth_dashboard(spot, depth_analysis, depth_signals, depth_enhanced_pressure)
 
@@ -7067,10 +7067,10 @@ def render_nifty_option_screener():
             st.info("ℹ️ Advanced depth analysis module not available. Install `market_depth_advanced.py` for full functionality.")
 
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 6: EXPIRY ANALYSIS
+    # SUB-TAB 0: EXPIRY ANALYSIS (PRIORITY - INSTANT LOAD)
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[6]:
+    with screener_tabs[0]:
         st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
 
         # Main spike card
@@ -7295,22 +7295,16 @@ def render_nifty_option_screener():
             """)
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 7: ALL-DAY SPIKE DETECTOR (NEW!)
+    # SUB-TAB 1: ALL-DAY SPIKE DETECTOR (PRIORITY - INSTANT LOAD!)
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[7]:
+    with screener_tabs[1]:
         st.markdown("## 🎯 ALL-DAY SPIKE DETECTOR")
         st.caption("Detects Support, Resistance, Opening, Breakout, Momentum & Squeeze spikes on ANY trading day")
 
-        # Call the new spike detector function
+        # Use pre-computed spike result (already calculated before tabs for instant load)
         try:
-            spike_result = detect_all_market_spikes(
-                merged_df=merged,
-                spot=spot,
-                atm_strike=atm_strike,
-                days_to_expiry=days_to_expiry,
-                total_gex_net=total_gex_net
-            )
+            spike_result = all_day_spike_result  # Already computed at line ~6597
 
             # Store spike result in session state for ML Signal integration
             st.session_state['all_day_spike_result'] = {
@@ -7485,7 +7479,11 @@ def render_nifty_option_screener():
     # SUB-TAB 8: TELEGRAM SIGNALS
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[8]:
+    # ═══════════════════════════════════════════════════════════════════
+    # SUB-TAB 2: TELEGRAM SIGNAL GENERATION (PRIORITY - INSTANT LOAD)
+    # ═══════════════════════════════════════════════════════════════════
+
+    with screener_tabs[2]:
         st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
 
         if telegram_signal:
@@ -7613,10 +7611,10 @@ def render_nifty_option_screener():
                 st.info(f"📝 Last signal was: {st.session_state['last_signal']}")
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 4: MOMENT DETECTOR
+    # SUB-TAB 7: MOMENT DETECTOR
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[4]:
+    with screener_tabs[7]:
         st.markdown("## 🚀 MOMENT DETECTOR (Is this a real move?)")
 
         moment_col1, moment_col2, moment_col3, moment_col4 = st.columns(4)
@@ -8101,10 +8099,10 @@ def render_nifty_option_screener():
     st.markdown("---")
     
     # ═══════════════════════════════════════════════════════════════════
-    # SUB-TAB 3: SELLER'S PERSPECTIVE
+    # SUB-TAB 6: SELLER'S PERSPECTIVE
     # ═══════════════════════════════════════════════════════════════════
 
-    with screener_tabs[3]:
+    with screener_tabs[6]:
         st.markdown("## 🎪 SELLER'S PERSPECTIVE")
 
         st.markdown(f"""
