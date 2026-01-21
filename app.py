@@ -358,8 +358,12 @@ def get_bias_analyzer():
 
 def get_advanced_chart_analyzer():
     """Lazy load advanced chart analyzer"""
-    if 'advanced_chart_analyzer' not in st.session_state:
-        st.session_state.advanced_chart_analyzer = AdvancedChartAnalysis()
+    # Force reload to pick up new ICT indicator
+    # Remove this check after first successful load with ICT indicator
+    if 'advanced_chart_analyzer' not in st.session_state or not hasattr(st.session_state.advanced_chart_analyzer, '_ict_indicator_loaded'):
+        analyzer = AdvancedChartAnalysis()
+        analyzer._ict_indicator_loaded = True  # Mark as new version
+        st.session_state.advanced_chart_analyzer = analyzer
     return st.session_state.advanced_chart_analyzer
 
 if 'bias_analysis_results' not in st.session_state:
