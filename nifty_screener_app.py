@@ -6218,7 +6218,7 @@ def render_nifty_option_screener():
     # Fetch data - Use shared spot price from session state if available (avoids redundant API calls)
     col1, col2 = st.columns([1, 2])
     with col1:
-        # First check if spot price is already in session state from main app
+        # First check if spot price is already cached in session state from previous refresh
         spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
 
         # If not available, fetch from API (with caching)
@@ -6883,7 +6883,7 @@ def render_nifty_option_screener():
     # Calculate Overall Bias from all analyses
     overall_bias = calculate_overall_bias(atm_bias, support_bias, resistance_bias, seller_bias_result)
 
-    # Store all market sentiment data in session state for access from Overall Market Sentiment tab
+    # Store all market sentiment data in session state for persistence across refreshes
     st.session_state.nifty_option_screener_data = {
         'spot_price': spot,  # Current NIFTY spot price
         'overall_bias': overall_bias,
@@ -6902,7 +6902,7 @@ def render_nifty_option_screener():
         'last_updated': datetime.now()
     }
 
-    # Display the reorganized Overall Market Sentiment Summary Dashboard
+    # Display the comprehensive market sentiment summary dashboard
     display_overall_market_sentiment_summary(
         overall_bias=overall_bias,
         atm_bias=atm_bias,
