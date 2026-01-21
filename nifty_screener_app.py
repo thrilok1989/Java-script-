@@ -1553,8 +1553,8 @@ def display_overall_market_sentiment_summary(overall_bias, atm_bias, seller_max_
     Organized in a clean tabulation format
     """
     st.markdown("---")
-    st.markdown("## 📈 OVERALL MARKET SENTIMENT SUMMARY")
-    st.markdown("*Consolidated view of essential option chain metrics*")
+    st.markdown("## 📊 KEY METRICS DASHBOARD")
+    st.markdown("*Comprehensive analysis of critical option chain data*")
     st.markdown("---")
 
     # ATM ±2 Strike Tabulation
@@ -6864,7 +6864,7 @@ def render_nifty_option_screener():
     st.markdown("---")
 
     # ============================================
-    # 📊 OVERALL MARKET SENTIMENT SUMMARY
+    # 📊 KEY METRICS DASHBOARD PREPARATION
     # ============================================
 
     # Create ATM ±2 strikes tabulation
