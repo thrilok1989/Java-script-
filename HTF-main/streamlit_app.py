@@ -95,7 +95,7 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Settings")
-        instrument = st.selectbox("Instrument", ["NIFTY", "BANKNIFTY", "SENSEX"])
+        instrument = st.selectbox("Instrument", ["NIFTY"])
         auto_telegram = st.checkbox("Auto Telegram", value=True)
         cooldown_mins = st.slider("Cooldown (min)", 5, 60, 15)
         use_mock = st.checkbox("Use Demo Data", value=False, help="Use mock data if API fails")
