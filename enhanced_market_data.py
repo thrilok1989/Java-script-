@@ -454,17 +454,9 @@ class EnhancedMarketData:
         print("  - Fetching intermarket data...")
         result['intermarket'] = self.fetch_intermarket_data()
 
-        # 5. Detect Gamma Squeeze (optional - requires option chain data)
+        # 5. Detect Gamma Squeeze
         print("  - Analyzing Gamma Squeeze...")
-        try:
-            result['gamma_squeeze'] = self.detect_gamma_squeeze('NIFTY')
-        except Exception as e:
-            print(f"    Warning: Gamma squeeze detection skipped - {e}")
-            result['gamma_squeeze'] = {
-                'success': False,
-                'error': 'Option chain data not available',
-                'message': 'Gamma squeeze requires option chain data from NIFTY Option Screener tab'
-            }
+        result['gamma_squeeze'] = self.detect_gamma_squeeze('NIFTY')
 
         # 6. Analyze Sector Rotation (pass already-fetched sectors to avoid duplicate API call)
         print("  - Analyzing Sector Rotation...")

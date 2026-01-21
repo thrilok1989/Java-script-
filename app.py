@@ -18,6 +18,10 @@ import logging
 from config import *
 from market_data import *
 from market_hours_scheduler import scheduler, is_within_trading_hours, should_run_app
+from signal_manager import SignalManager
+from strike_calculator import calculate_strike, calculate_levels
+from trade_executor import TradeExecutor
+from telegram_alerts import TelegramBot, send_test_message
 from dhan_api import check_dhan_connection
 from bias_analysis import BiasAnalysisPro
 from advanced_chart_analysis import AdvancedChartAnalysis
@@ -30,23 +34,7 @@ from data_cache_manager import (
     get_cached_sensex_data,
     get_cached_bias_analysis_results
 )
-
-# Import tab modules at startup for instant tab switching (no import delay on tab click)
-# Now safe to do this after fixing all st.stop() calls in NiftyOptionScreener.py
-try:
-    from NiftyOptionScreener import render_nifty_option_screener
-    NIFTY_SCREENER_AVAILABLE = True
-except Exception as e:
-    NIFTY_SCREENER_AVAILABLE = False
-    print(f"Warning: Could not import NiftyOptionScreener: {e}")
-
-try:
-    from enhanced_market_data import get_enhanced_market_data
-    from enhanced_market_display import render_enhanced_market_data_tab
-    ENHANCED_DATA_AVAILABLE = True
-except Exception as e:
-    ENHANCED_DATA_AVAILABLE = False
-    print(f"Warning: Could not import enhanced market data modules: {e}")
+from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -351,8 +339,14 @@ def check_and_run_ai_analysis():
 # INITIALIZE SESSION STATE
 # ═══════════════════════════════════════════════════════════════════════
 
+if 'signal_manager' not in st.session_state:
+    st.session_state.signal_manager = SignalManager()
+
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
+
+if 'active_setup_id' not in st.session_state:
+    st.session_state.active_setup_id = None
 
 # Lazy initialization - only create these objects when needed (on tab access)
 # This significantly reduces initial load time
@@ -374,57 +368,46 @@ if 'bias_analysis_results' not in st.session_state:
 if 'chart_data' not in st.session_state:
     st.session_state.chart_data = None
 
-# Initialize background data loading (non-blocking)
+# Initialize background data loading
 if 'data_preloaded' not in st.session_state:
     st.session_state.data_preloaded = False
-    # Start background data loading in a separate thread (non-blocking)
-    import threading
-    def start_background_load():
-        try:
-            preload_all_data()
-            st.session_state.data_preloaded = True
-        except Exception as e:
-            print(f"Background data load error: {e}")
-
-    thread = threading.Thread(target=start_background_load, daemon=True)
-    thread.start()
-    # Don't wait for it to complete - let app continue loading
-
-# Start 24/7 background signal monitoring (runs on server even when browser closed)
-if 'signal_monitor_started' not in st.session_state:
-    st.session_state.signal_monitor_started = False
-    from data_cache_manager import start_background_signal_monitor
-    try:
-        start_background_signal_monitor()
-        st.session_state.signal_monitor_started = True
-        print("✅ 24/7 background signal monitor is now running on server!")
-    except Exception as e:
-        print(f"❌ Failed to start signal monitor: {e}")
+    # Start background data loading on first run
+    preload_all_data()
+    st.session_state.data_preloaded = True
 
 # NSE Options Analyzer - Initialize instruments session state
-# Optimized: Only NIFTY (removed 7 other instruments for faster loading)
 NSE_INSTRUMENTS = {
     'indices': {
-        'NIFTY': {'lot_size': 75, 'zone_size': 20, 'atm_range': 200}
+        'NIFTY': {'lot_size': 75, 'zone_size': 20, 'atm_range': 200},
+        'BANKNIFTY': {'lot_size': 25, 'zone_size': 100, 'atm_range': 500},
+        'SENSEX': {'lot_size': 10, 'zone_size': 50, 'atm_range': 300},
+        'NIFTY IT': {'lot_size': 50, 'zone_size': 50, 'atm_range': 300},
+        'NIFTY AUTO': {'lot_size': 50, 'zone_size': 50, 'atm_range': 300}
+    },
+    'stocks': {
+        'TCS': {'lot_size': 150, 'zone_size': 30, 'atm_range': 150},
+        'RELIANCE': {'lot_size': 250, 'zone_size': 40, 'atm_range': 200},
+        'HDFCBANK': {'lot_size': 550, 'zone_size': 50, 'atm_range': 250}
     }
 }
 
-# Initialize session states for NIFTY only (80% fewer session state variables)
-instrument = 'NIFTY'
-if f'{instrument}_price_data' not in st.session_state:
-    st.session_state[f'{instrument}_price_data'] = pd.DataFrame(columns=["Time", "Spot"])
+# Initialize session states for all NSE instruments
+for category in NSE_INSTRUMENTS:
+    for instrument in NSE_INSTRUMENTS[category]:
+        if f'{instrument}_price_data' not in st.session_state:
+            st.session_state[f'{instrument}_price_data'] = pd.DataFrame(columns=["Time", "Spot"])
 
-if f'{instrument}_trade_log' not in st.session_state:
-    st.session_state[f'{instrument}_trade_log'] = []
+        if f'{instrument}_trade_log' not in st.session_state:
+            st.session_state[f'{instrument}_trade_log'] = []
 
-if f'{instrument}_call_log_book' not in st.session_state:
-    st.session_state[f'{instrument}_call_log_book'] = []
+        if f'{instrument}_call_log_book' not in st.session_state:
+            st.session_state[f'{instrument}_call_log_book'] = []
 
-if f'{instrument}_support_zone' not in st.session_state:
-    st.session_state[f'{instrument}_support_zone'] = (None, None)
+        if f'{instrument}_support_zone' not in st.session_state:
+            st.session_state[f'{instrument}_support_zone'] = (None, None)
 
-if f'{instrument}_resistance_zone' not in st.session_state:
-    st.session_state[f'{instrument}_resistance_zone'] = (None, None)
+        if f'{instrument}_resistance_zone' not in st.session_state:
+            st.session_state[f'{instrument}_resistance_zone'] = (None, None)
 
 # Initialize overall option chain data
 if 'overall_option_data' not in st.session_state:
@@ -433,26 +416,16 @@ if 'overall_option_data' not in st.session_state:
 # ═══════════════════════════════════════════════════════════════════════
 # AUTO REFRESH & PERFORMANCE OPTIMIZATIONS
 # ═══════════════════════════════════════════════════════════════════════
-# Dynamic auto-refresh based on market session:
-# - Regular trading (9:15-3:30 PM): 10 seconds (real-time spot price)
-# - Pre-market (8:30-9:15 AM): 30 seconds
-# - Post-market (3:30-3:45 PM): 60 seconds
-# - Market closed: 300 seconds (5 minutes)
+# Optimized for fast loading and refresh:
+# - Chart data cached for 60 seconds
+# - Signal checks reduced to 30-second intervals
+# - Lazy loading for tab-specific data
+# - Streamlit caching for expensive computations
 
-# Get current market session to determine refresh interval
-current_session = scheduler.get_market_session()
-session_refresh_interval = scheduler.get_refresh_interval(current_session)
-
-# Auto-refresh with dynamic interval based on market hours
-# This ensures spot price updates every 10s during trading hours
-# limit=None ensures continuous refresh without stopping
-# Note: st_autorefresh runs client-side (in browser JavaScript)
-# It may pause on mobile when screen locks or tab is backgrounded
-refresh_count = st_autorefresh(
-    interval=session_refresh_interval * 1000,  # Convert seconds to milliseconds
-    limit=None,  # Run forever
-    key="data_refresh"
-)
+# Auto-refresh every 1 minute (configurable via AUTO_REFRESH_INTERVAL)
+# This ensures the app stays updated with latest market data
+# The refresh is seamless - no blur/flash thanks to custom CSS above
+refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_refresh")
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER
@@ -463,18 +436,6 @@ st.caption(APP_SUBTITLE)
 
 # Check and run AI analysis if needed
 check_and_run_ai_analysis()
-
-# ═══════════════════════════════════════════════════════════════════════
-# MARKET STATUS CACHE (Performance Optimization)
-# ═══════════════════════════════════════════════════════════════════════
-# Cache market status to avoid repeated calls (called 3+ times per refresh)
-@st.cache_data(ttl=10, show_spinner=False)  # Cache for 10 seconds
-def get_cached_market_status():
-    """Cached market status to avoid repeated calls"""
-    return get_market_status()
-
-# Get market status once and reuse throughout the page
-cached_market_status = get_cached_market_status()
 
 # ═══════════════════════════════════════════════════════════════════════
 # MARKET HOURS WARNING BANNER
@@ -497,11 +458,13 @@ if MARKET_HOURS_ENABLED:
         """)
 
         # Show next market open time if available
-        if 'next_open' in cached_market_status:
-            st.info(f"📅 **Next Market Open:** {cached_market_status['next_open']}")
+        market_status = get_market_status()
+        if 'next_open' in market_status:
+            st.info(f"📅 **Next Market Open:** {market_status['next_open']}")
     else:
         # Show market session info when market is open
-        session = cached_market_status.get('session', 'unknown')
+        market_status = get_market_status()
+        session = market_status.get('session', 'unknown')
 
         if session == 'pre_market':
             st.info(f"⏰ **{reason}** - Limited liquidity expected")
@@ -515,27 +478,22 @@ if MARKET_HOURS_ENABLED:
 
 with st.sidebar:
     st.header("⚙️ System Status")
-
-    # Market status (use cached version)
-    if cached_market_status['open']:
-        st.success(f"{cached_market_status['message']} | {cached_market_status['time']}")
+    
+    # Market status
+    market_status = get_market_status()
+    if market_status['open']:
+        st.success(f"{market_status['message']} | {market_status['time']}")
     else:
-        st.error(cached_market_status['message'])
+        st.error(market_status['message'])
     
     st.divider()
-
-    # DhanHQ connection (with caching to avoid API calls on every refresh)
+    
+    # DhanHQ connection
     st.subheader("🔌 DhanHQ API")
     if DEMO_MODE:
         st.info("🧪 DEMO MODE Active")
     else:
-        # Cache connection status for 5 minutes to avoid expensive API calls
-        @st.cache_data(ttl=300, show_spinner=False)  # 5 minutes cache
-        def get_cached_connection_status():
-            """Check Dhan connection with caching to prevent repeated API calls"""
-            return check_dhan_connection()
-
-        if get_cached_connection_status():
+        if check_dhan_connection():
             st.success("✅ Connected")
         else:
             st.error("❌ Connection Failed")
@@ -582,8 +540,7 @@ with st.sidebar:
     
     # Settings
     st.subheader("⚙️ Settings")
-    st.write(f"**Auto Refresh:** {session_refresh_interval}s (Dynamic)")
-    st.caption("10s during trading • 30s pre-market • 60s post-market • 300s closed")
+    st.write(f"**Auto Refresh:** {AUTO_REFRESH_INTERVAL}s")
     st.write(f"**NIFTY Lot Size:** {LOT_SIZES['NIFTY']}")
     st.write(f"**SENSEX Lot Size:** {LOT_SIZES['SENSEX']}")
     st.write(f"**SL Offset:** {STOP_LOSS_OFFSET} points")
@@ -758,9 +715,9 @@ if current_time - st.session_state.sentiment_cache_time > 120:
         st.session_state.sentiment_cache_time = current_time
 
 # ═══════════════════════════════════════════════════════════════════════
-# MARKET STATUS (use cached version from above)
+# MARKET STATUS
 # ═══════════════════════════════════════════════════════════════════════
-market_status = cached_market_status
+market_status = get_market_status()
 
 # Display market data - Use session state fallbacks from NIFTY Option Screener
 col1, col2, col3, col4 = st.columns(4)
@@ -953,128 +910,663 @@ if st.session_state.get('merged_df') is None:
         pass  # Silently fail - will retry in tab
 
 # ═══════════════════════════════════════════════════════════════════════
+# UNIFIED ML TRADING SIGNAL (Above all tabs - heavily cached for performance)
+# ═══════════════════════════════════════════════════════════════════════
+# Initialize cache variables once
+if 'unified_ml_cache_time' not in st.session_state:
+    st.session_state.unified_ml_cache_time = 0
+if 'unified_ml_generator' not in st.session_state:
+    st.session_state.unified_ml_generator = None
+
+with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
+    try:
+        current_time = time.time()
+        cache_duration = 120  # Only regenerate every 120 seconds (2 minutes)
+
+        # Check if we have cached signal and it's still valid
+        cached_signal = st.session_state.get('unified_ml_signal')
+        time_since_cache = current_time - st.session_state.unified_ml_cache_time
+
+        if cached_signal is not None and time_since_cache < cache_duration:
+            # Use cached signal - no computation needed
+            from src.unified_ml_signal import render_unified_signal
+            spot_price = nifty_data.get('spot_price') if nifty_data else None
+            render_unified_signal(cached_signal, spot_price=spot_price)
+            st.caption(f"🔄 Signal updates in {int(cache_duration - time_since_cache)}s")
+        else:
+            # Need to regenerate signal - but use cached generator
+            from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+
+            # Create generator once and reuse (major performance fix)
+            if st.session_state.unified_ml_generator is None:
+                st.session_state.unified_ml_generator = UnifiedMLSignalGenerator()
+
+            # Try multiple sources for chart data
+            df_for_signal = None
+
+            # 1. First try session_state chart_data (from tabs)
+            try:
+                cached_chart = st.session_state.get('chart_data')
+                if cached_chart is not None and hasattr(cached_chart, '__len__') and len(cached_chart) > 0:
+                    df_for_signal = cached_chart
+            except:
+                pass
+
+            # 2. Try nifty_data chart_data (from initial load)
+            if df_for_signal is None:
+                try:
+                    if nifty_data and nifty_data.get('chart_data') is not None:
+                        chart_data_raw = nifty_data.get('chart_data')
+                        if hasattr(chart_data_raw, '__len__') and len(chart_data_raw) > 0:
+                            df_for_signal = chart_data_raw
+                            st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            # 3. Try to fetch from API
+            if df_for_signal is None:
+                try:
+                    df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+                    if df_for_signal is not None and len(df_for_signal) > 0:
+                        st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            # 4. Last resort - create minimal DataFrame from nifty_data OHLC
+            if df_for_signal is None and nifty_data and nifty_data.get('spot_price'):
+                try:
+                    import pandas as pd
+                    from datetime import datetime
+                    # Create minimal DataFrame with current OHLC
+                    df_for_signal = pd.DataFrame({
+                        'open': [nifty_data.get('open', nifty_data['spot_price'])],
+                        'high': [nifty_data.get('high', nifty_data['spot_price'])],
+                        'low': [nifty_data.get('low', nifty_data['spot_price'])],
+                        'close': [nifty_data.get('spot_price')],
+                        'volume': [0]
+                    }, index=[datetime.now()])
+                    st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            if df_for_signal is not None and len(df_for_signal) > 0:
+
+                option_chain = st.session_state.get('option_chain_data')
+                vix_current = st.session_state.get('vix_current', 15.0)
+                spot_price = nifty_data.get('spot_price') if nifty_data else None
+                # Safely get bias_results - handle None case
+                bias_analysis = st.session_state.get('bias_analysis_results')
+                bias_results = bias_analysis.get('bias_results') if isinstance(bias_analysis, dict) else None
+
+                # Use cached generator instead of creating new one
+                unified_signal = st.session_state.unified_ml_generator.generate_signal(
+                    df=df_for_signal,
+                    option_chain=option_chain,
+                    vix_current=vix_current,
+                    spot_price=spot_price,
+                    bias_results=bias_results
+                )
+
+                # Cache the signal
+                st.session_state.unified_ml_signal = unified_signal
+                st.session_state.unified_ml_cache_time = current_time
+
+                render_unified_signal(unified_signal, spot_price=spot_price)
+            else:
+                st.info("⏳ Loading market data... Unified signal will appear once data is available.")
+    except Exception as e:
+        st.warning(f"⚠️ ML Signal temporarily unavailable: {str(e)}")
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════════════════
 # TABS - USING NATIVE STREAMLIT TABS FOR BETTER UX
 # ═══════════════════════════════════════════════════════════════════════
 
 # Native tabs - work seamlessly on mobile and desktop, no multiple clicks needed
-# PRIORITY LOADING: Main tabs (Option Screener + Enhanced Data) load first for faster UX
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+    "🌟 Overall Market Sentiment",
+    "🎯 Trade Setup",
+    "📊 Active Signals",
+    "📈 Positions",
+    "🎲 Bias Analysis Pro",
+    "📉 Advanced Chart Analysis",
     "🎯 NIFTY Option Screener v7.0",
     "🌐 Enhanced Market Data",
-    "🌟 Overall Market Sentiment",
-    "🎲 Bias Analysis Pro",
-    "📉 Advanced Chart Analysis"
+    "🔍 NSE Stock Screener",
+    "📈 NIFTY Futures Analysis",
+    "🤖 AI Training & Models"
 ])
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 1: NIFTY OPTION SCREENER V7.0 (PRIORITY LOAD - MAIN TAB)
+# TAB 1: OVERALL MARKET SENTIMENT (AUTO-LOAD WITH SMART CACHING)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab1:
-    st.header("🎯 NIFTY Option Screener v7.0")
-    st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
-
-    # Use pre-imported module (imported at app startup for instant loading)
-    if NIFTY_SCREENER_AVAILABLE:
-        try:
-            render_nifty_option_screener()
-        except Exception as e:
-            st.error(f"❌ Error rendering NIFTY Option Screener: {e}")
-            st.info("This error occurred in the render function. Check logs for details.")
-            import traceback
-            st.code(traceback.format_exc())
-    else:
-        st.error("❌ NIFTY Option Screener module not available")
-        st.info("The module failed to load at startup. Check the console/terminal for import errors.")
-        st.code("Module: NiftyOptionScreener.py")
-
-# ═══════════════════════════════════════════════════════════════════════
-# TAB 2: ENHANCED MARKET DATA (PRIORITY LOAD - MAIN TAB)
-# ═══════════════════════════════════════════════════════════════════════
-
-with tab2:
-    st.header("🌐 Enhanced Market Data Analysis")
-    st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
-
-    if ENHANCED_DATA_AVAILABLE:
-        try:
-            # AUTO-LOAD on first access - fetch data immediately if not in cache
-            if 'enhanced_market_data' not in st.session_state:
-                with st.spinner("Loading enhanced market data..."):
-                    try:
-                        enhanced_data = get_enhanced_market_data()
-                        st.session_state.enhanced_market_data = enhanced_data
-                    except Exception as e:
-                        st.warning(f"⚠️ Could not auto-load data: {e}")
-                        st.info("Click the Refresh button to manually load data.")
-
-            # Control buttons
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
-                    with st.spinner("Refreshing market data..."):
-                        try:
-                            enhanced_data = get_enhanced_market_data()
-                            st.session_state.enhanced_market_data = enhanced_data
-                            st.success("✅ Data refreshed successfully!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Failed to refresh data: {e}")
-
-            with col2:
-                if 'enhanced_market_data' in st.session_state:
-                    data = st.session_state.enhanced_market_data
-                    st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
-
-            # Display enhanced market data if available
-            if 'enhanced_market_data' in st.session_state:
-                try:
-                    render_enhanced_market_data_tab(st.session_state.enhanced_market_data)
-                except Exception as e:
-                    st.error(f"❌ Error displaying enhanced data: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
-            else:
-                st.info("""
-                ℹ️ Click 'Refresh Data' button above to load enhanced market data.
-
-                **Data Sources:**
-                - 📊 **Dhan API:** India VIX, All Sector Indices (IT, Auto, Pharma, Metal, FMCG, Realty, Energy)
-                - 🌍 **Yahoo Finance:** Global Markets (S&P 500, Nasdaq, Dow, Nikkei, Hang Seng, etc.)
-                - 💰 **Intermarket:** USD Index, Crude Oil, Gold, USD/INR, US 10Y Treasury, Bitcoin
-
-                **Advanced Analysis:**
-                - ⚡ **India VIX Analysis:** Fear & Greed Index with sentiment scoring
-                - 🏢 **Sector Rotation Model:** Identify market leadership and rotation patterns
-                - 🎯 **Gamma Squeeze Detection:** Option market makers hedging analysis
-                - ⏰ **Intraday Seasonality:** Time-based trading recommendations
-                - 🌐 **Global Correlation:** How worldwide markets affect Indian markets
-
-                **All data is presented in comprehensive tables with bias scores and trading insights!**
-                """)
-        except Exception as e:
-            st.error(f"❌ Critical error in Enhanced Market Data tab: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-    else:
-        st.error("❌ Enhanced Market Data modules not available")
-        st.info("The modules failed to load at startup. Check the console/terminal for import errors.")
-        st.code("Modules: enhanced_market_data.py, enhanced_market_display.py")
-
-# ═══════════════════════════════════════════════════════════════════════
-# TAB 3: OVERALL MARKET SENTIMENT (LAZY LOAD)
-# ═══════════════════════════════════════════════════════════════════════
-
-with tab3:
     render_overall_market_sentiment(NSE_INSTRUMENTS)
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 4: BIAS ANALYSIS PRO (LAZY LOAD)
+# TAB 2: TRADE SETUP
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab2:
+    st.header("🎯 Create New Trade Setup")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_index = st.selectbox(
+            "Select Index",
+            ["NIFTY", "SENSEX"],
+            key="setup_index"
+        )
+    
+    with col2:
+        selected_direction = st.selectbox(
+            "Select Direction",
+            ["CALL", "PUT"],
+            key="setup_direction"
+        )
+    
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Safe default value handling for VOB support level
+        try:
+            default_support = max(0.0, float(nifty_data['spot_price']) - 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25000.0
+        except (TypeError, ValueError):
+            default_support = 25000.0
+
+        vob_support = st.number_input(
+            "Support Level",
+            min_value=0.0,
+            value=default_support,
+            step=10.0,
+            key="vob_support"
+        )
+
+    with col2:
+        # Safe default value handling for VOB resistance level
+        try:
+            default_resistance = max(0.0, float(nifty_data['spot_price']) + 50.0) if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A'] else 25100.0
+        except (TypeError, ValueError):
+            default_resistance = 25100.0
+
+        vob_resistance = st.number_input(
+            "Resistance Level",
+            min_value=0.0,
+            value=default_resistance,
+            step=10.0,
+            key="vob_resistance"
+        )
+    
+    st.divider()
+    
+    # Preview calculated levels
+    st.subheader("📋 Preview Trade Levels")
+    
+    levels = calculate_levels(
+        selected_index,
+        selected_direction,
+        vob_support,
+        vob_resistance,
+        STOP_LOSS_OFFSET
+    )
+
+    # Safe handling for spot price in strike calculation
+    safe_spot_price = 25000.0  # Default fallback value
+    if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 0, 'N/A']:
+        try:
+            safe_spot_price = float(nifty_data['spot_price'])
+        except (TypeError, ValueError):
+            safe_spot_price = 25000.0
+
+    strike_info = calculate_strike(
+        selected_index,
+        safe_spot_price,
+        selected_direction,
+        nifty_data.get('current_expiry', 'N/A')
+    )
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Entry Level", f"{levels['entry_level']:.2f}")
+    
+    with col2:
+        st.metric("Stop Loss", f"{levels['sl_level']:.2f}")
+    
+    with col3:
+        st.metric("Target", f"{levels['target_level']:.2f}")
+    
+    with col4:
+        st.metric("Risk:Reward", f"1:{levels['rr_ratio']}")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info(f"**Strike:** {strike_info['strike']} {strike_info['option_type']} ({strike_info['strike_type']})")
+    
+    with col2:
+        lot_size = LOT_SIZES[selected_index]
+        st.info(f"**Quantity:** {lot_size} ({selected_index} lot size)")
+    
+    st.divider()
+    
+    # Create setup button
+    if st.button("✅ Create Signal Setup", type="primary", use_container_width=True):
+        signal_id = st.session_state.signal_manager.create_setup(
+            selected_index,
+            selected_direction,
+            vob_support,
+            vob_resistance
+        )
+        st.session_state.active_setup_id = signal_id
+        st.success(f"✅ Signal setup created! ID: {signal_id[:20]}...")
+        st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 3: ACTIVE SIGNALS
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab3:
+    st.header("📊 Active Signal Setups")
+
+    active_setups = st.session_state.signal_manager.get_active_setups()
+
+    if not active_setups:
+        st.info("No active signal setups. Create one in the Trade Setup tab.")
+    else:
+        for signal_id, setup in active_setups.items():
+            with st.container():
+                st.subheader(f"{setup['index']} {setup['direction']}")
+
+                # Signal count display
+                signal_count = setup['signal_count']
+                signals_display = "⭐" * signal_count + "☆" * (3 - signal_count)
+
+                col1, col2, col3 = st.columns([2, 1, 1])
+
+                with col1:
+                    st.write(f"**Signals:** {signals_display} ({signal_count}/3)")
+                    st.write(f"**VOB Support:** {setup['vob_support']}")
+                    st.write(f"**VOB Resistance:** {setup['vob_resistance']}")
+
+                with col2:
+                    if signal_count < 3:
+                        if st.button(f"➕ Add Signal", key=f"add_{signal_id}"):
+                            st.session_state.signal_manager.add_signal(signal_id)
+
+                            # Check if ready and send Telegram
+                            updated_setup = st.session_state.signal_manager.get_setup(signal_id)
+                            if updated_setup['status'] == 'ready':
+                                telegram = TelegramBot()
+                                telegram.send_signal_ready(updated_setup)
+
+                            st.rerun()
+
+                    if signal_count > 0:
+                        if st.button(f"➖ Remove Signal", key=f"remove_{signal_id}"):
+                            st.session_state.signal_manager.remove_signal(signal_id)
+                            st.rerun()
+
+                with col3:
+                    if st.button(f"🗑️ Delete", key=f"delete_{signal_id}"):
+                        st.session_state.signal_manager.delete_setup(signal_id)
+                        st.rerun()
+
+                # NEW FEATURE: Trade Execution Button with Index Selection
+                if setup['status'] == 'ready' or signal_count >= 3:
+                    st.markdown("---")
+                    st.markdown("### 🚀 Execute Trade")
+
+                    # Index Selection
+                    trade_col1, trade_col2 = st.columns([1, 2])
+
+                    with trade_col1:
+                        selected_index = st.radio(
+                            "Select Index to Trade:",
+                            ["NIFTY", "SENSEX"],
+                            key=f"index_select_{signal_id}",
+                            horizontal=True
+                        )
+
+                    # Get data based on selected index
+                    if selected_index == "NIFTY":
+                        index_data = nifty_data
+                    else:
+                        index_data = get_cached_sensex_data()
+                        if not index_data:
+                            st.error("❌ SENSEX data not available")
+                            continue
+
+                    current_price = index_data['spot_price']
+
+                    # Display current market status
+                    with trade_col2:
+                        st.metric(
+                            label=f"{selected_index} Spot Price",
+                            value=f"{current_price:.2f}",
+                            delta=f"Support: {setup['vob_support']:.2f} | Resistance: {setup['vob_resistance']:.2f}"
+                        )
+
+                    # Calculate if signal conditions are met
+                    if setup['direction'] == 'CALL':
+                        vob_touched = check_vob_touch(current_price, setup['vob_support'], VOB_TOUCH_TOLERANCE)
+                        vob_type = "Support"
+                        vob_level = setup['vob_support']
+                    else:
+                        vob_touched = check_vob_touch(current_price, setup['vob_resistance'], VOB_TOUCH_TOLERANCE)
+                        vob_type = "Resistance"
+                        vob_level = setup['vob_resistance']
+
+                    # Show signal status
+                    if vob_touched:
+                        st.success(f"✅ {vob_type} LEVEL TOUCHED! Ready to execute.")
+                    else:
+                        st.info(f"⏳ Waiting for {vob_type} touch | Current: {current_price:.2f} | Target: {vob_level:.2f} | Distance: {abs(current_price - vob_level):.2f} pts")
+
+                    # Execute Button (always available when signal is ready)
+                    exec_col1, exec_col2, exec_col3 = st.columns([1, 1, 1])
+
+                    with exec_col2:
+                        if st.button(
+                            f"🚀 EXECUTE {selected_index} TRADE",
+                            key=f"execute_{signal_id}",
+                            type="primary",
+                            use_container_width=True
+                        ):
+                            with st.spinner(f"Executing {selected_index} trade..."):
+                                # Update setup with selected index
+                                trade_setup = setup.copy()
+                                trade_setup['index'] = selected_index
+
+                                executor = TradeExecutor()
+                                result = executor.execute_trade(
+                                    trade_setup,
+                                    current_price,
+                                    index_data['current_expiry']
+                                )
+
+                                if result['success']:
+                                    st.success(f"✅ {result['message']}")
+                                    st.success(f"**Order ID:** {result['order_id']}")
+
+                                    # Mark as executed
+                                    st.session_state.signal_manager.mark_executed(signal_id, result['order_id'])
+
+                                    # Store position in session state for monitoring
+                                    if 'active_positions' not in st.session_state:
+                                        st.session_state.active_positions = {}
+
+                                    details = result['order_details']
+                                    st.session_state.active_positions[result['order_id']] = {
+                                        'order_id': result['order_id'],
+                                        'index': selected_index,
+                                        'direction': setup['direction'],
+                                        'strike': details['strike'],
+                                        'option_type': details['option_type'],
+                                        'quantity': details['quantity'],
+                                        'entry': details['entry_level'],
+                                        'sl': details['sl_price'],
+                                        'target': details['target_price'],
+                                        'timestamp': get_current_time_ist().isoformat(),
+                                        'status': 'active'
+                                    }
+
+                                    # Display order details
+                                    st.write("**Order Details:**")
+                                    st.write(f"- Index: {selected_index}")
+                                    st.write(f"- Strike: {details['strike']} {details['option_type']} ({details['strike_type']})")
+                                    st.write(f"- Quantity: {details['quantity']}")
+                                    st.write(f"- Entry: {details['entry_level']:.2f}")
+                                    st.write(f"- Stop Loss: {details['sl_price']:.2f} (Support/Resistance {'-' if setup['direction'] == 'CALL' else '+'} 8 points)")
+                                    st.write(f"- Target: {details['target_price']:.2f} (Opposite level)")
+                                    st.write(f"- R:R Ratio: 1:{details['rr_ratio']}")
+
+                                    time.sleep(2)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {result['message']}")
+                                    if 'error' in result:
+                                        st.error(f"Error: {result['error']}")
+
+                st.divider()
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 4: POSITIONS
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab4:
+    st.header("📈 Active Positions & Monitoring")
+
+    # Initialize active_positions in session state if not exists
+    if 'active_positions' not in st.session_state:
+        st.session_state.active_positions = {}
+
+    # Get current spot prices for monitoring - with safe null handling
+    nifty_spot = 0
+    if nifty_data.get('spot_price') and nifty_data['spot_price'] not in [None, 'N/A']:
+        try:
+            nifty_spot = float(nifty_data['spot_price'])
+        except (TypeError, ValueError):
+            nifty_spot = 0
+
+    sensex_data_obj = get_cached_sensex_data()
+    sensex_spot = 0
+    if sensex_data_obj and sensex_data_obj.get('spot_price') and sensex_data_obj['spot_price'] not in [None, 'N/A']:
+        try:
+            sensex_spot = float(sensex_data_obj['spot_price'])
+        except (TypeError, ValueError):
+            sensex_spot = 0
+
+    # Check for auto-exit conditions
+    positions_to_exit = []
+    for order_id, pos in st.session_state.active_positions.items():
+        if pos['status'] != 'active':
+            continue
+
+        # Get current spot price based on index
+        current_spot = nifty_spot if pos['index'] == 'NIFTY' else sensex_spot
+
+        # Check if target or SL is hit
+        if pos['direction'] == 'CALL':
+            # For CALL: Target is resistance, SL is support - 8
+            target_hit = current_spot >= pos['target']
+            sl_hit = current_spot <= pos['sl']
+        else:  # PUT
+            # For PUT: Target is support, SL is resistance + 8
+            target_hit = current_spot <= pos['target']
+            sl_hit = current_spot >= pos['sl']
+
+        if target_hit:
+            st.success(f"🎯 TARGET HIT for {pos['index']} {pos['direction']} | Order ID: {order_id}")
+            positions_to_exit.append((order_id, 'target'))
+        elif sl_hit:
+            st.error(f"🛑 STOP LOSS HIT for {pos['index']} {pos['direction']} | Order ID: {order_id}")
+            positions_to_exit.append((order_id, 'stoploss'))
+
+    # Display tracked positions
+    if not st.session_state.active_positions:
+        st.info("No active positions tracked. Execute a trade from the Active Signals tab.")
+    else:
+        active_count = sum(1 for p in st.session_state.active_positions.values() if p['status'] == 'active')
+        st.info(f"📊 Tracking {active_count} active position(s)")
+
+        for order_id, pos in st.session_state.active_positions.items():
+            if pos['status'] != 'active':
+                continue
+
+            with st.container():
+                # Position header
+                st.subheader(f"{pos['index']} {pos['direction']} - {pos['option_type']}")
+
+                # Get current spot price
+                current_spot = nifty_spot if pos['index'] == 'NIFTY' else sensex_spot
+
+                # Calculate distance to target and SL
+                if pos['direction'] == 'CALL':
+                    dist_to_target = pos['target'] - current_spot
+                    dist_to_sl = current_spot - pos['sl']
+                else:
+                    dist_to_target = current_spot - pos['target']
+                    dist_to_sl = pos['sl'] - current_spot
+
+                # Create columns for display
+                col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+
+                with col1:
+                    st.metric(
+                        label="Current Spot",
+                        value=f"{current_spot:.2f}",
+                        delta=f"Entry: {pos['entry']:.2f}"
+                    )
+                    st.write(f"**Strike:** {pos['strike']} {pos['option_type']}")
+                    st.write(f"**Quantity:** {pos['quantity']}")
+
+                with col2:
+                    target_color = "green" if dist_to_target >= 0 else "orange"
+                    st.metric(
+                        label="🎯 Target",
+                        value=f"{pos['target']:.2f}",
+                        delta=f"{dist_to_target:+.2f} pts away"
+                    )
+                    if pos['direction'] == 'CALL':
+                        st.caption("Trigger: When spot reaches resistance (VOB/HTF)")
+                    else:
+                        st.caption("Trigger: When spot reaches support (VOB/HTF)")
+
+                with col3:
+                    sl_color = "red" if dist_to_sl <= 0 else "green"
+                    st.metric(
+                        label="🛑 Stop Loss",
+                        value=f"{pos['sl']:.2f}",
+                        delta=f"{dist_to_sl:+.2f} pts away"
+                    )
+                    if pos['direction'] == 'CALL':
+                        st.caption("Support - 8 points")
+                    else:
+                        st.caption("Resistance + 8 points")
+
+                with col4:
+                    st.write("")  # Spacer
+                    st.write("")  # Spacer
+                    if st.button("❌ Exit", key=f"exit_{order_id}", type="secondary"):
+                        # Exit position
+                        if DEMO_MODE:
+                            st.session_state.active_positions[order_id]['status'] = 'closed'
+                            st.success("✅ Position exited (DEMO MODE)")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            from dhan_api import DhanAPI
+                            dhan = DhanAPI()
+                            result = dhan.exit_position(order_id)
+                            if result['success']:
+                                st.session_state.active_positions[order_id]['status'] = 'closed'
+                                st.success("✅ Position exited successfully!")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Exit failed: {result.get('error', 'Unknown error')}")
+
+                # Progress bar for position
+                entry_to_target = abs(pos['target'] - pos['entry'])
+                current_progress = abs(current_spot - pos['entry'])
+                progress = min(current_progress / entry_to_target, 1.0) if entry_to_target > 0 else 0
+
+                st.progress(progress, text=f"Progress to Target: {progress*100:.1f}%")
+
+                # Status indicators
+                status_col1, status_col2 = st.columns(2)
+                with status_col1:
+                    if dist_to_target <= 5:
+                        st.warning(f"⚠️ Near Target ({dist_to_target:.2f} pts)")
+                with status_col2:
+                    if dist_to_sl <= 5:
+                        st.error(f"⚠️ Near Stop Loss ({dist_to_sl:.2f} pts)")
+
+                st.divider()
+
+    # Auto-exit positions
+    if positions_to_exit:
+        for order_id, exit_reason in positions_to_exit:
+            st.info(f"Auto-exiting position {order_id} due to {exit_reason}...")
+
+            if not DEMO_MODE:
+                from dhan_api import DhanAPI
+                dhan = DhanAPI()
+                result = dhan.exit_position(order_id)
+
+                if result['success']:
+                    st.session_state.active_positions[order_id]['status'] = 'closed'
+                    st.success(f"✅ Position auto-exited: {exit_reason}")
+                else:
+                    st.error(f"❌ Auto-exit failed: {result.get('error')}")
+            else:
+                st.session_state.active_positions[order_id]['status'] = 'closed'
+                st.success(f"✅ Position auto-exited (DEMO): {exit_reason}")
+
+        time.sleep(2)
+        st.rerun()
+
+    # Show API positions (if not DEMO_MODE)
+    if not DEMO_MODE:
+        st.markdown("---")
+        st.subheader("📡 Live Positions from Dhan API")
+
+        from dhan_api import DhanAPI
+        try:
+            dhan = DhanAPI()
+            positions_result = dhan.get_positions()
+
+            if positions_result['success']:
+                positions = positions_result['positions']
+
+                if not positions:
+                    st.info("No live positions from API")
+                else:
+                    for idx, pos in enumerate(positions):
+                        with st.container():
+                            col1, col2, col3 = st.columns([3, 2, 1])
+
+                            with col1:
+                                st.write(f"**Symbol:** {pos.get('tradingSymbol', 'N/A')}")
+                                st.write(f"**Quantity:** {pos.get('netQty', 0)}")
+
+                            with col2:
+                                pnl = pos.get('unrealizedProfit', 0)
+                                pnl_color = "green" if pnl > 0 else "red"
+                                st.markdown(f"**P&L:** <span style='color:{pnl_color}'>₹{pnl:,.2f}</span>", unsafe_allow_html=True)
+
+                            with col3:
+                                # Use index and trading symbol for unique key to avoid duplicate key errors
+                                unique_key = f"exit_api_{idx}_{pos.get('tradingSymbol', 'pos')}"
+                                if st.button("❌ Exit", key=unique_key):
+                                    result = dhan.exit_position(pos.get('orderId'))
+                                    if result['success']:
+                                        st.success("Position exited!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Exit failed")
+
+                            st.divider()
+            else:
+                st.error(f"Failed to fetch positions: {positions_result.get('error')}")
+
+        except Exception as e:
+            st.error(f"Error fetching API positions: {e}")
+    else:
+        st.info("🧪 DEMO MODE - Connect to Dhan API to see live positions")
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 5: BIAS ANALYSIS PRO
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab5:
     st.header("🎯 Comprehensive Bias Analysis Pro")
     st.caption("13 Bias Indicators with Adaptive Weighted Scoring | 🔄 Auto-refreshing every 60 seconds")
 
@@ -1429,10 +1921,10 @@ with tab4:
         """)
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 5: ADVANCED CHART ANALYSIS (LAZY LOAD)
+# TAB 6: ADVANCED CHART ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════
 
-with tab5:
+with tab6:
     st.header("📈 Advanced Chart Analysis")
     st.caption("TradingView-style Chart with Advanced Indicators: Volume Bars, Volume Order Blocks, HTF Support/Resistance (3min, 5min, 10min, 15min levels), Volume Footprint (1D timeframe, 10 bins, Dynamic POC), Ultimate RSI, OM Indicator (Order Flow & Momentum), Advanced Price Action (BOS, CHOCH, Fibonacci, Geometric Patterns)")
 
@@ -3543,9 +4035,214 @@ with tab5:
         st.error(f"Error loading multi-timeframe analysis: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
+# TAB 7: NIFTY OPTION SCREENER V7.0 (AUTO-LOAD WITH SMART CACHING)
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab7:
+    st.header("🎯 NIFTY Option Screener v7.0")
+    st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
+
+    # Auto-load the Option Screener
+    try:
+        from NiftyOptionScreener import render_nifty_option_screener
+        render_nifty_option_screener()
+    except ImportError as e:
+        st.error(f"❌ Failed to load Nifty Option Screener v7.0: {e}")
+        st.info("Please ensure NiftyOptionScreener.py is in the project directory")
+    except Exception as e:
+        st.error(f"❌ Error rendering Nifty Option Screener: {e}")
+        st.exception(e)
+
+    # Force clean tab completion to ensure tabs 8 & 9 render
+    st.write("")
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 8: ENHANCED MARKET DATA
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab8:
+    st.markdown("# 🌐 Enhanced Market Data Analysis")
+    st.markdown("### ✅ Tab 8 LOADED")
+    st.write("=" * 50)
+    st.info("If you see this, tab 8 is working!")
+    st.write("=" * 50)
+
+    try:
+        st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
+
+        # DISABLED AUTO-FETCH - Only fetch when user clicks Refresh
+        # This prevents tab from hanging when Dhan API is down (holidays, weekends)
+        # Auto-fetch code commented out to prevent blank tabs
+
+        # Control buttons
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
+                with st.spinner("Refreshing market data..."):
+                    try:
+                        from enhanced_market_data import get_enhanced_market_data
+                        enhanced_data = get_enhanced_market_data()
+                        st.session_state.enhanced_market_data = enhanced_data
+                        st.success("✅ Data refreshed successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed to refresh data: {e}")
+
+        with col2:
+            if 'enhanced_market_data' in st.session_state:
+                data = st.session_state.enhanced_market_data
+                st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
+
+        # Display enhanced market data if available
+        if 'enhanced_market_data' in st.session_state:
+            try:
+                from enhanced_market_display import render_enhanced_market_data_tab
+                render_enhanced_market_data_tab(st.session_state.enhanced_market_data)
+            except Exception as e:
+                st.error(f"❌ Error displaying enhanced data: {e}")
+                import traceback
+                st.error(traceback.format_exc())
+        else:
+            st.info("""
+            ℹ️ Enhanced market data will auto-load on first visit and refresh every 5 minutes.
+
+            **Data Sources:**
+            - 📊 **Dhan API:** India VIX, All Sector Indices (IT, Auto, Pharma, Metal, FMCG, Realty, Energy)
+            - 🌍 **Yahoo Finance:** Global Markets (S&P 500, Nasdaq, Dow, Nikkei, Hang Seng, etc.)
+            - 💰 **Intermarket:** USD Index, Crude Oil, Gold, USD/INR, US 10Y Treasury, Bitcoin
+
+            **Advanced Analysis:**
+            - ⚡ **India VIX Analysis:** Fear & Greed Index with sentiment scoring
+            - 🏢 **Sector Rotation Model:** Identify market leadership and rotation patterns
+            - 🎯 **Gamma Squeeze Detection:** Option market makers hedging analysis
+            - ⏰ **Intraday Seasonality:** Time-based trading recommendations
+            - 🌐 **Global Correlation:** How worldwide markets affect Indian markets
+
+            **All data is presented in comprehensive tables with bias scores and trading insights!**
+            """)
+    except Exception as e:
+        st.error(f"❌ Critical error in Enhanced Market Data tab: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 9: NSE STOCK SCREENER
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab9:
+    st.markdown("# 🔍 NSE Stock Screener")
+
+    # LAZY LOADING - Only load when user clicks button (performance fix)
+    if st.button("🔄 Load Stock Screener", type="primary", key="load_screener_btn"):
+        st.session_state.load_stock_screener = True
+
+    if st.session_state.get('load_stock_screener', False):
+        try:
+            with st.spinner("Loading stock screener..."):
+                from nse_stock_screener_dhan import render_nse_stock_screener_tab
+                render_nse_stock_screener_tab()
+        except Exception as e:
+            st.error(f"❌ Error loading NSE Stock Screener: {e}")
+            st.info("Ensure nse_stock_screener_dhan.py exists and all dependencies are installed.")
+    else:
+        st.info("👆 Click 'Load Stock Screener' to start screening NSE stocks.")
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 10: NIFTY FUTURES ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab10:
+    st.markdown("# 📈 NIFTY Futures Analysis")
+
+    # LAZY LOADING - Only fetch when user clicks button (performance fix)
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        load_futures = st.button("🔄 Load Futures Data", type="primary", key="load_futures_btn")
+    with col2:
+        if 'futures_data_cache' in st.session_state:
+            st.caption("✅ Data loaded - Click to refresh")
+
+    if load_futures or 'futures_data_cache' in st.session_state:
+        try:
+            from src.nifty_futures_ui import render_nifty_futures_dashboard
+
+            spot_price = nifty_data.get('spot_price', 25000.0)
+            futures_data = None
+
+            # Only fetch if button clicked (not from cache)
+            if load_futures:
+                with st.spinner("Loading futures data..."):
+                    try:
+                        from dhan_data_fetcher import get_nifty_futures_data
+                        futures_result = get_nifty_futures_data()
+
+                        if futures_result.get('spot_price'):
+                            spot_price = futures_result['spot_price']
+
+                        if futures_result.get('success'):
+                            futures_data = {
+                                'current_month': futures_result.get('current_month', {}),
+                                'next_month': futures_result.get('next_month', {}),
+                                'data_source': futures_result.get('data_source', 'unknown')
+                            }
+                            st.session_state.futures_data_cache = futures_data
+                            st.session_state.futures_spot_cache = spot_price
+                            st.success("✅ Futures data loaded!")
+                    except Exception as e:
+                        st.warning(f"Could not fetch futures data: {e}")
+            else:
+                # Use cached data
+                futures_data = st.session_state.get('futures_data_cache')
+                spot_price = st.session_state.get('futures_spot_cache', spot_price)
+
+            option_chain_data = st.session_state.get('option_chain')
+
+            render_nifty_futures_dashboard(
+                spot_price=spot_price,
+                futures_data=futures_data,
+                participant_data=None,
+                option_chain_data=option_chain_data,
+                historical_data=None
+            )
+
+        except ImportError as e:
+            st.error(f"❌ Error importing NIFTY Futures UI: {e}")
+            st.info("Required: src/nifty_futures_ui.py, src/nifty_futures_analyzer.py")
+        except Exception as e:
+            st.error(f"❌ Error loading NIFTY Futures Analysis: {e}")
+    else:
+        st.info("👆 Click 'Load Futures Data' to view NIFTY Futures analysis.")
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 11: AI TRAINING & MODEL MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab11:
+    st.markdown("# 🤖 AI Training & Model Management")
+    st.caption("Train XGBoost models on real trading data | Track predictions & outcomes | Manage model versions")
+
+    # LAZY LOADING - Only load when user clicks button (performance fix)
+    if st.button("🔄 Load AI Training Dashboard", type="primary", key="load_ai_training_btn"):
+        st.session_state.load_ai_training = True
+
+    if st.session_state.get('load_ai_training', False):
+        try:
+            with st.spinner("Loading AI Training dashboard..."):
+                from src.ai_training_ui import render_ai_training_dashboard
+                render_ai_training_dashboard()
+        except ImportError as e:
+            st.error(f"❌ AI Training module not available: {e}")
+            st.info("Required: src/ai_training_ui.py, src/training_data_collector.py, src/model_trainer_pipeline.py")
+        except Exception as e:
+            st.error(f"❌ Error loading AI Training: {e}")
+    else:
+        st.info("👆 Click 'Load AI Training Dashboard' to access AI model training and management.")
+
+# ═══════════════════════════════════════════════════════════════════════
 # FOOTER
 # ═══════════════════════════════════════════════════════════════════════
 
 st.divider()
-st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: {session_refresh_interval}s ({current_session.name.replace('_', ' ').title()})")
+st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: {AUTO_REFRESH_INTERVAL}s")
 st.caption(f"🤖 AI Market Analysis: Runs every 30 minutes during market hours | Last AI analysis: {datetime.fromtimestamp(st.session_state.last_ai_analysis_time).strftime('%H:%M:%S') if st.session_state.last_ai_analysis_time > 0 else 'Never'}")
