@@ -462,8 +462,7 @@ with col_refresh2:
         st.session_state.clear()
         st.rerun()
 
-from datetime import datetime
-current_time_ist = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+current_time_ist = get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S')
 st.markdown(f"<div style='text-align: center; margin: 10px 0;'><small>⏱️ Auto-refresh: Every 5 minutes | ⏰ Last refresh: {current_time_ist} IST</small></div>", unsafe_allow_html=True)
 st.markdown("---")
 
