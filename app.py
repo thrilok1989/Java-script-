@@ -2660,15 +2660,25 @@ with tab6:
                                 # Only send if bias changed or significant new signals
                                 if 'last_ict_alert' not in st.session_state or \
                                    st.session_state.get('last_ict_bias') != overall_bias:
+                                    # Force reload telegram_alerts to get new method
+                                    import telegram_alerts
+                                    import importlib
+                                    importlib.reload(telegram_alerts)
                                     from telegram_alerts import TelegramBot
+
                                     telegram = TelegramBot()
                                     current_price = st.session_state.chart_data['close'].iloc[-1]
 
-                                    alert_sent = telegram.send_ict_indicator_alert(
-                                        symbol=symbol_code.split()[0],
-                                        ict_signals=signals,
-                                        current_price=current_price
-                                    )
+                                    # Check if method exists
+                                    if hasattr(telegram, 'send_ict_indicator_alert'):
+                                        alert_sent = telegram.send_ict_indicator_alert(
+                                            symbol=symbol_code.split()[0],
+                                            ict_signals=signals,
+                                            current_price=current_price
+                                        )
+                                    else:
+                                        st.error("🔄 Please restart the app to enable Telegram alerts for ICT indicator")
+                                        alert_sent = False
 
                                     if alert_sent:
                                         st.session_state.last_ict_alert = get_current_time_ist()
