@@ -314,18 +314,36 @@ class SmartAlertSystem:
             if cvd_result:
                 score = cvd_result.get('score', 50)
                 institutional_activity = cvd_result.get('institutional_activity', 'NONE')
+                smart_money_direction = cvd_result.get('smart_money_direction', 'UNKNOWN')
 
                 # Alert on significant divergence
                 if institutional_activity in ['ACCUMULATION', 'DISTRIBUTION']:
                     if self._can_send_alert('cvd_divergence'):
                         direction = 'BULLISH' if institutional_activity == 'ACCUMULATION' else 'BEARISH'
 
+                        # Cross-reference with option block activity if available
+                        block_result = st.session_state.get('block_trade_result', {})
+                        option_context = ""
+                        if block_result:
+                            call_blocks = block_result.get('call_blocks', 0)
+                            put_blocks = block_result.get('put_blocks', 0)
+                            if call_blocks > 0 or put_blocks > 0:
+                                # Check if options confirm or contradict CVD
+                                if direction == 'BULLISH' and call_blocks > put_blocks:
+                                    option_context = f"\n✓ Confirmed by CALL blocks ({call_blocks})"
+                                elif direction == 'BULLISH' and put_blocks > call_blocks:
+                                    option_context = f"\n⚠ Contradicted by PUT blocks ({put_blocks})"
+                                elif direction == 'BEARISH' and put_blocks > call_blocks:
+                                    option_context = f"\n✓ Confirmed by PUT blocks ({put_blocks})"
+                                elif direction == 'BEARISH' and call_blocks > put_blocks:
+                                    option_context = f"\n⚠ Contradicted by CALL blocks ({call_blocks})"
+
                         alerts.append(Alert(
                             alert_id=self._generate_alert_id(),
                             alert_type='CVD_DIVERGENCE',
                             priority='MEDIUM',
                             title=f'💎 CVD: {institutional_activity}',
-                            message=f"Institutional {institutional_activity} detected!\nCVD Score: {score:.0f}\nSmart Money: {cvd_result.get('smart_money_direction', 'UNKNOWN')}",
+                            message=f"Institutional {institutional_activity} detected!\nCVD Score: {score:.0f}\nSmart Money: {smart_money_direction}{option_context}",
                             value=score,
                             threshold=self.config.cvd_divergence_threshold,
                             direction=direction,
@@ -350,16 +368,37 @@ class SmartAlertSystem:
             if block_result:
                 activity_level = block_result.get('activity_level', 'NONE')
                 institutional_bias = block_result.get('institutional_bias', 'NEUTRAL')
+                call_blocks = block_result.get('call_blocks', 0)
+                put_blocks = block_result.get('put_blocks', 0)
+                bullish_blocks = block_result.get('bullish_blocks', 0)
+                bearish_blocks = block_result.get('bearish_blocks', 0)
 
                 if activity_level in ['HEAVY', 'MODERATE'] and self._can_send_alert('block_trade'):
-                    direction = 'BULLISH' if institutional_bias == 'ACCUMULATING' else 'BEARISH'
+                    # Determine direction based on CALL vs PUT accumulation
+                    # CALL accumulation = BULLISH, PUT accumulation = BEARISH
+                    if call_blocks > put_blocks:
+                        direction = 'BULLISH'
+                        dominant_type = 'CALL'
+                    elif put_blocks > call_blocks:
+                        direction = 'BEARISH'
+                        dominant_type = 'PUT'
+                    else:
+                        # If equal or no option type data, use institutional bias
+                        direction = 'BULLISH' if institutional_bias == 'ACCUMULATING' else 'BEARISH'
+                        dominant_type = 'MIXED'
+
+                    # Build message with CALL/PUT breakdown
+                    if call_blocks > 0 or put_blocks > 0:
+                        option_info = f"\nCALL Blocks: {call_blocks}\nPUT Blocks: {put_blocks}"
+                    else:
+                        option_info = f"\nBullish Blocks: {bullish_blocks}\nBearish Blocks: {bearish_blocks}"
 
                     alerts.append(Alert(
                         alert_id=self._generate_alert_id(),
                         alert_type='BLOCK_TRADE',
                         priority='MEDIUM',
                         title=f'📦 Block Trade: {activity_level}',
-                        message=f"Institutional {institutional_bias}\nBullish Blocks: {block_result.get('bullish_blocks', 0)}\nBearish Blocks: {block_result.get('bearish_blocks', 0)}\nTotal Volume: {block_result.get('total_volume', 0):,}",
+                        message=f"Institutional {institutional_bias}{option_info}\nTotal Volume: {block_result.get('total_volume', 0):,}",
                         value=block_result.get('score', 50),
                         threshold=50,
                         direction=direction,

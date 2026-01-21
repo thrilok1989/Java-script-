@@ -42,6 +42,7 @@ class BlockTrade:
     confidence: float  # 0-100
     detection_method: str  # 'VOLUME_SPIKE', 'OI_CHANGE', 'DEPTH_SWEEP', 'TAPE_READ'
     description: str
+    option_type: str = 'UNKNOWN'  # 'CALL', 'PUT', 'UNKNOWN' - for option trades
 
 
 @dataclass
@@ -66,6 +67,8 @@ class BlockTradeAnalysis:
     total_block_volume: int
     bullish_blocks: int
     bearish_blocks: int
+    call_blocks: int  # Number of CALL option blocks
+    put_blocks: int  # Number of PUT option blocks
     score: float  # 0-100 composite score
     description: str
 
@@ -220,7 +223,8 @@ class BlockTradeDetector:
                             strength=strength,
                             confidence=min(85, strength * 0.9),
                             detection_method='OI_CHANGE',
-                            description=desc
+                            description=desc,
+                            option_type='CALL'
                         ))
 
                     # Check for large PE OI change (block)
@@ -247,7 +251,8 @@ class BlockTradeDetector:
                             strength=strength,
                             confidence=min(85, strength * 0.9),
                             detection_method='OI_CHANGE',
-                            description=desc
+                            description=desc,
+                            option_type='PUT'
                         ))
 
                 except Exception:
@@ -478,6 +483,8 @@ class BlockTradeDetector:
             # Calculate statistics
             bullish_blocks = sum(1 for b in all_blocks if b.direction == 'BULLISH')
             bearish_blocks = sum(1 for b in all_blocks if b.direction == 'BEARISH')
+            call_blocks = sum(1 for b in all_blocks if b.option_type == 'CALL')
+            put_blocks = sum(1 for b in all_blocks if b.option_type == 'PUT')
             total_volume = sum(b.estimated_size for b in all_blocks)
             avg_size = total_volume // len(all_blocks) if all_blocks else 0
 
@@ -512,6 +519,8 @@ class BlockTradeDetector:
                 total_block_volume=total_volume,
                 bullish_blocks=bullish_blocks,
                 bearish_blocks=bearish_blocks,
+                call_blocks=call_blocks,
+                put_blocks=put_blocks,
                 score=score,
                 description=description
             )
