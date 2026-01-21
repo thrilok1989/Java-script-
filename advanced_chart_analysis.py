@@ -21,6 +21,7 @@ from indicators.advanced_price_action import AdvancedPriceAction
 from indicators.money_flow_profile import MoneyFlowProfile
 from indicators.deltaflow_volume_profile import DeltaFlowVolumeProfile
 from indicators.reversal_probability_zones import ReversalProbabilityZones
+from indicators.comprehensive_ict_indicator import ComprehensiveICTIndicator
 from dhan_data_fetcher import DhanDataFetcher
 from config import get_dhan_credentials
 
@@ -153,10 +154,12 @@ class AdvancedChartAnalysis:
                              show_money_flow_profile=False, show_deltaflow_profile=False,
                              show_bos=False, show_choch=False, show_fibonacci=False,
                              show_patterns=False, show_reversal_zones=True,
+                             show_ict_indicator=False,
                              vob_params=None, htf_params=None, footprint_params=None,
                              rsi_params=None, om_params=None, liquidity_params=None,
                              money_flow_params=None, deltaflow_params=None,
-                             price_action_params=None, reversal_zones_params=None):
+                             price_action_params=None, reversal_zones_params=None,
+                             ict_params=None):
         """
         Create advanced chart with all indicators
 
@@ -255,6 +258,13 @@ class AdvancedChartAnalysis:
                 else:
                     reversal_zones_indicator = ReversalProbabilityZones(swing_length=20, max_reversals=1000)
 
+            ict_indicator = None
+            if show_ict_indicator:
+                if ict_params:
+                    ict_indicator = ComprehensiveICTIndicator(**ict_params)
+                else:
+                    ict_indicator = ComprehensiveICTIndicator()
+
             # Calculate all indicators
             rsi_data = ultimate_rsi.get_signals(df) if ultimate_rsi else None
             om_data = om_indicator.calculate(df) if om_indicator else None
@@ -263,6 +273,7 @@ class AdvancedChartAnalysis:
             deltaflow_data = deltaflow_indicator.calculate(df) if deltaflow_indicator else None
             price_action_data = price_action_indicator.analyze(df) if price_action_indicator else None
             reversal_zones_data = reversal_zones_indicator.calculate(df) if reversal_zones_indicator else None
+            ict_data = ict_indicator.calculate(df) if ict_indicator else None
         except Exception as e:
             raise Exception(f"Error calculating indicators: {str(e)}")
 
@@ -351,6 +362,10 @@ class AdvancedChartAnalysis:
         # NEW: Add DeltaFlow Volume Profile
         if show_deltaflow_profile and deltaflow_data and deltaflow_data.get('success'):
             self._add_deltaflow_profile(fig, df, deltaflow_data, deltaflow_indicator, row=price_row, col=1)
+
+        # NEW: Add Comprehensive ICT Indicator
+        if show_ict_indicator and ict_data:
+            self._add_ict_indicator(fig, df, ict_data, row=price_row, col=1)
 
         # Add Advanced Price Action Features
         if price_action_data and price_action_data.get('success'):
@@ -1255,3 +1270,235 @@ class AdvancedChartAnalysis:
             yanchor='bottom',
             row=row, col=col
         )
+
+    def _add_ict_indicator(self, fig, df, ict_data, row, col):
+        """Add Comprehensive ICT Indicator to chart"""
+        if not ict_data:
+            return
+
+        # Get chart time range
+        x_start = df.index[0]
+        x_end = df.index[-1]
+
+        # Add Order Blocks (Swing)
+        for ob in ict_data.get('swing_order_blocks', []):
+            color = 'rgba(49, 121, 245, 0.2)' if ob.bias == 1 else 'rgba(242, 54, 69, 0.2)'
+            border_color = 'rgba(49, 121, 245, 0.8)' if ob.bias == 1 else 'rgba(242, 54, 69, 0.8)'
+            
+            fig.add_shape(
+                type="rect",
+                x0=ob.bar_time,
+                x1=x_end,
+                y0=ob.bar_low,
+                y1=ob.bar_high,
+                fillcolor=color,
+                line=dict(color=border_color, width=2),
+                layer="below",
+                row=row, col=col
+            )
+            
+            # Add OB label
+            fig.add_annotation(
+                x=ob.bar_time,
+                y=(ob.bar_high + ob.bar_low) / 2,
+                text="OB",
+                showarrow=False,
+                font=dict(size=10, color='white'),
+                bgcolor=border_color,
+                row=row, col=col
+            )
+
+        # Add Order Blocks (Internal)
+        for ob in ict_data.get('internal_order_blocks', []):
+            color = 'rgba(38, 186, 159, 0.15)' if ob.bias == 1 else 'rgba(186, 38, 70, 0.15)'
+            border_color = 'rgba(38, 186, 159, 0.6)' if ob.bias == 1 else 'rgba(186, 38, 70, 0.6)'
+            
+            fig.add_shape(
+                type="rect",
+                x0=ob.bar_time,
+                x1=x_end,
+                y0=ob.bar_low,
+                y1=ob.bar_high,
+                fillcolor=color,
+                line=dict(color=border_color, width=1, dash='dot'),
+                layer="below",
+                row=row, col=col
+            )
+
+        # Add Fair Value Gaps
+        for fvg in ict_data.get('fvgs', []):
+            color = 'rgba(0, 255, 0, 0.1)' if fvg.gap_type == 'bullish' else 'rgba(255, 0, 0, 0.1)'
+            border_color = 'rgba(0, 255, 0, 0.5)' if fvg.gap_type == 'bullish' else 'rgba(255, 0, 0, 0.5)'
+            
+            # Find the start time from the dataframe
+            if fvg.start_index < len(df):
+                fvg_start_time = df.index[fvg.start_index]
+                
+                fig.add_shape(
+                    type="rect",
+                    x0=fvg_start_time,
+                    x1=x_end,
+                    y0=fvg.bottom,
+                    y1=fvg.top,
+                    fillcolor=color,
+                    line=dict(color=border_color, width=1),
+                    layer="below",
+                    row=row, col=col
+                )
+                
+                # Add FVG label
+                fig.add_annotation(
+                    x=fvg_start_time,
+                    y=(fvg.top + fvg.bottom) / 2,
+                    text="FVG",
+                    showarrow=False,
+                    font=dict(size=9, color='white'),
+                    bgcolor=border_color,
+                    row=row, col=col
+                )
+
+        # Add Supply Zones
+        for zone in ict_data.get('supply_zones', []):
+            if zone.left_index < len(df):
+                zone_start_time = df.index[zone.left_index]
+                
+                fig.add_shape(
+                    type="rect",
+                    x0=zone_start_time,
+                    x1=x_end,
+                    y0=zone.bottom,
+                    y1=zone.top,
+                    fillcolor='rgba(236, 4, 4, 0.1)',
+                    line=dict(color='rgba(236, 4, 4, 0.5)', width=1),
+                    layer="below",
+                    row=row, col=col
+                )
+                
+                # Add POI line
+                fig.add_shape(
+                    type="line",
+                    x0=zone_start_time,
+                    x1=x_end,
+                    y0=zone.poi,
+                    y1=zone.poi,
+                    line=dict(color='rgba(236, 4, 4, 0.7)', width=2, dash='dot'),
+                    row=row, col=col
+                )
+                
+                # Add Supply label
+                fig.add_annotation(
+                    x=zone_start_time,
+                    y=zone.top,
+                    text="SUPPLY",
+                    showarrow=False,
+                    font=dict(size=9, color='white'),
+                    bgcolor='rgba(236, 4, 4, 0.7)',
+                    row=row, col=col
+                )
+
+        # Add Demand Zones
+        for zone in ict_data.get('demand_zones', []):
+            if zone.left_index < len(df):
+                zone_start_time = df.index[zone.left_index]
+                
+                fig.add_shape(
+                    type="rect",
+                    x0=zone_start_time,
+                    x1=x_end,
+                    y0=zone.bottom,
+                    y1=zone.top,
+                    fillcolor='rgba(8, 149, 48, 0.1)',
+                    line=dict(color='rgba(8, 149, 48, 0.5)', width=1),
+                    layer="below",
+                    row=row, col=col
+                )
+                
+                # Add POI line
+                fig.add_shape(
+                    type="line",
+                    x0=zone_start_time,
+                    x1=x_end,
+                    y0=zone.poi,
+                    y1=zone.poi,
+                    line=dict(color='rgba(8, 149, 48, 0.7)', width=2, dash='dot'),
+                    row=row, col=col
+                )
+                
+                # Add Demand label
+                fig.add_annotation(
+                    x=zone_start_time,
+                    y=zone.bottom,
+                    text="DEMAND",
+                    showarrow=False,
+                    font=dict(size=9, color='white'),
+                    bgcolor='rgba(8, 149, 48, 0.7)',
+                    row=row, col=col
+                )
+
+        # Add POC (Point of Control) from Volume Profile
+        poc_price = ict_data.get('poc_price', 0)
+        if poc_price > 0:
+            fig.add_shape(
+                type="line",
+                x0=x_start,
+                x1=x_end,
+                y0=poc_price,
+                y1=poc_price,
+                line=dict(color='rgba(255, 235, 59, 0.8)', width=3),
+                row=row, col=col
+            )
+            
+            # Add POC label
+            fig.add_annotation(
+                x=x_end,
+                y=poc_price,
+                text=f"POC: {poc_price:.2f}",
+                showarrow=False,
+                font=dict(size=10, color='white'),
+                bgcolor='rgba(255, 235, 59, 0.8)',
+                xanchor='left',
+                row=row, col=col
+            )
+
+        # Add Volume Profile visualization (histogram on right side)
+        volume_profile = ict_data.get('volume_profile', [])
+        if volume_profile:
+            # Find max volume for scaling
+            max_volume = max(row.total_volume for row in volume_profile) if volume_profile else 1
+            
+            # Calculate histogram width (5% of time range)
+            time_range = (x_end - x_start).total_seconds()
+            hist_width = pd.Timedelta(seconds=time_range * 0.05)
+            
+            for vp_row in volume_profile:
+                if vp_row.total_volume > 0:
+                    # Calculate bar width based on volume
+                    bar_width = (vp_row.total_volume / max_volume) * hist_width
+                    
+                    # Add bullish volume
+                    if vp_row.bull_volume > 0:
+                        bull_width = (vp_row.bull_volume / vp_row.total_volume) * bar_width
+                        fig.add_shape(
+                            type="rect",
+                            x0=x_end,
+                            x1=x_end + bull_width,
+                            y0=vp_row.bottom,
+                            y1=vp_row.top,
+                            fillcolor='rgba(0, 255, 0, 0.3)',
+                            line=dict(width=0),
+                            row=row, col=col
+                        )
+                    
+                    # Add bearish volume
+                    if vp_row.bear_volume > 0:
+                        bear_width = (vp_row.bear_volume / vp_row.total_volume) * bar_width
+                        fig.add_shape(
+                            type="rect",
+                            x0=x_end + bull_width,
+                            x1=x_end + bull_width + bear_width,
+                            y0=vp_row.bottom,
+                            y1=vp_row.top,
+                            fillcolor='rgba(255, 0, 0, 0.3)',
+                            line=dict(width=0),
+                            row=row, col=col
+                        )
