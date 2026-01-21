@@ -2183,7 +2183,7 @@ with tab6:
         show_reversal_zones = st.checkbox("🎯 Reversal Probability Zones (LuxAlgo)", value=True, key="show_reversal_zones", help="Statistical reversal prediction with probability targets")
 
     with col2:
-        show_ict_indicator = st.checkbox("🎯 ICT Comprehensive Indicator", value=False, key="show_ict_indicator", help="Order Blocks, Fair Value Gaps, Supply/Demand Zones, Volume Profile with POC")
+        show_ict_indicator = st.checkbox("🎯 ICT Comprehensive Indicator", value=True, key="show_ict_indicator", help="Order Blocks, Fair Value Gaps, Supply/Demand Zones, Volume Profile with POC")
 
     st.divider()
 
