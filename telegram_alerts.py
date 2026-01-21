@@ -487,21 +487,6 @@ Sellers/buyers absorbing all pressure
         
         return await self.send_message_async(text.strip())
 
-
-def send_test_message():
-    """Send test message to verify Telegram setup"""
-    bot = TelegramBot()
-    if bot.enabled:
-        message = """
-✅ <b>Telegram Connected!</b>
-
-Your trading alerts are now active.
-
-<b>Test Time (IST):</b> """ + get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')
-        return bot.send_message(message.strip())
-    return False
-
-
     def send_ict_indicator_alert(self, symbol: str, ict_signals: dict, current_price: float) -> bool:
         """
         Send ICT Comprehensive Indicator alert with all detected signals
@@ -574,6 +559,20 @@ Your trading alerts are now active.
 📊 Open app for full chart visualization
         """
         return self.send_message(message.strip())
+
+
+def send_test_message():
+    """Send test message to verify Telegram setup"""
+    bot = TelegramBot()
+    if bot.enabled:
+        message = """
+✅ <b>Telegram Connected!</b>
+
+Your trading alerts are now active.
+
+<b>Test Time (IST):</b> """ + get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')
+        return bot.send_message(message.strip())
+    return False
 
 
 # Async wrapper function for backward compatibility
