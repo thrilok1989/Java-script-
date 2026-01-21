@@ -30,8 +30,6 @@ from data_cache_manager import (
     get_cached_sensex_data,
     get_cached_bias_analysis_results
 )
-from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
-from src.market_structure_ui import render_market_structure_section, render_structure_widget
 
 # Import tab modules at startup for instant tab switching (no import delay on tab click)
 # Now safe to do this after fixing all st.stop() calls in NiftyOptionScreener.py
@@ -404,38 +402,29 @@ if 'signal_monitor_started' not in st.session_state:
         print(f"❌ Failed to start signal monitor: {e}")
 
 # NSE Options Analyzer - Initialize instruments session state
+# Optimized: Only NIFTY (removed 7 other instruments for faster loading)
 NSE_INSTRUMENTS = {
     'indices': {
-        'NIFTY': {'lot_size': 75, 'zone_size': 20, 'atm_range': 200},
-        'BANKNIFTY': {'lot_size': 25, 'zone_size': 100, 'atm_range': 500},
-        'SENSEX': {'lot_size': 10, 'zone_size': 50, 'atm_range': 300},
-        'NIFTY IT': {'lot_size': 50, 'zone_size': 50, 'atm_range': 300},
-        'NIFTY AUTO': {'lot_size': 50, 'zone_size': 50, 'atm_range': 300}
-    },
-    'stocks': {
-        'TCS': {'lot_size': 150, 'zone_size': 30, 'atm_range': 150},
-        'RELIANCE': {'lot_size': 250, 'zone_size': 40, 'atm_range': 200},
-        'HDFCBANK': {'lot_size': 550, 'zone_size': 50, 'atm_range': 250}
+        'NIFTY': {'lot_size': 75, 'zone_size': 20, 'atm_range': 200}
     }
 }
 
-# Initialize session states for all NSE instruments
-for category in NSE_INSTRUMENTS:
-    for instrument in NSE_INSTRUMENTS[category]:
-        if f'{instrument}_price_data' not in st.session_state:
-            st.session_state[f'{instrument}_price_data'] = pd.DataFrame(columns=["Time", "Spot"])
+# Initialize session states for NIFTY only (80% fewer session state variables)
+instrument = 'NIFTY'
+if f'{instrument}_price_data' not in st.session_state:
+    st.session_state[f'{instrument}_price_data'] = pd.DataFrame(columns=["Time", "Spot"])
 
-        if f'{instrument}_trade_log' not in st.session_state:
-            st.session_state[f'{instrument}_trade_log'] = []
+if f'{instrument}_trade_log' not in st.session_state:
+    st.session_state[f'{instrument}_trade_log'] = []
 
-        if f'{instrument}_call_log_book' not in st.session_state:
-            st.session_state[f'{instrument}_call_log_book'] = []
+if f'{instrument}_call_log_book' not in st.session_state:
+    st.session_state[f'{instrument}_call_log_book'] = []
 
-        if f'{instrument}_support_zone' not in st.session_state:
-            st.session_state[f'{instrument}_support_zone'] = (None, None)
+if f'{instrument}_support_zone' not in st.session_state:
+    st.session_state[f'{instrument}_support_zone'] = (None, None)
 
-        if f'{instrument}_resistance_zone' not in st.session_state:
-            st.session_state[f'{instrument}_resistance_zone'] = (None, None)
+if f'{instrument}_resistance_zone' not in st.session_state:
+    st.session_state[f'{instrument}_resistance_zone'] = (None, None)
 
 # Initialize overall option chain data
 if 'overall_option_data' not in st.session_state:
@@ -968,27 +957,124 @@ if st.session_state.get('merged_df') is None:
 # ═══════════════════════════════════════════════════════════════════════
 
 # Native tabs - work seamlessly on mobile and desktop, no multiple clicks needed
+# PRIORITY LOADING: Main tabs (Option Screener + Enhanced Data) load first for faster UX
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🎯 NIFTY Option Screener v7.0",
+    "🌐 Enhanced Market Data",
     "🌟 Overall Market Sentiment",
     "🎲 Bias Analysis Pro",
-    "📉 Advanced Chart Analysis",
-    "🎯 NIFTY Option Screener v7.0",
-    "🌐 Enhanced Market Data"
+    "📉 Advanced Chart Analysis"
 ])
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 1: OVERALL MARKET SENTIMENT (AUTO-LOAD WITH SMART CACHING)
+# TAB 1: NIFTY OPTION SCREENER V7.0 (PRIORITY LOAD - MAIN TAB)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab1:
-    render_overall_market_sentiment(NSE_INSTRUMENTS)
+    st.header("🎯 NIFTY Option Screener v7.0")
+    st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
+
+    # Use pre-imported module (imported at app startup for instant loading)
+    if NIFTY_SCREENER_AVAILABLE:
+        try:
+            render_nifty_option_screener()
+        except Exception as e:
+            st.error(f"❌ Error rendering NIFTY Option Screener: {e}")
+            st.info("This error occurred in the render function. Check logs for details.")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.error("❌ NIFTY Option Screener module not available")
+        st.info("The module failed to load at startup. Check the console/terminal for import errors.")
+        st.code("Module: NiftyOptionScreener.py")
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 2: BIAS ANALYSIS PRO
+# TAB 2: ENHANCED MARKET DATA (PRIORITY LOAD - MAIN TAB)
 # ═══════════════════════════════════════════════════════════════════════
 
 with tab2:
+    st.header("🌐 Enhanced Market Data Analysis")
+    st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
+
+    if ENHANCED_DATA_AVAILABLE:
+        try:
+            # AUTO-LOAD on first access - fetch data immediately if not in cache
+            if 'enhanced_market_data' not in st.session_state:
+                with st.spinner("Loading enhanced market data..."):
+                    try:
+                        enhanced_data = get_enhanced_market_data()
+                        st.session_state.enhanced_market_data = enhanced_data
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not auto-load data: {e}")
+                        st.info("Click the Refresh button to manually load data.")
+
+            # Control buttons
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
+                    with st.spinner("Refreshing market data..."):
+                        try:
+                            enhanced_data = get_enhanced_market_data()
+                            st.session_state.enhanced_market_data = enhanced_data
+                            st.success("✅ Data refreshed successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to refresh data: {e}")
+
+            with col2:
+                if 'enhanced_market_data' in st.session_state:
+                    data = st.session_state.enhanced_market_data
+                    st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
+
+            # Display enhanced market data if available
+            if 'enhanced_market_data' in st.session_state:
+                try:
+                    render_enhanced_market_data_tab(st.session_state.enhanced_market_data)
+                except Exception as e:
+                    st.error(f"❌ Error displaying enhanced data: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+            else:
+                st.info("""
+                ℹ️ Click 'Refresh Data' button above to load enhanced market data.
+
+                **Data Sources:**
+                - 📊 **Dhan API:** India VIX, All Sector Indices (IT, Auto, Pharma, Metal, FMCG, Realty, Energy)
+                - 🌍 **Yahoo Finance:** Global Markets (S&P 500, Nasdaq, Dow, Nikkei, Hang Seng, etc.)
+                - 💰 **Intermarket:** USD Index, Crude Oil, Gold, USD/INR, US 10Y Treasury, Bitcoin
+
+                **Advanced Analysis:**
+                - ⚡ **India VIX Analysis:** Fear & Greed Index with sentiment scoring
+                - 🏢 **Sector Rotation Model:** Identify market leadership and rotation patterns
+                - 🎯 **Gamma Squeeze Detection:** Option market makers hedging analysis
+                - ⏰ **Intraday Seasonality:** Time-based trading recommendations
+                - 🌐 **Global Correlation:** How worldwide markets affect Indian markets
+
+                **All data is presented in comprehensive tables with bias scores and trading insights!**
+                """)
+        except Exception as e:
+            st.error(f"❌ Critical error in Enhanced Market Data tab: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.error("❌ Enhanced Market Data modules not available")
+        st.info("The modules failed to load at startup. Check the console/terminal for import errors.")
+        st.code("Modules: enhanced_market_data.py, enhanced_market_display.py")
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 3: OVERALL MARKET SENTIMENT (LAZY LOAD)
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab3:
+    render_overall_market_sentiment(NSE_INSTRUMENTS)
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAB 4: BIAS ANALYSIS PRO (LAZY LOAD)
+# ═══════════════════════════════════════════════════════════════════════
+
+with tab4:
     st.header("🎯 Comprehensive Bias Analysis Pro")
     st.caption("13 Bias Indicators with Adaptive Weighted Scoring | 🔄 Auto-refreshing every 60 seconds")
 
@@ -1343,10 +1429,10 @@ with tab2:
         """)
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 3: ADVANCED CHART ANALYSIS
+# TAB 5: ADVANCED CHART ANALYSIS (LAZY LOAD)
 # ═══════════════════════════════════════════════════════════════════════
 
-with tab3:
+with tab5:
     st.header("📈 Advanced Chart Analysis")
     st.caption("TradingView-style Chart with Advanced Indicators: Volume Bars, Volume Order Blocks, HTF Support/Resistance (3min, 5min, 10min, 15min levels), Volume Footprint (1D timeframe, 10 bins, Dynamic POC), Ultimate RSI, OM Indicator (Order Flow & Momentum), Advanced Price Action (BOS, CHOCH, Fibonacci, Geometric Patterns)")
 
@@ -3455,102 +3541,6 @@ with tab3:
         st.info("Install the module: src/multi_timeframe_analysis.py")
     except Exception as e:
         st.error(f"Error loading multi-timeframe analysis: {e}")
-
-# ═══════════════════════════════════════════════════════════════════════
-# TAB 4: NIFTY OPTION SCREENER V7.0 (AUTO-LOAD)
-# ═══════════════════════════════════════════════════════════════════════
-
-with tab4:
-    st.header("🎯 NIFTY Option Screener v7.0")
-    st.caption("100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS")
-
-    # Use pre-imported module (imported at app startup for instant loading)
-    if NIFTY_SCREENER_AVAILABLE:
-        try:
-            render_nifty_option_screener()
-        except Exception as e:
-            st.error(f"❌ Error rendering NIFTY Option Screener: {e}")
-            st.info("This error occurred in the render function. Check logs for details.")
-            import traceback
-            st.code(traceback.format_exc())
-    else:
-        st.error("❌ NIFTY Option Screener module not available")
-        st.info("The module failed to load at startup. Check the console/terminal for import errors.")
-        st.code("Module: NiftyOptionScreener.py")
-
-# ═══════════════════════════════════════════════════════════════════════
-# TAB 5: ENHANCED MARKET DATA
-# ═══════════════════════════════════════════════════════════════════════
-
-with tab5:
-    st.header("🌐 Enhanced Market Data Analysis")
-    st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
-
-    if ENHANCED_DATA_AVAILABLE:
-        try:
-            # AUTO-LOAD on first access - fetch data immediately if not in cache
-            if 'enhanced_market_data' not in st.session_state:
-                with st.spinner("Loading enhanced market data..."):
-                    try:
-                        enhanced_data = get_enhanced_market_data()
-                        st.session_state.enhanced_market_data = enhanced_data
-                    except Exception as e:
-                        st.warning(f"⚠️ Could not auto-load data: {e}")
-                        st.info("Click the Refresh button to manually load data.")
-
-            # Control buttons
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
-                    with st.spinner("Refreshing market data..."):
-                        try:
-                            enhanced_data = get_enhanced_market_data()
-                            st.session_state.enhanced_market_data = enhanced_data
-                            st.success("✅ Data refreshed successfully!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Failed to refresh data: {e}")
-
-            with col2:
-                if 'enhanced_market_data' in st.session_state:
-                    data = st.session_state.enhanced_market_data
-                    st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
-
-            # Display enhanced market data if available
-            if 'enhanced_market_data' in st.session_state:
-                try:
-                    render_enhanced_market_data_tab(st.session_state.enhanced_market_data)
-                except Exception as e:
-                    st.error(f"❌ Error displaying enhanced data: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
-            else:
-                st.info("""
-                ℹ️ Click 'Refresh Data' button above to load enhanced market data.
-
-                **Data Sources:**
-                - 📊 **Dhan API:** India VIX, All Sector Indices (IT, Auto, Pharma, Metal, FMCG, Realty, Energy)
-                - 🌍 **Yahoo Finance:** Global Markets (S&P 500, Nasdaq, Dow, Nikkei, Hang Seng, etc.)
-                - 💰 **Intermarket:** USD Index, Crude Oil, Gold, USD/INR, US 10Y Treasury, Bitcoin
-
-                **Advanced Analysis:**
-                - ⚡ **India VIX Analysis:** Fear & Greed Index with sentiment scoring
-                - 🏢 **Sector Rotation Model:** Identify market leadership and rotation patterns
-                - 🎯 **Gamma Squeeze Detection:** Option market makers hedging analysis
-                - ⏰ **Intraday Seasonality:** Time-based trading recommendations
-                - 🌐 **Global Correlation:** How worldwide markets affect Indian markets
-
-                **All data is presented in comprehensive tables with bias scores and trading insights!**
-                """)
-        except Exception as e:
-            st.error(f"❌ Critical error in Enhanced Market Data tab: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-    else:
-        st.error("❌ Enhanced Market Data modules not available")
-        st.info("The modules failed to load at startup. Check the console/terminal for import errors.")
-        st.code("Modules: enhanced_market_data.py, enhanced_market_display.py")
 
 # ═══════════════════════════════════════════════════════════════════════
 # FOOTER
