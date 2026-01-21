@@ -13,6 +13,8 @@ from streamlit_autorefresh import st_autorefresh
 import os
 import asyncio
 import logging
+import importlib
+import sys
 
 # Import modules
 from config import *
@@ -25,6 +27,17 @@ from telegram_alerts import TelegramBot, send_test_message
 from dhan_api import check_dhan_connection
 from bias_analysis import BiasAnalysisPro
 from advanced_chart_analysis import AdvancedChartAnalysis
+
+# Force reload critical modules to pick up ICT indicator changes
+if 'modules_reloaded' not in st.session_state:
+    try:
+        if 'advanced_chart_analysis' in sys.modules:
+            importlib.reload(sys.modules['advanced_chart_analysis'])
+        if 'telegram_alerts' in sys.modules:
+            importlib.reload(sys.modules['telegram_alerts'])
+        st.session_state.modules_reloaded = True
+    except Exception as e:
+        st.warning(f"Module reload warning: {e}")
 from overall_market_sentiment import render_overall_market_sentiment, calculate_overall_sentiment, run_ai_analysis, shutdown_ai_engine
 from advanced_proximity_alerts import get_proximity_alert_system
 from data_cache_manager import (
