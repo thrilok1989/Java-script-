@@ -7000,16 +7000,12 @@ def render_nifty_option_screener():
     with screener_tabs[6]:
         st.markdown("## 📅 EXPIRY DATE SPIKE DETECTOR")
 
-        # LAZY LOADING: Only compute when user clicks Load button
-        if 'expiry_analysis_loaded' not in st.session_state:
-            st.session_state.expiry_analysis_loaded = False
-
-        if not st.session_state.expiry_analysis_loaded:
-            st.info("⚡ **Performance Optimization:** Click the button below to load Expiry Analysis")
-            if st.button("🚀 Load Expiry Analysis", type="primary", use_container_width=True, key="load_expiry_analysis"):
+        # AUTO-LOAD WITH CACHING: Computes automatically first time, then instant
+        if not st.session_state.get('expiry_analysis_loaded', False):
+            # First visit - auto-compute with spinner (no button needed)
+            with st.spinner("⚡ Computing Expiry Analysis..."):
                 st.session_state.expiry_analysis_loaded = True
                 st.rerun()
-            st.stop()
 
         # Main spike card
         spike_col1, spike_col2, spike_col3 = st.columns([2, 1, 1])
@@ -7240,16 +7236,12 @@ def render_nifty_option_screener():
         st.markdown("## 🎯 ALL-DAY SPIKE DETECTOR")
         st.caption("Detects Support, Resistance, Opening, Breakout, Momentum & Squeeze spikes on ANY trading day")
 
-        # LAZY LOADING: Only compute when user clicks Load button
-        if 'all_day_spike_loaded' not in st.session_state:
-            st.session_state.all_day_spike_loaded = False
-
-        if not st.session_state.all_day_spike_loaded:
-            st.info("⚡ **Performance Optimization:** Click the button below to load All-Day Spike Detector")
-            if st.button("🚀 Load All-Day Spike Detector", type="primary", use_container_width=True, key="load_all_day_spike"):
+        # AUTO-LOAD WITH CACHING: Computes automatically first time, then instant
+        if not st.session_state.get('all_day_spike_loaded', False):
+            # First visit - auto-compute with spinner (no button needed)
+            with st.spinner("⚡ Computing All-Day Spike Detection..."):
                 st.session_state.all_day_spike_loaded = True
                 st.rerun()
-            st.stop()
 
         # Call the new spike detector function
         try:
@@ -7437,16 +7429,12 @@ def render_nifty_option_screener():
     with screener_tabs[8]:
         st.markdown("## 📱 TELEGRAM SIGNAL GENERATION (Option 3 Format)")
 
-        # LAZY LOADING: Only compute when user clicks Load button
-        if 'telegram_signals_loaded' not in st.session_state:
-            st.session_state.telegram_signals_loaded = False
-
-        if not st.session_state.telegram_signals_loaded:
-            st.info("⚡ **Performance Optimization:** Click the button below to load Telegram Signals")
-            if st.button("🚀 Load Telegram Signals", type="primary", use_container_width=True, key="load_telegram_signals"):
+        # AUTO-LOAD WITH CACHING: Computes automatically first time, then instant
+        if not st.session_state.get('telegram_signals_loaded', False):
+            # First visit - auto-compute with spinner (no button needed)
+            with st.spinner("⚡ Generating Telegram Signal..."):
                 st.session_state.telegram_signals_loaded = True
                 st.rerun()
-            st.stop()
 
         if telegram_signal:
             # NEW SIGNAL DETECTED
