@@ -2165,6 +2165,9 @@ with tab6:
     with col1:
         show_reversal_zones = st.checkbox("🎯 Reversal Probability Zones (LuxAlgo)", value=True, key="show_reversal_zones", help="Statistical reversal prediction with probability targets")
 
+    with col2:
+        show_ict_indicator = st.checkbox("🎯 ICT Comprehensive Indicator", value=False, key="show_ict_indicator", help="Order Blocks, Fair Value Gaps, Supply/Demand Zones, Volume Profile with POC")
+
     st.divider()
 
     # Indicator Configuration Section
@@ -2610,6 +2613,7 @@ with tab6:
                     show_fibonacci=show_fibonacci,
                     show_patterns=show_patterns,
                     show_reversal_zones=show_reversal_zones,
+                    show_ict_indicator=show_ict_indicator,
                     vob_params=None,
                     htf_params=None,
                     footprint_params=None,
@@ -2618,8 +2622,43 @@ with tab6:
                     liquidity_params=liquidity_params,
                     money_flow_params=money_flow_params,
                     deltaflow_params=deltaflow_params,
-                    reversal_zones_params=reversal_zones_params
+                    reversal_zones_params=reversal_zones_params,
+                    ict_params=None
                 )
+
+                # Send Telegram alerts for ICT indicator signals
+                if show_ict_indicator:
+                    try:
+                        from indicators.comprehensive_ict_indicator import ComprehensiveICTIndicator
+                        ict_indicator = ComprehensiveICTIndicator()
+                        ict_data = ict_indicator.calculate(st.session_state.chart_data)
+
+                        if ict_data and ict_data.get('signals'):
+                            signals = ict_data['signals']
+                            overall_bias = signals.get('overall_bias', 'NEUTRAL')
+
+                            # Only send alert if there are significant signals
+                            if signals.get('bullish_count', 0) > 0 or signals.get('bearish_count', 0) > 0:
+                                # Check if we should send alert (don't spam)
+                                # Only send if bias changed or significant new signals
+                                if 'last_ict_alert' not in st.session_state or \
+                                   st.session_state.get('last_ict_bias') != overall_bias:
+                                    from telegram_alerts import TelegramBot
+                                    telegram = TelegramBot()
+                                    current_price = st.session_state.chart_data['close'].iloc[-1]
+
+                                    alert_sent = telegram.send_ict_indicator_alert(
+                                        symbol=symbol_code.split()[0],
+                                        ict_signals=signals,
+                                        current_price=current_price
+                                    )
+
+                                    if alert_sent:
+                                        st.session_state.last_ict_alert = get_current_time_ist()
+                                        st.session_state.last_ict_bias = overall_bias
+                                        st.success("✅ ICT Indicator alert sent to Telegram!")
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not send ICT indicator alert: {str(e)}")
 
                 # Display chart
                 st.plotly_chart(fig, use_container_width=True)
