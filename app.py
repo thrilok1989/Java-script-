@@ -3267,28 +3267,69 @@ with tab6:
                                             'confluence_support': supports[:3] if supports else [],
                                             'confluence_resistance': resistances[:3] if resistances else [],
                                             'strength_analysis': strength_result,
+                                            'current_price': current_price,
                                             'timestamp': datetime.now().isoformat()
                                         }
 
-                                    st.divider()
+                                        # AUTOMATIC TELEGRAM ALERTS - Check for significant HTF conditions
+                                        try:
+                                            # Check if we should send HTF alert (cooldown: 15 minutes)
+                                            last_htf_alert_time = st.session_state.get('last_htf_alert_time')
+                                            current_time_for_alert = datetime.now()
 
-                                    # Telegram HTF Alerts Section
-                                    st.markdown("#### 📱 HTF Telegram Alerts")
+                                            should_send_alert = False
+                                            alert_reason = ""
 
-                                    col1, col2 = st.columns([3, 1])
+                                            # Cooldown check (15 minutes = 900 seconds)
+                                            if last_htf_alert_time is None or (current_time_for_alert - last_htf_alert_time).total_seconds() >= 900:
 
-                                    with col1:
-                                        st.caption("Send HTF analysis to Telegram with confluence and strength data")
+                                                # Alert Condition 1: Price near strong confluence level (within 0.5%)
+                                                for sup in supports[:2]:
+                                                    distance_pct = abs((current_price - sup['level']) / current_price) * 100
+                                                    if distance_pct <= 0.5 and sup['strength'] >= 75:
+                                                        should_send_alert = True
+                                                        alert_reason = f"Price near strong support confluence ({sup['count']} sources)"
+                                                        break
 
-                                    with col2:
-                                        if st.button("📤 Send HTF Alert", type="primary", use_container_width=True, key="send_htf_telegram"):
-                                            try:
+                                                if not should_send_alert:
+                                                    for res in resistances[:2]:
+                                                        distance_pct = abs((res['level'] - current_price) / current_price) * 100
+                                                        if distance_pct <= 0.5 and res['strength'] >= 75:
+                                                            should_send_alert = True
+                                                            alert_reason = f"Price near strong resistance confluence ({res['count']} sources)"
+                                                            break
+
+                                                # Alert Condition 2: Support/Resistance status change (TESTING or BREAKING)
+                                                if not should_send_alert:
+                                                    sup_status = strength_result.get('support_status', '')
+                                                    res_status = strength_result.get('resistance_status', '')
+
+                                                    if sup_status in ['TESTING', 'BREAKING'] and strength_result.get('support_strength', 0) >= 70:
+                                                        should_send_alert = True
+                                                        alert_reason = f"Support {sup_status}"
+                                                    elif res_status in ['TESTING', 'BREAKING'] and strength_result.get('resistance_strength', 0) >= 70:
+                                                        should_send_alert = True
+                                                        alert_reason = f"Resistance {res_status}"
+
+                                                # Alert Condition 3: All 4 timeframes aligned (rare confluence)
+                                                if not should_send_alert:
+                                                    trends = [tf.trend_direction for tf in htf_results.values()]
+                                                    if trends.count('UPTREND') == 4 or trends.count('DOWNTREND') == 4:
+                                                        strong_trends = [tf for tf in htf_results.values() if tf.trend_strength >= 70]
+                                                        if len(strong_trends) >= 3:
+                                                            should_send_alert = True
+                                                            trend_direction = 'UPTREND' if trends.count('UPTREND') == 4 else 'DOWNTREND'
+                                                            alert_reason = f"All timeframes aligned: {trend_direction}"
+
+                                            # Send alert if conditions met
+                                            if should_send_alert:
                                                 from telegram_alerts import TelegramBot
 
                                                 telegram = TelegramBot()
 
                                                 # Build HTF alert message
-                                                alert_msg = "🎯 *HTF Analysis Alert*\n\n"
+                                                alert_msg = f"⚠️ *HTF ALERT* ⚠️\n\n"
+                                                alert_msg += f"🎯 *Trigger:* {alert_reason}\n\n"
 
                                                 # Add timeframe trends
                                                 alert_msg += "📊 *Multi-Timeframe Trends:*\n"
@@ -3296,21 +3337,21 @@ with tab6:
                                                     trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
                                                     alert_msg += f"• {tf_name}: {trend_emoji} {tf_result.trend_direction} ({tf_result.trend_strength:.0f}%)\n"
 
-                                                alert_msg += "\n"
+                                                alert_msg += f"\n💰 *Current Price:* ₹{current_price:.2f}\n\n"
 
                                                 # Add confluence levels
                                                 if supports:
                                                     alert_msg += "📉 *Top Support (Confluence):*\n"
                                                     for sup in supports[:3]:
                                                         distance_pct = ((current_price - sup['level']) / current_price) * 100
-                                                        alert_msg += f"• ₹{sup['level']:.2f} ({sup['strength']:.0f}% | {sup['count']} sources | -{distance_pct:.2f}%)\n"
+                                                        alert_msg += f"• ₹{sup['level']:.2f} ({sup['strength']:.0f}% | {sup['count']} src | -{distance_pct:.2f}%)\n"
                                                     alert_msg += "\n"
 
                                                 if resistances:
                                                     alert_msg += "📈 *Top Resistance (Confluence):*\n"
                                                     for res in resistances[:3]:
                                                         distance_pct = ((res['level'] - current_price) / current_price) * 100
-                                                        alert_msg += f"• ₹{res['level']:.2f} ({res['strength']:.0f}% | {res['count']} sources | +{distance_pct:.2f}%)\n"
+                                                        alert_msg += f"• ₹{res['level']:.2f} ({res['strength']:.0f}% | {res['count']} src | +{distance_pct:.2f}%)\n"
                                                     alert_msg += "\n"
 
                                                 # Add strength analysis
@@ -3328,13 +3369,15 @@ with tab6:
                                                 success = telegram.send_message(alert_msg, parse_mode='Markdown')
 
                                                 if success:
-                                                    st.success("✅ HTF alert sent to Telegram!")
+                                                    st.session_state['last_htf_alert_time'] = current_time_for_alert
+                                                    st.success(f"✅ HTF alert sent automatically: {alert_reason}")
                                                 else:
-                                                    st.error("❌ Failed to send Telegram alert")
+                                                    logger.warning("Failed to send automatic HTF alert")
 
-                                            except Exception as e:
-                                                st.error(f"❌ Error sending Telegram alert: {e}")
-                                                logger.error(f"Telegram alert error: {e}", exc_info=True)
+                                        except Exception as e:
+                                            logger.error(f"Automatic HTF alert error: {e}", exc_info=True)
+
+                                    st.divider()
 
                                 else:
                                     st.warning("Unable to analyze HTF - insufficient data")
