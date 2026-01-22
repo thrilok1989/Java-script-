@@ -3171,25 +3171,32 @@ with tab6:
                     # HTF Analysis Tab
                     with tabs[tab_idx]:
                         st.markdown("### 📊 Higher Timeframe (HTF) Analysis")
-                        st.caption("🎯 Multi-timeframe Support/Resistance with 14-source confluence and 10-factor strength scoring")
+                        st.caption("🎯 Multi-timeframe Support/Resistance with MACD, Volume, and RSI confirmations")
 
                         with st.spinner("Analyzing multiple timeframes..."):
                             try:
                                 from src.multi_timeframe_analysis import MultiTimeframeAnalyzer
-                                from sr_extractor_advanced import AdvancedSRExtractor
-                                from src.comprehensive_sr_analysis import analyze_sr_strength_comprehensive
 
                                 # Initialize HTF analyzer
                                 htf_analyzer = MultiTimeframeAnalyzer()
 
-                                # Analyze all timeframes
-                                htf_results = htf_analyzer.analyze_all_timeframes(df_stats)
+                                # Analyze all timeframes (5m, 15m, 1h, 4h, 1d)
+                                htf_results = htf_analyzer.analyze_all_timeframes(
+                                    data_1d=df_stats,
+                                    data_4h=df_stats,
+                                    data_1h=df_stats,
+                                    data_15m=df_stats,
+                                    data_5m=df_stats
+                                )
 
                                 if htf_results:
+                                    # Current price for calculations
+                                    current_price = df_stats['close'].iloc[-1]
+
                                     # Display timeframe overview
                                     st.markdown("#### 🕐 Multi-Timeframe Overview")
 
-                                    tf_cols = st.columns(4)
+                                    tf_cols = st.columns(5)
                                     for idx, (tf_name, tf_result) in enumerate(htf_results.items()):
                                         with tf_cols[idx]:
                                             trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
@@ -3201,303 +3208,444 @@ with tab6:
 
                                     st.divider()
 
-                                    # Current price for calculations
-                                    current_price = df_stats['close'].iloc[-1]
+                                    # Calculate Technical Confirmations (MACD, Volume, RSI)
+                                    st.markdown("#### 📈 Technical Confirmations")
 
-                                    # Display detailed HTF S/R levels
-                                    st.markdown("#### 📊 HTF Support & Resistance Levels")
+                                    # Calculate MACD
+                                    exp1 = df_stats['close'].ewm(span=12, adjust=False).mean()
+                                    exp2 = df_stats['close'].ewm(span=26, adjust=False).mean()
+                                    macd_line = exp1 - exp2
+                                    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+                                    macd_histogram = macd_line - signal_line
+
+                                    current_macd = macd_line.iloc[-1]
+                                    current_signal = signal_line.iloc[-1]
+                                    current_histogram = macd_histogram.iloc[-1]
+
+                                    # Calculate RSI
+                                    delta = df_stats['close'].diff()
+                                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                                    rs = gain / loss
+                                    rsi = 100 - (100 / (1 + rs))
+                                    current_rsi = rsi.iloc[-1]
+
+                                    # Volume analysis
+                                    avg_volume = df_stats['volume'].mean()
+                                    current_volume = df_stats['volume'].iloc[-1]
+                                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+
+                                    # Display confirmations
+                                    conf_col1, conf_col2, conf_col3 = st.columns(3)
+
+                                    with conf_col1:
+                                        macd_signal = "BULLISH" if current_macd > current_signal else "BEARISH"
+                                        macd_emoji = "🟢" if macd_signal == "BULLISH" else "🔴"
+                                        st.metric(
+                                            "MACD",
+                                            f"{macd_emoji} {macd_signal}",
+                                            delta=f"{current_histogram:.2f}"
+                                        )
+
+                                    with conf_col2:
+                                        if current_rsi >= 70:
+                                            rsi_signal = "OVERBOUGHT"
+                                            rsi_emoji = "🔴"
+                                        elif current_rsi <= 30:
+                                            rsi_signal = "OVERSOLD"
+                                            rsi_emoji = "🟢"
+                                        else:
+                                            rsi_signal = "NEUTRAL"
+                                            rsi_emoji = "⚪"
+                                        st.metric(
+                                            "RSI",
+                                            f"{rsi_emoji} {rsi_signal}",
+                                            delta=f"{current_rsi:.1f}"
+                                        )
+
+                                    with conf_col3:
+                                        if volume_ratio >= 1.5:
+                                            vol_signal = "HIGH VOLUME"
+                                            vol_emoji = "🔥"
+                                        elif volume_ratio <= 0.5:
+                                            vol_signal = "LOW VOLUME"
+                                            vol_emoji = "❄️"
+                                        else:
+                                            vol_signal = "NORMAL"
+                                            vol_emoji = "⚪"
+                                        st.metric(
+                                            "Volume",
+                                            f"{vol_emoji} {vol_signal}",
+                                            delta=f"{volume_ratio:.2f}x avg"
+                                        )
+
+                                    st.divider()
+
+                                    # Aggregate all S/R levels from all timeframes
+                                    st.markdown("#### 📊 All HTF Support & Resistance Levels")
+
+                                    all_supports = []
+                                    all_resistances = []
 
                                     for tf_name, tf_result in htf_results.items():
-                                        with st.expander(f"🕐 {tf_name} Timeframe", expanded=(tf_name == "1h")):
-                                            col1, col2 = st.columns(2)
+                                        # Collect supports
+                                        for i, sup in enumerate([tf_result.support_1, tf_result.support_2, tf_result.support_3], 1):
+                                            if sup and sup < current_price:
+                                                distance_pct = ((current_price - sup) / current_price) * 100
+                                                all_supports.append({
+                                                    'Timeframe': tf_name,
+                                                    'Level': f'S{i}',
+                                                    'Price': sup,
+                                                    'Distance %': distance_pct
+                                                })
 
-                                            with col1:
-                                                st.markdown("**📈 Resistance Levels**")
-                                                res_data = []
-                                                for i, res in enumerate([tf_result.resistance_1, tf_result.resistance_2, tf_result.resistance_3], 1):
-                                                    if res and res > current_price:
-                                                        distance_pct = ((res - current_price) / current_price) * 100
-                                                        res_data.append({
-                                                            'Level': f'R{i}',
-                                                            'Price': f"₹{res:.2f}",
-                                                            'Distance': f"+{distance_pct:.2f}%"
-                                                        })
-                                                if res_data:
-                                                    st.dataframe(pd.DataFrame(res_data), use_container_width=True, hide_index=True)
-                                                else:
-                                                    st.info("No resistance levels")
+                                        # Collect resistances
+                                        for i, res in enumerate([tf_result.resistance_1, tf_result.resistance_2, tf_result.resistance_3], 1):
+                                            if res and res > current_price:
+                                                distance_pct = ((res - current_price) / current_price) * 100
+                                                all_resistances.append({
+                                                    'Timeframe': tf_name,
+                                                    'Level': f'R{i}',
+                                                    'Price': res,
+                                                    'Distance %': distance_pct
+                                                })
 
-                                            with col2:
-                                                st.markdown("**📉 Support Levels**")
-                                                sup_data = []
-                                                for i, sup in enumerate([tf_result.support_1, tf_result.support_2, tf_result.support_3], 1):
-                                                    if sup and sup < current_price:
-                                                        distance_pct = ((current_price - sup) / current_price) * 100
-                                                        sup_data.append({
-                                                            'Level': f'S{i}',
-                                                            'Price': f"₹{sup:.2f}",
-                                                            'Distance': f"-{distance_pct:.2f}%"
-                                                        })
-                                                if sup_data:
-                                                    st.dataframe(pd.DataFrame(sup_data), use_container_width=True, hide_index=True)
-                                                else:
-                                                    st.info("No support levels")
+                                    # Sort by distance
+                                    all_supports.sort(key=lambda x: x['Distance %'])
+                                    all_resistances.sort(key=lambda x: x['Distance %'])
 
-                                    st.divider()
+                                    col1, col2 = st.columns(2)
 
-                                    # Extract all S/R sources using AdvancedSRExtractor
-                                    st.markdown("#### 🎯 14-Source Confluence Analysis")
+                                    with col1:
+                                        st.markdown("**📉 Nearest Support Levels**")
+                                        if all_supports:
+                                            sup_display = []
+                                            for sup in all_supports[:5]:
+                                                sup_display.append({
+                                                    'TF': sup['Timeframe'],
+                                                    'Level': sup['Level'],
+                                                    'Price': f"₹{sup['Price']:.2f}",
+                                                    'Distance': f"-{sup['Distance %']:.2f}%"
+                                                })
+                                            st.dataframe(pd.DataFrame(sup_display), use_container_width=True, hide_index=True)
+                                        else:
+                                            st.info("No support levels detected")
 
-                                    sr_extractor = AdvancedSRExtractor()
-                                    all_sr_data = sr_extractor.extract_all_sources(
-                                        df_stats,
-                                        st.session_state.get('merged_df'),
-                                        st.session_state.get('market_depth_data'),
-                                        htf_results
-                                    )
-
-                                    if all_sr_data:
-                                        supports = all_sr_data.get('support', [])
-                                        resistances = all_sr_data.get('resistance', [])
-
-                                        col1, col2 = st.columns(2)
-
-                                        with col1:
-                                            st.markdown("**📉 Top Support Levels (Confluence)**")
-                                            if supports:
-                                                sup_conf_data = []
-                                                for sup in supports[:5]:
-                                                    distance_pct = ((current_price - sup['level']) / current_price) * 100
-                                                    sup_conf_data.append({
-                                                        'Price': f"₹{sup['level']:.2f}",
-                                                        'Strength': f"{sup['strength']:.0f}%",
-                                                        'Sources': sup['count'],
-                                                        'Distance': f"-{distance_pct:.2f}%"
-                                                    })
-                                                st.dataframe(pd.DataFrame(sup_conf_data), use_container_width=True, hide_index=True)
-                                            else:
-                                                st.info("No confluence support detected")
-
-                                        with col2:
-                                            st.markdown("**📈 Top Resistance Levels (Confluence)**")
-                                            if resistances:
-                                                res_conf_data = []
-                                                for res in resistances[:5]:
-                                                    distance_pct = ((res['level'] - current_price) / current_price) * 100
-                                                    res_conf_data.append({
-                                                        'Price': f"₹{res['level']:.2f}",
-                                                        'Strength': f"{res['strength']:.0f}%",
-                                                        'Sources': res['count'],
-                                                        'Distance': f"+{distance_pct:.2f}%"
-                                                    })
-                                                st.dataframe(pd.DataFrame(res_conf_data), use_container_width=True, hide_index=True)
-                                            else:
-                                                st.info("No confluence resistance detected")
+                                    with col2:
+                                        st.markdown("**📈 Nearest Resistance Levels**")
+                                        if all_resistances:
+                                            res_display = []
+                                            for res in all_resistances[:5]:
+                                                res_display.append({
+                                                    'TF': res['Timeframe'],
+                                                    'Level': res['Level'],
+                                                    'Price': f"₹{res['Price']:.2f}",
+                                                    'Distance': f"+{res['Distance %']:.2f}%"
+                                                })
+                                            st.dataframe(pd.DataFrame(res_display), use_container_width=True, hide_index=True)
+                                        else:
+                                            st.info("No resistance levels detected")
 
                                     st.divider()
 
-                                    # 10-Factor Strength Analysis
-                                    st.markdown("#### 💪 10-Factor Strength Analysis")
-                                    st.caption("Comprehensive S/R strength analysis using 10 independent factors")
+                                    # CONFLUENCE DETECTION - Find levels where multiple timeframes agree
+                                    st.markdown("#### 🎯 Confluence Analysis")
+                                    st.caption("Levels where multiple timeframes align (within 0.5% threshold)")
 
-                                    # Build features dict for strength analysis
-                                    features = {
+                                    confluence_supports = []
+                                    confluence_resistances = []
+
+                                    # Group supports by price proximity (0.5% threshold)
+                                    for sup in all_supports:
+                                        # Find matching supports within 0.5%
+                                        matches = [s for s in all_supports if abs((sup['Price'] - s['Price']) / sup['Price'] * 100) <= 0.5]
+                                        if len(matches) >= 2:  # At least 2 timeframes
+                                            avg_price = sum(m['Price'] for m in matches) / len(matches)
+                                            timeframes = ', '.join([m['Timeframe'] for m in matches])
+                                            # Check if not already added
+                                            if not any(abs(c['price'] - avg_price) < 1 for c in confluence_supports):
+                                                confluence_supports.append({
+                                                    'price': avg_price,
+                                                    'count': len(matches),
+                                                    'timeframes': timeframes,
+                                                    'strength': min(95, 60 + len(matches) * 10)  # More TFs = higher strength
+                                                })
+
+                                    # Group resistances by price proximity
+                                    for res in all_resistances:
+                                        matches = [r for r in all_resistances if abs((res['Price'] - r['Price']) / res['Price'] * 100) <= 0.5]
+                                        if len(matches) >= 2:
+                                            avg_price = sum(m['Price'] for m in matches) / len(matches)
+                                            timeframes = ', '.join([m['Timeframe'] for m in matches])
+                                            if not any(abs(c['price'] - avg_price) < 1 for c in confluence_resistances):
+                                                confluence_resistances.append({
+                                                    'price': avg_price,
+                                                    'count': len(matches),
+                                                    'timeframes': timeframes,
+                                                    'strength': min(95, 60 + len(matches) * 10)
+                                                })
+
+                                    # Sort by strength
+                                    confluence_supports.sort(key=lambda x: (-x['count'], x['price']))
+                                    confluence_resistances.sort(key=lambda x: (-x['count'], -x['price']))
+
+                                    col1, col2 = st.columns(2)
+
+                                    with col1:
+                                        st.markdown("**📉 Support Confluence**")
+                                        if confluence_supports:
+                                            conf_sup_data = []
+                                            for conf_sup in confluence_supports[:3]:
+                                                distance_pct = ((current_price - conf_sup['price']) / current_price) * 100
+                                                conf_sup_data.append({
+                                                    'Price': f"₹{conf_sup['price']:.2f}",
+                                                    'Strength': f"{conf_sup['strength']:.0f}%",
+                                                    'Sources': f"{conf_sup['count']} TFs",
+                                                    'Distance': f"-{distance_pct:.2f}%"
+                                                })
+                                            st.dataframe(pd.DataFrame(conf_sup_data), use_container_width=True, hide_index=True)
+                                        else:
+                                            st.info("No confluence detected")
+
+                                    with col2:
+                                        st.markdown("**📈 Resistance Confluence**")
+                                        if confluence_resistances:
+                                            conf_res_data = []
+                                            for conf_res in confluence_resistances[:3]:
+                                                distance_pct = ((conf_res['price'] - current_price) / current_price) * 100
+                                                conf_res_data.append({
+                                                    'Price': f"₹{conf_res['price']:.2f}",
+                                                    'Strength': f"{conf_res['strength']:.0f}%",
+                                                    'Sources': f"{conf_res['count']} TFs",
+                                                    'Distance': f"+{distance_pct:.2f}%"
+                                                })
+                                            st.dataframe(pd.DataFrame(conf_res_data), use_container_width=True, hide_index=True)
+                                        else:
+                                            st.info("No confluence detected")
+
+                                    st.divider()
+
+                                    # STRENGTH ANALYSIS - Determine level status based on price action
+                                    st.markdown("#### 💪 Strength Analysis")
+
+                                    nearest_support = all_supports[0] if all_supports else None
+                                    nearest_resistance = all_resistances[0] if all_resistances else None
+
+                                    # Determine support status
+                                    support_status = "NEUTRAL"
+                                    support_strength = 50
+
+                                    if nearest_support:
+                                        distance = nearest_support['Distance %']
+                                        if distance > 0.5:
+                                            support_status = "BUILDING"
+                                            support_strength = min(90, 60 + (distance * 5))
+                                        elif 0.1 <= distance <= 0.5:
+                                            support_status = "TESTING"
+                                            support_strength = 75
+                                            # Check volume for confirmation
+                                            if volume_ratio >= 1.3:
+                                                support_strength = 85
+                                        elif distance < 0.1:
+                                            # Check if breaking or bouncing
+                                            if macd_signal == "BEARISH":
+                                                support_status = "BREAKING"
+                                                support_strength = 40
+                                            else:
+                                                support_status = "TESTING"
+                                                support_strength = 70
+
+                                    # Determine resistance status
+                                    resistance_status = "NEUTRAL"
+                                    resistance_strength = 50
+
+                                    if nearest_resistance:
+                                        distance = nearest_resistance['Distance %']
+                                        if distance > 0.5:
+                                            resistance_status = "BUILDING"
+                                            resistance_strength = min(90, 60 + (distance * 5))
+                                        elif 0.1 <= distance <= 0.5:
+                                            resistance_status = "TESTING"
+                                            resistance_strength = 75
+                                            if volume_ratio >= 1.3:
+                                                resistance_strength = 85
+                                        elif distance < 0.1:
+                                            if macd_signal == "BULLISH":
+                                                resistance_status = "BREAKING"
+                                                resistance_strength = 40
+                                            else:
+                                                resistance_status = "TESTING"
+                                                resistance_strength = 70
+
+                                    # Overall confidence based on confirmations
+                                    confirmation_count = 0
+                                    if macd_signal in ['BULLISH', 'BEARISH']:
+                                        confirmation_count += 1
+                                    if rsi_signal in ['OVERSOLD', 'OVERBOUGHT']:
+                                        confirmation_count += 1
+                                    if volume_ratio >= 1.3:
+                                        confirmation_count += 1
+
+                                    confidence = 70 + (confirmation_count * 5)
+
+                                    col1, col2 = st.columns(2)
+
+                                    with col1:
+                                        status_emoji = {
+                                            'BUILDING': '🟢',
+                                            'TESTING': '🟡',
+                                            'BREAKING': '🔴',
+                                            'NEUTRAL': '⚪'
+                                        }.get(support_status, '⚪')
+                                        st.metric(
+                                            "Support Status",
+                                            f"{status_emoji} {support_status}",
+                                            delta=f"{support_strength:.0f}% strength"
+                                        )
+
+                                    with col2:
+                                        status_emoji = {
+                                            'BUILDING': '🟢',
+                                            'TESTING': '🟡',
+                                            'BREAKING': '🔴',
+                                            'NEUTRAL': '⚪'
+                                        }.get(resistance_status, '⚪')
+                                        st.metric(
+                                            "Resistance Status",
+                                            f"{status_emoji} {resistance_status}",
+                                            delta=f"{resistance_strength:.0f}% strength"
+                                        )
+
+                                    confidence_emoji = "🟢" if confidence >= 80 else "🟡" if confidence >= 70 else "🔴"
+                                    st.metric("Overall Confidence", f"{confidence_emoji} {confidence:.0f}%")
+
+                                    st.divider()
+
+                                    # Store HTF results in session state for Telegram alerts
+                                    st.session_state['htf_analysis_result'] = {
+                                        'htf_results': htf_results,
+                                        'all_supports': all_supports[:5],
+                                        'all_resistances': all_resistances[:5],
+                                        'confluence_supports': confluence_supports[:3],
+                                        'confluence_resistances': confluence_resistances[:3],
+                                        'support_status': support_status,
+                                        'support_strength': support_strength,
+                                        'resistance_status': resistance_status,
+                                        'resistance_strength': resistance_strength,
+                                        'confidence': confidence,
                                         'current_price': current_price,
-                                        'nearest_support': supports[0]['level'] if supports else None,
-                                        'nearest_resistance': resistances[0]['level'] if resistances else None,
-                                        'volume': df_stats['volume'].iloc[-1],
-                                        'avg_volume': df_stats['volume'].mean(),
-                                        # Add more features from session state if available
-                                        'cvd_result': st.session_state.get('cvd_diamond_result'),
-                                        'gamma_result': st.session_state.get('gamma_flip_result'),
-                                        'block_result': st.session_state.get('block_trade_result'),
-                                        'merged_df': st.session_state.get('merged_df'),
-                                        'market_depth': st.session_state.get('market_depth_data'),
+                                        'macd_signal': macd_signal,
+                                        'rsi': current_rsi,
+                                        'rsi_signal': rsi_signal,
+                                        'volume_ratio': volume_ratio,
+                                        'vol_signal': vol_signal,
+                                        'timestamp': datetime.now().isoformat()
                                     }
 
-                                    strength_result = analyze_sr_strength_comprehensive(features)
+                                    # AUTOMATIC TELEGRAM ALERTS - Check for significant HTF conditions
+                                    try:
+                                        # Check if we should send HTF alert (cooldown: 15 minutes)
+                                        last_htf_alert_time = st.session_state.get('last_htf_alert_time')
+                                        current_time_for_alert = datetime.now()
 
-                                    if strength_result:
-                                        col1, col2 = st.columns(2)
+                                        should_send_alert = False
+                                        alert_reason = ""
 
-                                        with col1:
-                                            # Support analysis
-                                            st.markdown("**📉 Support Strength**")
-                                            sup_status = strength_result.get('support_status', 'UNKNOWN')
-                                            sup_strength = strength_result.get('support_strength', 0)
+                                        # Cooldown check (15 minutes = 900 seconds)
+                                        if last_htf_alert_time is None or (current_time_for_alert - last_htf_alert_time).total_seconds() >= 900:
 
-                                            status_color = {
-                                                'BUILDING': '🟢',
-                                                'TESTING': '🟡',
-                                                'BREAKING': '🔴'
-                                            }.get(sup_status, '⚪')
-
-                                            st.metric(
-                                                "Status",
-                                                f"{status_color} {sup_status}",
-                                                delta=f"{sup_strength:.0f}% strength"
-                                            )
-
-                                            if strength_result.get('entry_zone_support_lower'):
-                                                st.info(f"📍 Entry Zone: ₹{strength_result['entry_zone_support_lower']:.2f} - ₹{strength_result['entry_zone_support_upper']:.2f}")
-
-                                        with col2:
-                                            # Resistance analysis
-                                            st.markdown("**📈 Resistance Strength**")
-                                            res_status = strength_result.get('resistance_status', 'UNKNOWN')
-                                            res_strength = strength_result.get('resistance_strength', 0)
-
-                                            status_color = {
-                                                'BUILDING': '🟢',
-                                                'TESTING': '🟡',
-                                                'BREAKING': '🔴'
-                                            }.get(res_status, '⚪')
-
-                                            st.metric(
-                                                "Status",
-                                                f"{status_color} {res_status}",
-                                                delta=f"{res_strength:.0f}% strength"
-                                            )
-
-                                            if strength_result.get('entry_zone_resistance_lower'):
-                                                st.info(f"📍 Entry Zone: ₹{strength_result['entry_zone_resistance_lower']:.2f} - ₹{strength_result['entry_zone_resistance_upper']:.2f}")
-
-                                        # Display analysis reasons
-                                        if strength_result.get('reasons'):
-                                            st.markdown("**💡 Analysis Factors**")
-                                            reasons_col1, reasons_col2 = st.columns(2)
-                                            mid = len(strength_result['reasons']) // 2
-
-                                            with reasons_col1:
-                                                for reason in strength_result['reasons'][:mid]:
-                                                    st.markdown(f"• {reason}")
-
-                                            with reasons_col2:
-                                                for reason in strength_result['reasons'][mid:]:
-                                                    st.markdown(f"• {reason}")
-
-                                        # Overall confidence
-                                        confidence = strength_result.get('confidence', 0)
-                                        confidence_color = "🟢" if confidence >= 80 else "🟡" if confidence >= 70 else "🔴"
-                                        st.metric("Overall Confidence", f"{confidence_color} {confidence:.0f}%")
-
-                                        # Store HTF results in session state for Telegram alerts
-                                        st.session_state['htf_analysis_result'] = {
-                                            'htf_results': htf_results,
-                                            'confluence_support': supports[:3] if supports else [],
-                                            'confluence_resistance': resistances[:3] if resistances else [],
-                                            'strength_analysis': strength_result,
-                                            'current_price': current_price,
-                                            'timestamp': datetime.now().isoformat()
-                                        }
-
-                                        # AUTOMATIC TELEGRAM ALERTS - Check for significant HTF conditions
-                                        try:
-                                            # Check if we should send HTF alert (cooldown: 15 minutes)
-                                            last_htf_alert_time = st.session_state.get('last_htf_alert_time')
-                                            current_time_for_alert = datetime.now()
-
-                                            should_send_alert = False
-                                            alert_reason = ""
-
-                                            # Cooldown check (15 minutes = 900 seconds)
-                                            if last_htf_alert_time is None or (current_time_for_alert - last_htf_alert_time).total_seconds() >= 900:
-
-                                                # Alert Condition 1: Price near strong confluence level (within 0.5%)
-                                                for sup in supports[:2]:
-                                                    distance_pct = abs((current_price - sup['level']) / current_price) * 100
-                                                    if distance_pct <= 0.5 and sup['strength'] >= 75:
+                                            # Alert Condition 1: Price near HTF level (within 0.3%) with volume confirmation
+                                            if volume_ratio >= 1.3:  # Above average volume
+                                                for sup in all_supports[:3]:
+                                                    if sup['Distance %'] <= 0.3:
                                                         should_send_alert = True
-                                                        alert_reason = f"Price near strong support confluence ({sup['count']} sources)"
+                                                        alert_reason = f"Price near {sup['Timeframe']} support with high volume"
                                                         break
 
                                                 if not should_send_alert:
-                                                    for res in resistances[:2]:
-                                                        distance_pct = abs((res['level'] - current_price) / current_price) * 100
-                                                        if distance_pct <= 0.5 and res['strength'] >= 75:
+                                                    for res in all_resistances[:3]:
+                                                        if res['Distance %'] <= 0.3:
                                                             should_send_alert = True
-                                                            alert_reason = f"Price near strong resistance confluence ({res['count']} sources)"
+                                                            alert_reason = f"Price near {res['Timeframe']} resistance with high volume"
                                                             break
 
-                                                # Alert Condition 2: Support/Resistance status change (TESTING or BREAKING)
-                                                if not should_send_alert:
-                                                    sup_status = strength_result.get('support_status', '')
-                                                    res_status = strength_result.get('resistance_status', '')
+                                            # Alert Condition 2: All timeframes aligned with MACD+RSI confirmation
+                                            if not should_send_alert:
+                                                trends = [tf.trend_direction for tf in htf_results.values()]
+                                                if trends.count('UPTREND') >= 3 or trends.count('DOWNTREND') >= 3:
+                                                    trend_direction = 'UPTREND' if trends.count('UPTREND') >= 3 else 'DOWNTREND'
 
-                                                    if sup_status in ['TESTING', 'BREAKING'] and strength_result.get('support_strength', 0) >= 70:
+                                                    # Check MACD and RSI confirm the trend
+                                                    macd_confirms = (trend_direction == 'UPTREND' and macd_signal == 'BULLISH') or \
+                                                                   (trend_direction == 'DOWNTREND' and macd_signal == 'BEARISH')
+
+                                                    rsi_confirms = (trend_direction == 'UPTREND' and current_rsi < 70) or \
+                                                                  (trend_direction == 'DOWNTREND' and current_rsi > 30)
+
+                                                    if macd_confirms and rsi_confirms:
                                                         should_send_alert = True
-                                                        alert_reason = f"Support {sup_status}"
-                                                    elif res_status in ['TESTING', 'BREAKING'] and strength_result.get('resistance_strength', 0) >= 70:
+                                                        alert_reason = f"3+ timeframes {trend_direction} with MACD+RSI confirmation"
+
+                                            # Alert Condition 3: RSI extreme with volume spike
+                                            if not should_send_alert:
+                                                if volume_ratio >= 2.0:
+                                                    if current_rsi <= 25:
                                                         should_send_alert = True
-                                                        alert_reason = f"Resistance {res_status}"
+                                                        alert_reason = "RSI oversold (<25) with volume spike"
+                                                    elif current_rsi >= 75:
+                                                        should_send_alert = True
+                                                        alert_reason = "RSI overbought (>75) with volume spike"
 
-                                                # Alert Condition 3: All 4 timeframes aligned (rare confluence)
-                                                if not should_send_alert:
-                                                    trends = [tf.trend_direction for tf in htf_results.values()]
-                                                    if trends.count('UPTREND') == 4 or trends.count('DOWNTREND') == 4:
-                                                        strong_trends = [tf for tf in htf_results.values() if tf.trend_strength >= 70]
-                                                        if len(strong_trends) >= 3:
-                                                            should_send_alert = True
-                                                            trend_direction = 'UPTREND' if trends.count('UPTREND') == 4 else 'DOWNTREND'
-                                                            alert_reason = f"All timeframes aligned: {trend_direction}"
+                                        # Send alert if conditions met
+                                        if should_send_alert:
+                                            from telegram_alerts import TelegramBot
 
-                                            # Send alert if conditions met
-                                            if should_send_alert:
-                                                from telegram_alerts import TelegramBot
+                                            telegram = TelegramBot()
 
-                                                telegram = TelegramBot()
+                                            # Build HTF alert message
+                                            alert_msg = f"⚠️ *HTF ALERT* ⚠️\n\n"
+                                            alert_msg += f"🎯 *Trigger:* {alert_reason}\n\n"
 
-                                                # Build HTF alert message
-                                                alert_msg = f"⚠️ *HTF ALERT* ⚠️\n\n"
-                                                alert_msg += f"🎯 *Trigger:* {alert_reason}\n\n"
+                                            # Add timeframe trends
+                                            alert_msg += "📊 *Multi-Timeframe Trends:*\n"
+                                            for tf_name, tf_result in htf_results.items():
+                                                trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
+                                                alert_msg += f"• {tf_name}: {trend_emoji} {tf_result.trend_direction} ({tf_result.trend_strength:.0f}%)\n"
 
-                                                # Add timeframe trends
-                                                alert_msg += "📊 *Multi-Timeframe Trends:*\n"
-                                                for tf_name, tf_result in htf_results.items():
-                                                    trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
-                                                    alert_msg += f"• {tf_name}: {trend_emoji} {tf_result.trend_direction} ({tf_result.trend_strength:.0f}%)\n"
+                                            alert_msg += f"\n💰 *Current Price:* ₹{current_price:.2f}\n\n"
 
-                                                alert_msg += f"\n💰 *Current Price:* ₹{current_price:.2f}\n\n"
+                                            # Add confluence support/resistance (higher priority)
+                                            if confluence_supports:
+                                                alert_msg += "📉 *Top Support (Confluence):*\n"
+                                                for conf_sup in confluence_supports[:3]:
+                                                    distance_pct = ((current_price - conf_sup['price']) / current_price) * 100
+                                                    alert_msg += f"• ₹{conf_sup['price']:.2f} ({conf_sup['strength']:.0f}% | {conf_sup['count']} src | -{distance_pct:.2f}%)\n"
+                                                alert_msg += "\n"
 
-                                                # Add confluence levels
-                                                if supports:
-                                                    alert_msg += "📉 *Top Support (Confluence):*\n"
-                                                    for sup in supports[:3]:
-                                                        distance_pct = ((current_price - sup['level']) / current_price) * 100
-                                                        alert_msg += f"• ₹{sup['level']:.2f} ({sup['strength']:.0f}% | {sup['count']} src | -{distance_pct:.2f}%)\n"
-                                                    alert_msg += "\n"
+                                            if confluence_resistances:
+                                                alert_msg += "📈 *Top Resistance (Confluence):*\n"
+                                                for conf_res in confluence_resistances[:3]:
+                                                    distance_pct = ((conf_res['price'] - current_price) / current_price) * 100
+                                                    alert_msg += f"• ₹{conf_res['price']:.2f} ({conf_res['strength']:.0f}% | {conf_res['count']} src | +{distance_pct:.2f}%)\n"
+                                                alert_msg += "\n"
 
-                                                if resistances:
-                                                    alert_msg += "📈 *Top Resistance (Confluence):*\n"
-                                                    for res in resistances[:3]:
-                                                        distance_pct = ((res['level'] - current_price) / current_price) * 100
-                                                        alert_msg += f"• ₹{res['level']:.2f} ({res['strength']:.0f}% | {res['count']} src | +{distance_pct:.2f}%)\n"
-                                                    alert_msg += "\n"
+                                            # Add strength analysis
+                                            alert_msg += "💪 *Strength Analysis:*\n"
+                                            alert_msg += f"• Support: {support_status} ({support_strength:.0f}%)\n"
+                                            alert_msg += f"• Resistance: {resistance_status} ({resistance_strength:.0f}%)\n"
+                                            alert_msg += f"• Confidence: {confidence:.0f}%"
 
-                                                # Add strength analysis
-                                                if strength_result:
-                                                    sup_status = strength_result.get('support_status', 'UNKNOWN')
-                                                    res_status = strength_result.get('resistance_status', 'UNKNOWN')
-                                                    confidence_val = strength_result.get('confidence', 0)
+                                            # Send alert
+                                            success = telegram.send_message(alert_msg, parse_mode='Markdown')
 
-                                                    alert_msg += f"💪 *Strength Analysis:*\n"
-                                                    alert_msg += f"• Support: {sup_status} ({strength_result.get('support_strength', 0):.0f}%)\n"
-                                                    alert_msg += f"• Resistance: {res_status} ({strength_result.get('resistance_strength', 0):.0f}%)\n"
-                                                    alert_msg += f"• Confidence: {confidence_val:.0f}%\n"
+                                            if success:
+                                                st.session_state['last_htf_alert_time'] = current_time_for_alert
+                                                st.success(f"✅ HTF alert sent automatically: {alert_reason}")
+                                            else:
+                                                logger.warning("Failed to send automatic HTF alert")
 
-                                                # Send alert
-                                                success = telegram.send_message(alert_msg, parse_mode='Markdown')
-
-                                                if success:
-                                                    st.session_state['last_htf_alert_time'] = current_time_for_alert
-                                                    st.success(f"✅ HTF alert sent automatically: {alert_reason}")
-                                                else:
-                                                    logger.warning("Failed to send automatic HTF alert")
-
-                                        except Exception as e:
-                                            logger.error(f"Automatic HTF alert error: {e}", exc_info=True)
-
-                                    st.divider()
+                                    except Exception as e:
+                                        logger.error(f"Automatic HTF alert error: {e}", exc_info=True)
 
                                 else:
                                     st.warning("Unable to analyze HTF - insufficient data")
@@ -3505,6 +3653,7 @@ with tab6:
                             except Exception as e:
                                 st.error(f"❌ Error in HTF analysis: {e}")
                                 logger.error(f"HTF analysis error: {e}", exc_info=True)
+
 
                     tab_idx += 1
 

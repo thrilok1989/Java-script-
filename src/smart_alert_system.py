@@ -518,62 +518,77 @@ class SmartAlertSystem:
 
         # If both CVD and Block Trade alerts exist, combine them
         if cvd_alert and block_alert:
-            # Remove individual alerts from list
-            alerts = [a for a in alerts if a.alert_type not in ['CVD_DIVERGENCE', 'BLOCK_TRADE']]
-
-            # Determine overall direction (prioritize when both agree)
-            if cvd_alert.direction == block_alert.direction:
-                combined_direction = cvd_alert.direction
-                confidence_indicator = "🔥 STRONG CONFLUENCE"
+            # Check cooldown for COMBINED alert (use special type)
+            if not self._can_send_alert('COMBINED_INSTITUTIONAL'):
+                # Skip combined alert due to cooldown
+                logger.info("Skipping combined CVD+BlockTrade alert due to cooldown")
             else:
-                combined_direction = cvd_alert.direction  # CVD takes precedence
-                confidence_indicator = "⚠️ MIXED SIGNALS"
+                # Remove individual alerts from list
+                alerts = [a for a in alerts if a.alert_type not in ['CVD_DIVERGENCE', 'BLOCK_TRADE']]
 
-            # Build combined message
-            combined_message = f"{confidence_indicator}\n\n"
-            combined_message += f"💎 *CVD: {cvd_alert.title.split(': ')[1]}*\n"
-            combined_message += f"Score: {cvd_alert.value:.0f} | {cvd_alert.message.split('Smart Money: ')[1].split('\\n')[0] if 'Smart Money:' in cvd_alert.message else 'N/A'}\n\n"
-            combined_message += f"📦 *Block Trade: {block_alert.title.split(': ')[1]}*\n"
+                # Determine overall direction (prioritize when both agree)
+                if cvd_alert.direction == block_alert.direction:
+                    combined_direction = cvd_alert.direction
+                    confidence_indicator = "🔥 STRONG CONFLUENCE"
+                else:
+                    combined_direction = cvd_alert.direction  # CVD takes precedence
+                    confidence_indicator = "⚠️ MIXED SIGNALS"
 
-            # Extract block data
-            block_msg_lines = block_alert.message.split('\n')
-            for line in block_msg_lines:
-                if 'CALL Blocks:' in line or 'PUT Blocks:' in line or 'Total Volume:' in line or 'Bullish Blocks:' in line or 'Bearish Blocks:' in line:
-                    combined_message += f"{line}\n"
+                # Build combined message
+                combined_message = f"{confidence_indicator}\n\n"
+                combined_message += f"💎 *CVD: {cvd_alert.title.split(': ')[1]}*\n"
+                combined_message += f"Score: {cvd_alert.value:.0f} | {cvd_alert.message.split('Smart Money: ')[1].split('\\n')[0] if 'Smart Money:' in cvd_alert.message else 'N/A'}\n"
 
-            combined_message += f"\n📊 Direction: *{combined_direction}*"
+                # Add CVD confirmation/contradiction from options
+                if '✓ Confirmed' in cvd_alert.message:
+                    combined_message += cvd_alert.message.split('\\n')[-1] + "\n"
+                elif '⚠ Contradicted' in cvd_alert.message:
+                    combined_message += cvd_alert.message.split('\\n')[-1] + "\n"
 
-            # Create combined alert
-            combined_alert = Alert(
-                alert_id=self._generate_alert_id(),
-                alert_type='COMBINED_INSTITUTIONAL',
-                priority='MEDIUM',
-                title='💎📦 Institutional Activity',
-                message=combined_message,
-                value=(cvd_alert.value + block_alert.value) / 2,
-                threshold=50,
-                direction=combined_direction,
-                timestamp=datetime.now().isoformat()
-            )
+                combined_message += f"\n📦 *Block Trade: {block_alert.title.split(': ')[1]}*\n"
 
-            # Add to history
-            self.alert_history.append(asdict(combined_alert))
+                # Extract block data
+                block_msg_lines = block_alert.message.split('\n')
+                for line in block_msg_lines:
+                    if 'CALL Blocks:' in line or 'PUT Blocks:' in line or 'Total Volume:' in line or 'Bullish Blocks:' in line or 'Bearish Blocks:' in line:
+                        combined_message += f"{line}\n"
 
-            # Send combined alert
-            if send_telegram:
-                success, msg = self.send_telegram(
-                    combined_message,
-                    priority=combined_alert.priority
+                combined_message += f"\n📊 Direction: *{combined_direction}*"
+
+                # Create combined alert
+                combined_alert = Alert(
+                    alert_id=self._generate_alert_id(),
+                    alert_type='COMBINED_INSTITUTIONAL',
+                    priority='MEDIUM',
+                    title='💎📦 Institutional Activity',
+                    message=combined_message,
+                    value=(cvd_alert.value + block_alert.value) / 2,
+                    threshold=50,
+                    direction=combined_direction,
+                    timestamp=datetime.now().isoformat()
                 )
 
-                if success:
-                    combined_alert.sent = True
-                    self._record_alert_sent('CVD_DIVERGENCE')
-                    self._record_alert_sent('BLOCK_TRADE')
-                    sent_count += 1
-                else:
-                    failed_count += 1
-                    logger.warning(f"Failed to send combined alert: {msg}")
+                # Add to history
+                self.alert_history.append(asdict(combined_alert))
+
+                # Send combined alert
+                if send_telegram:
+                    success, msg = self.send_telegram(
+                        combined_message,
+                        priority=combined_alert.priority
+                    )
+
+                    if success:
+                        combined_alert.sent = True
+                        # Record cooldown for combined alert AND individual types
+                        self._record_alert_sent('COMBINED_INSTITUTIONAL')
+                        self._record_alert_sent('CVD_DIVERGENCE')
+                        self._record_alert_sent('BLOCK_TRADE')
+                        sent_count += 1
+                        logger.info(f"✅ Combined institutional alert sent successfully (cooldown: {self.config.cooldown_minutes}min)")
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Failed to send combined alert: {msg}")
 
         # Process remaining alerts individually
         for alert in alerts:
