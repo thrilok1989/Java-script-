@@ -3180,16 +3180,38 @@ with tab6:
                                 # Initialize HTF analyzer
                                 htf_analyzer = MultiTimeframeAnalyzer()
 
-                                # Analyze all timeframes (5m, 15m, 1h, 4h, 1d)
+                                # Resample chart data to different timeframes
+                                def resample_ohlcv(df, timeframe):
+                                    """Resample OHLCV data to specified timeframe"""
+                                    try:
+                                        resampled = df.resample(timeframe).agg({
+                                            'open': 'first',
+                                            'high': 'max',
+                                            'low': 'min',
+                                            'close': 'last',
+                                            'volume': 'sum'
+                                        }).dropna()
+                                        return resampled if len(resampled) >= 50 else None
+                                    except:
+                                        return None
+
+                                # Create resampled dataframes for different timeframes
+                                data_5m = resample_ohlcv(df_stats, '5T')   # 5 minutes
+                                data_15m = resample_ohlcv(df_stats, '15T') # 15 minutes
+                                data_1h = resample_ohlcv(df_stats, '1H')   # 1 hour
+                                data_4h = resample_ohlcv(df_stats, '4H')   # 4 hours
+                                data_1d = resample_ohlcv(df_stats, '1D')   # 1 day
+
+                                # Analyze all timeframes (pass only available resampled data)
                                 htf_results = htf_analyzer.analyze_all_timeframes(
-                                    data_1d=df_stats,
-                                    data_4h=df_stats,
-                                    data_1h=df_stats,
-                                    data_15m=df_stats,
-                                    data_5m=df_stats
+                                    data_1d=data_1d,
+                                    data_4h=data_4h,
+                                    data_1h=data_1h,
+                                    data_15m=data_15m,
+                                    data_5m=data_5m
                                 )
 
-                                if htf_results:
+                                if htf_results and len(htf_results) > 0:
                                     # Current price for calculations
                                     current_price = df_stats['close'].iloc[-1]
 
@@ -3648,7 +3670,8 @@ with tab6:
                                         logger.error(f"Automatic HTF alert error: {e}", exc_info=True)
 
                                 else:
-                                    st.warning("Unable to analyze HTF - insufficient data")
+                                    st.warning("⚠️ No multi-timeframe data available")
+                                    st.info("💡 HTF Analysis requires sufficient historical data. Try selecting a longer period (1d or 5d) in the chart settings above.")
 
                             except Exception as e:
                                 st.error(f"❌ Error in HTF analysis: {e}")
