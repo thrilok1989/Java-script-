@@ -13,8 +13,6 @@ from streamlit_autorefresh import st_autorefresh
 import os
 import asyncio
 import logging
-import importlib
-import sys
 
 # Import modules
 from config import *
@@ -27,17 +25,6 @@ from telegram_alerts import TelegramBot, send_test_message
 from dhan_api import check_dhan_connection
 from bias_analysis import BiasAnalysisPro
 from advanced_chart_analysis import AdvancedChartAnalysis
-
-# Force reload critical modules to pick up ICT indicator changes
-if 'modules_reloaded' not in st.session_state:
-    try:
-        if 'advanced_chart_analysis' in sys.modules:
-            importlib.reload(sys.modules['advanced_chart_analysis'])
-        if 'telegram_alerts' in sys.modules:
-            importlib.reload(sys.modules['telegram_alerts'])
-        st.session_state.modules_reloaded = True
-    except Exception as e:
-        st.warning(f"Module reload warning: {e}")
 from overall_market_sentiment import render_overall_market_sentiment, calculate_overall_sentiment, run_ai_analysis, shutdown_ai_engine
 from advanced_proximity_alerts import get_proximity_alert_system
 from data_cache_manager import (
@@ -48,6 +35,7 @@ from data_cache_manager import (
     get_cached_bias_analysis_results
 )
 from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
+from src.market_structure_ui import render_market_structure_section, render_structure_widget
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -371,12 +359,8 @@ def get_bias_analyzer():
 
 def get_advanced_chart_analyzer():
     """Lazy load advanced chart analyzer"""
-    # Force reload to pick up new ICT indicator
-    # Remove this check after first successful load with ICT indicator
-    if 'advanced_chart_analyzer' not in st.session_state or not hasattr(st.session_state.advanced_chart_analyzer, '_ict_indicator_loaded'):
-        analyzer = AdvancedChartAnalysis()
-        analyzer._ict_indicator_loaded = True  # Mark as new version
-        st.session_state.advanced_chart_analyzer = analyzer
+    if 'advanced_chart_analyzer' not in st.session_state:
+        st.session_state.advanced_chart_analyzer = AdvancedChartAnalysis()
     return st.session_state.advanced_chart_analyzer
 
 if 'bias_analysis_results' not in st.session_state:
@@ -439,7 +423,7 @@ if 'overall_option_data' not in st.session_state:
 # - Lazy loading for tab-specific data
 # - Streamlit caching for expensive computations
 
-# Auto-refresh every 5 minutes (configurable via AUTO_REFRESH_INTERVAL)
+# Auto-refresh every 1 minute (configurable via AUTO_REFRESH_INTERVAL)
 # This ensures the app stays updated with latest market data
 # The refresh is seamless - no blur/flash thanks to custom CSS above
 refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_refresh")
@@ -450,21 +434,6 @@ refresh_count = st_autorefresh(interval=AUTO_REFRESH_INTERVAL * 1000, key="data_
 
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
-
-# ═══════════════════════════════════════════════════════════════════════
-# MANUAL REFRESH BUTTON - SINGLE REFRESH FOR ENTIRE APP AND ALL TABS
-# ═══════════════════════════════════════════════════════════════════════
-
-col_refresh1, col_refresh2, col_refresh3 = st.columns([1, 1, 1])
-with col_refresh2:
-    if st.button("🔄 REFRESH NOW", type="primary", use_container_width=True, key="main_app_refresh_button"):
-        st.cache_data.clear()
-        st.session_state.clear()
-        st.rerun()
-
-current_time_ist = get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S')
-st.markdown(f"<div style='text-align: center; margin: 10px 0;'><small>⏱️ Auto-refresh: Every 5 minutes | ⏰ Last refresh: {current_time_ist} IST</small></div>", unsafe_allow_html=True)
-st.markdown("---")
 
 # Check and run AI analysis if needed
 check_and_run_ai_analysis()
@@ -572,7 +541,7 @@ with st.sidebar:
     
     # Settings
     st.subheader("⚙️ Settings")
-    st.write(f"**Auto Refresh:** Every 5 minutes ({AUTO_REFRESH_INTERVAL}s)")
+    st.write(f"**Auto Refresh:** {AUTO_REFRESH_INTERVAL}s")
     st.write(f"**NIFTY Lot Size:** {LOT_SIZES['NIFTY']}")
     st.write(f"**SENSEX Lot Size:** {LOT_SIZES['SENSEX']}")
     st.write(f"**SL Offset:** {STOP_LOSS_OFFSET} points")
@@ -942,116 +911,6 @@ if st.session_state.get('merged_df') is None:
         pass  # Silently fail - will retry in tab
 
 # ═══════════════════════════════════════════════════════════════════════
-# UNIFIED ML TRADING SIGNAL (Above all tabs - heavily cached for performance)
-# ═══════════════════════════════════════════════════════════════════════
-# Initialize cache variables once
-if 'unified_ml_cache_time' not in st.session_state:
-    st.session_state.unified_ml_cache_time = 0
-if 'unified_ml_generator' not in st.session_state:
-    st.session_state.unified_ml_generator = None
-
-with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
-    try:
-        current_time = time.time()
-        cache_duration = 120  # Only regenerate every 120 seconds (2 minutes)
-
-        # Check if we have cached signal and it's still valid
-        cached_signal = st.session_state.get('unified_ml_signal')
-        time_since_cache = current_time - st.session_state.unified_ml_cache_time
-
-        if cached_signal is not None and time_since_cache < cache_duration:
-            # Use cached signal - no computation needed
-            from src.unified_ml_signal import render_unified_signal
-            spot_price = nifty_data.get('spot_price') if nifty_data else None
-            render_unified_signal(cached_signal, spot_price=spot_price)
-            st.caption(f"🔄 Signal updates in {int(cache_duration - time_since_cache)}s")
-        else:
-            # Need to regenerate signal - but use cached generator
-            from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
-
-            # Create generator once and reuse (major performance fix)
-            if st.session_state.unified_ml_generator is None:
-                st.session_state.unified_ml_generator = UnifiedMLSignalGenerator()
-
-            # Try multiple sources for chart data
-            df_for_signal = None
-
-            # 1. First try session_state chart_data (from tabs)
-            try:
-                cached_chart = st.session_state.get('chart_data')
-                if cached_chart is not None and hasattr(cached_chart, '__len__') and len(cached_chart) > 0:
-                    df_for_signal = cached_chart
-            except:
-                pass
-
-            # 2. Try nifty_data chart_data (from initial load)
-            if df_for_signal is None:
-                try:
-                    if nifty_data and nifty_data.get('chart_data') is not None:
-                        chart_data_raw = nifty_data.get('chart_data')
-                        if hasattr(chart_data_raw, '__len__') and len(chart_data_raw) > 0:
-                            df_for_signal = chart_data_raw
-                            st.session_state.chart_data = df_for_signal
-                except:
-                    pass
-
-            # 3. Try to fetch from API
-            if df_for_signal is None:
-                try:
-                    df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
-                    if df_for_signal is not None and len(df_for_signal) > 0:
-                        st.session_state.chart_data = df_for_signal
-                except:
-                    pass
-
-            # 4. Last resort - create minimal DataFrame from nifty_data OHLC
-            if df_for_signal is None and nifty_data and nifty_data.get('spot_price'):
-                try:
-                    import pandas as pd
-                    from datetime import datetime
-                    # Create minimal DataFrame with current OHLC
-                    df_for_signal = pd.DataFrame({
-                        'open': [nifty_data.get('open', nifty_data['spot_price'])],
-                        'high': [nifty_data.get('high', nifty_data['spot_price'])],
-                        'low': [nifty_data.get('low', nifty_data['spot_price'])],
-                        'close': [nifty_data.get('spot_price')],
-                        'volume': [0]
-                    }, index=[datetime.now()])
-                    st.session_state.chart_data = df_for_signal
-                except:
-                    pass
-
-            if df_for_signal is not None and len(df_for_signal) > 0:
-
-                option_chain = st.session_state.get('option_chain_data')
-                vix_current = st.session_state.get('vix_current', 15.0)
-                spot_price = nifty_data.get('spot_price') if nifty_data else None
-                # Safely get bias_results - handle None case
-                bias_analysis = st.session_state.get('bias_analysis_results')
-                bias_results = bias_analysis.get('bias_results') if isinstance(bias_analysis, dict) else None
-
-                # Use cached generator instead of creating new one
-                unified_signal = st.session_state.unified_ml_generator.generate_signal(
-                    df=df_for_signal,
-                    option_chain=option_chain,
-                    vix_current=vix_current,
-                    spot_price=spot_price,
-                    bias_results=bias_results
-                )
-
-                # Cache the signal
-                st.session_state.unified_ml_signal = unified_signal
-                st.session_state.unified_ml_cache_time = current_time
-
-                render_unified_signal(unified_signal, spot_price=spot_price)
-            else:
-                st.info("⏳ Loading market data... Unified signal will appear once data is available.")
-    except Exception as e:
-        st.warning(f"⚠️ ML Signal temporarily unavailable: {str(e)}")
-
-st.divider()
-
-# ═══════════════════════════════════════════════════════════════════════
 # TABS - USING NATIVE STREAMLIT TABS FOR BETTER UX
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1059,7 +918,7 @@ st.divider()
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🌟 Overall Market Sentiment",
     "🎯 Trade Setup",
-    "📊 Active Signals",
+    "📊 Active Signals & Structure",
     "📈 Positions",
     "🎲 Bias Analysis Pro",
     "📉 Advanced Chart Analysis",
@@ -1367,6 +1226,96 @@ with tab3:
                                         st.error(f"Error: {result['error']}")
 
                 st.divider()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # MARKET STRUCTURE ANALYSIS SECTION (Inside Active Signals Tab)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    st.markdown("---")
+    st.markdown("## 🧠 Market Structure Analysis")
+    st.caption("Structure-based detection BEFORE price moves | Probability Engine | Expiry Patterns")
+
+    # Load Market Structure Analysis
+    try:
+        # Get OHLC data from multiple sources (prioritize freshest)
+        ohlc_df = None
+        option_data = None
+        spot_price = None
+        is_expiry = False
+        nifty_data_struct = None  # Initialize to avoid reference errors
+
+        # SOURCE 1: PRIMARY - st.session_state.chart_data (used by Unified ML - MOST RELIABLE)
+        if 'chart_data' in st.session_state:
+            chart_data = st.session_state.get('chart_data')
+            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                ohlc_df = chart_data.copy()
+
+        # SOURCE 2: data_df from Option Screener
+        if ohlc_df is None and 'data_df' in st.session_state:
+            chart_data = st.session_state.get('data_df')
+            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                ohlc_df = chart_data.copy()
+
+        # SOURCE 3: nifty_df alternative
+        if ohlc_df is None and 'nifty_df' in st.session_state:
+            chart_data = st.session_state.get('nifty_df')
+            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                ohlc_df = chart_data.copy()
+
+        # SOURCE 4: Try data cache manager
+        if ohlc_df is None:
+            nifty_data_struct = get_cached_nifty_data()
+            if nifty_data_struct and 'chart_data' in nifty_data_struct:
+                chart_data = nifty_data_struct['chart_data']
+                if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
+                    ohlc_df = chart_data
+
+        # Get spot price from multiple sources
+        if 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
+            spot_price = st.session_state['nifty_spot']
+        elif 'last_spot_price' in st.session_state and st.session_state.get('last_spot_price'):
+            spot_price = st.session_state.last_spot_price
+        elif nifty_data_struct and 'spot_price' in nifty_data_struct:
+            spot_price = nifty_data_struct['spot_price']
+        elif ohlc_df is not None and len(ohlc_df) > 0 and 'close' in ohlc_df.columns:
+            spot_price = float(ohlc_df['close'].iloc[-1])
+
+        # Get option data from multiple sources
+        if 'merged_df' in st.session_state:
+            merged = st.session_state.get('merged_df')
+            if isinstance(merged, pd.DataFrame) and len(merged) > 0:
+                option_data = {'merged_df': merged, 'source': 'option_screener'}
+
+        if option_data is None and 'overall_option_data' in st.session_state:
+            screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
+            if screener_data:
+                option_data = screener_data
+
+        if option_data is None:
+            option_data = {}
+
+        # Add extras
+        if 'atm_strike' in st.session_state:
+            option_data['atm_strike'] = st.session_state['atm_strike']
+        if 'market_depth_data' in st.session_state:
+            option_data['market_depth'] = st.session_state['market_depth_data']
+
+        # Check expiry day
+        today = datetime.now()
+        is_expiry = today.weekday() == 3  # Thursday
+
+        if ohlc_df is not None and len(ohlc_df) > 20:
+            render_market_structure_section(
+                ohlc_df=ohlc_df,
+                option_data=option_data,
+                is_expiry=is_expiry,
+                spot_price=spot_price
+            )
+        else:
+            st.info("📊 Load chart data from **Overall Market Sentiment** or **NIFTY Option Screener** tab to see Market Structure Analysis.")
+
+    except Exception as e:
+        st.warning(f"Market Structure module loading: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 4: POSITIONS
@@ -2197,9 +2146,6 @@ with tab6:
     with col1:
         show_reversal_zones = st.checkbox("🎯 Reversal Probability Zones (LuxAlgo)", value=True, key="show_reversal_zones", help="Statistical reversal prediction with probability targets")
 
-    with col2:
-        show_ict_indicator = st.checkbox("🎯 ICT Comprehensive Indicator", value=True, key="show_ict_indicator", help="Order Blocks, Fair Value Gaps, Supply/Demand Zones, Volume Profile with POC")
-
     st.divider()
 
     # Indicator Configuration Section
@@ -2645,7 +2591,6 @@ with tab6:
                     show_fibonacci=show_fibonacci,
                     show_patterns=show_patterns,
                     show_reversal_zones=show_reversal_zones,
-                    show_ict_indicator=show_ict_indicator,
                     vob_params=None,
                     htf_params=None,
                     footprint_params=None,
@@ -2654,92 +2599,8 @@ with tab6:
                     liquidity_params=liquidity_params,
                     money_flow_params=money_flow_params,
                     deltaflow_params=deltaflow_params,
-                    reversal_zones_params=reversal_zones_params,
-                    ict_params=None
+                    reversal_zones_params=reversal_zones_params
                 )
-
-                # Send Telegram alerts for ICT indicator signals
-                if show_ict_indicator:
-                    try:
-                        from indicators.comprehensive_ict_indicator import ComprehensiveICTIndicator
-                        ict_indicator = ComprehensiveICTIndicator()
-                        ict_data = ict_indicator.calculate(st.session_state.chart_data)
-
-                        if ict_data and ict_data.get('signals'):
-                            signals = ict_data['signals']
-                            overall_bias = signals.get('overall_bias', 'NEUTRAL')
-
-                            # Only send alert if there are significant signals
-                            if signals.get('bullish_count', 0) > 0 or signals.get('bearish_count', 0) > 0:
-                                # Send alert every 5 minutes or on bias change
-                                should_send_alert = False
-
-                                # Check if bias changed
-                                if st.session_state.get('last_ict_bias') != overall_bias:
-                                    should_send_alert = True
-
-                                # Or if 5 minutes passed since last alert
-                                elif 'last_ict_alert' in st.session_state:
-                                    time_since_alert = (get_current_time_ist() - st.session_state.last_ict_alert).total_seconds()
-                                    if time_since_alert >= 300:  # 5 minutes
-                                        should_send_alert = True
-                                else:
-                                    # First time - always send
-                                    should_send_alert = True
-
-                                if should_send_alert:
-                                    try:
-                                        # Use the same TelegramBot that's used elsewhere in the app
-                                        telegram = TelegramBot()
-                                        current_price = st.session_state.chart_data['close'].iloc[-1]
-
-                                        # Send ICT indicator alert
-                                        alert_sent = telegram.send_ict_indicator_alert(
-                                            symbol=symbol_code.split()[0],
-                                            ict_signals=signals,
-                                            current_price=current_price
-                                        )
-
-                                        if alert_sent:
-                                            st.session_state.last_ict_alert = get_current_time_ist()
-                                            st.session_state.last_ict_bias = overall_bias
-                                            st.success("✅ ICT Indicator alert sent to Telegram!")
-                                    except Exception as telegram_error:
-                                        st.warning(f"⚠️ Could not send ICT alert: {str(telegram_error)}")
-
-                            # Display ICT indicator data below chart for debugging
-                            with st.expander("📊 ICT Indicator Detected Signals", expanded=False):
-                                st.markdown(f"### Overall Bias: **{overall_bias}**")
-
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("🟢 Bullish Signals", signals.get('bullish_count', 0))
-                                with col2:
-                                    st.metric("🔴 Bearish Signals", signals.get('bearish_count', 0))
-
-                                if signals.get('bullish_signals'):
-                                    st.markdown("#### 🟢 Active Bullish Signals:")
-                                    for sig in signals['bullish_signals'][:10]:
-                                        level_badge = f" `[{sig.get('level')}]`" if sig.get('level') else ""
-                                        poi_info = f" - POI: {sig.get('poi')}" if sig.get('poi') else ""
-                                        st.markdown(f"- **{sig['type']}**{level_badge}: {sig['price']}{poi_info}")
-
-                                if signals.get('bearish_signals'):
-                                    st.markdown("#### 🔴 Active Bearish Signals:")
-                                    for sig in signals['bearish_signals'][:10]:
-                                        level_badge = f" `[{sig.get('level')}]`" if sig.get('level') else ""
-                                        poi_info = f" - POI: {sig.get('poi')}" if sig.get('poi') else ""
-                                        st.markdown(f"- **{sig['type']}**{level_badge}: {sig['price']}{poi_info}")
-
-                                st.markdown(f"**POC (Point of Control):** {ict_data.get('poc_price', 'N/A')}")
-                                st.markdown(f"**Order Blocks (Swing):** {len(ict_data.get('swing_order_blocks', []))}")
-                                st.markdown(f"**Order Blocks (Internal):** {len(ict_data.get('internal_order_blocks', []))}")
-                                st.markdown(f"**Fair Value Gaps:** {len(ict_data.get('fvgs', []))}")
-                                st.markdown(f"**Supply Zones:** {len(ict_data.get('supply_zones', []))}")
-                                st.markdown(f"**Demand Zones:** {len(ict_data.get('demand_zones', []))}")
-
-                    except Exception as e:
-                        st.warning(f"⚠️ ICT indicator error: {str(e)}")
 
                 # Display chart
                 st.plotly_chart(fig, use_container_width=True)
@@ -2778,8 +2639,6 @@ with tab6:
                 indicator_tabs = []
                 # Always show Market Regime tab
                 indicator_tabs.append("🎯 Market Regime")
-                # Always show HTF Analysis tab
-                indicator_tabs.append("📊 HTF Analysis")
                 if show_rsi:
                     indicator_tabs.append("📈 Ultimate RSI")
                 if show_om:
@@ -3165,518 +3024,6 @@ with tab6:
                             with signal_cols[1]:
                                 for signal in regime_result.signals[mid:]:
                                     st.markdown(f"• {signal}")
-
-                    tab_idx += 1
-
-                    # HTF Analysis Tab
-                    with tabs[tab_idx]:
-                        st.markdown("### 📊 Higher Timeframe (HTF) Analysis")
-                        st.caption("🎯 Multi-timeframe Support/Resistance with MACD, Volume, and RSI confirmations")
-
-                        with st.spinner("Analyzing multiple timeframes..."):
-                            try:
-                                from src.multi_timeframe_analysis import MultiTimeframeAnalyzer
-
-                                # Initialize HTF analyzer
-                                htf_analyzer = MultiTimeframeAnalyzer()
-
-                                # Resample chart data to different timeframes
-                                def resample_ohlcv(df, timeframe):
-                                    """Resample OHLCV data to specified timeframe"""
-                                    try:
-                                        resampled = df.resample(timeframe).agg({
-                                            'open': 'first',
-                                            'high': 'max',
-                                            'low': 'min',
-                                            'close': 'last',
-                                            'volume': 'sum'
-                                        }).dropna()
-                                        return resampled if len(resampled) >= 50 else None
-                                    except:
-                                        return None
-
-                                # Create resampled dataframes for different timeframes
-                                data_5m = resample_ohlcv(df_stats, '5T')   # 5 minutes
-                                data_15m = resample_ohlcv(df_stats, '15T') # 15 minutes
-                                data_1h = resample_ohlcv(df_stats, '1H')   # 1 hour
-                                data_4h = resample_ohlcv(df_stats, '4H')   # 4 hours
-                                data_1d = resample_ohlcv(df_stats, '1D')   # 1 day
-
-                                # Analyze all timeframes (pass only available resampled data)
-                                htf_results = htf_analyzer.analyze_all_timeframes(
-                                    data_1d=data_1d,
-                                    data_4h=data_4h,
-                                    data_1h=data_1h,
-                                    data_15m=data_15m,
-                                    data_5m=data_5m
-                                )
-
-                                if htf_results and len(htf_results) > 0:
-                                    # Current price for calculations
-                                    current_price = df_stats['close'].iloc[-1]
-
-                                    # Display timeframe overview
-                                    st.markdown("#### 🕐 Multi-Timeframe Overview")
-
-                                    tf_cols = st.columns(5)
-                                    for idx, (tf_name, tf_result) in enumerate(htf_results.items()):
-                                        with tf_cols[idx]:
-                                            trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
-                                            st.metric(
-                                                f"{tf_name}",
-                                                f"{trend_emoji} {tf_result.trend_direction}",
-                                                delta=f"{tf_result.trend_strength:.0f}%"
-                                            )
-
-                                    st.divider()
-
-                                    # Calculate Technical Confirmations (MACD, Volume, RSI)
-                                    st.markdown("#### 📈 Technical Confirmations")
-
-                                    # Calculate MACD
-                                    exp1 = df_stats['close'].ewm(span=12, adjust=False).mean()
-                                    exp2 = df_stats['close'].ewm(span=26, adjust=False).mean()
-                                    macd_line = exp1 - exp2
-                                    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-                                    macd_histogram = macd_line - signal_line
-
-                                    current_macd = macd_line.iloc[-1]
-                                    current_signal = signal_line.iloc[-1]
-                                    current_histogram = macd_histogram.iloc[-1]
-
-                                    # Calculate RSI
-                                    delta = df_stats['close'].diff()
-                                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                                    rs = gain / loss
-                                    rsi = 100 - (100 / (1 + rs))
-                                    current_rsi = rsi.iloc[-1]
-
-                                    # Volume analysis
-                                    avg_volume = df_stats['volume'].mean()
-                                    current_volume = df_stats['volume'].iloc[-1]
-                                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
-
-                                    # Display confirmations
-                                    conf_col1, conf_col2, conf_col3 = st.columns(3)
-
-                                    with conf_col1:
-                                        macd_signal = "BULLISH" if current_macd > current_signal else "BEARISH"
-                                        macd_emoji = "🟢" if macd_signal == "BULLISH" else "🔴"
-                                        st.metric(
-                                            "MACD",
-                                            f"{macd_emoji} {macd_signal}",
-                                            delta=f"{current_histogram:.2f}"
-                                        )
-
-                                    with conf_col2:
-                                        if current_rsi >= 70:
-                                            rsi_signal = "OVERBOUGHT"
-                                            rsi_emoji = "🔴"
-                                        elif current_rsi <= 30:
-                                            rsi_signal = "OVERSOLD"
-                                            rsi_emoji = "🟢"
-                                        else:
-                                            rsi_signal = "NEUTRAL"
-                                            rsi_emoji = "⚪"
-                                        st.metric(
-                                            "RSI",
-                                            f"{rsi_emoji} {rsi_signal}",
-                                            delta=f"{current_rsi:.1f}"
-                                        )
-
-                                    with conf_col3:
-                                        if volume_ratio >= 1.5:
-                                            vol_signal = "HIGH VOLUME"
-                                            vol_emoji = "🔥"
-                                        elif volume_ratio <= 0.5:
-                                            vol_signal = "LOW VOLUME"
-                                            vol_emoji = "❄️"
-                                        else:
-                                            vol_signal = "NORMAL"
-                                            vol_emoji = "⚪"
-                                        st.metric(
-                                            "Volume",
-                                            f"{vol_emoji} {vol_signal}",
-                                            delta=f"{volume_ratio:.2f}x avg"
-                                        )
-
-                                    st.divider()
-
-                                    # Aggregate all S/R levels from all timeframes
-                                    st.markdown("#### 📊 All HTF Support & Resistance Levels")
-
-                                    all_supports = []
-                                    all_resistances = []
-
-                                    for tf_name, tf_result in htf_results.items():
-                                        # Collect supports
-                                        for i, sup in enumerate([tf_result.support_1, tf_result.support_2, tf_result.support_3], 1):
-                                            if sup and sup < current_price:
-                                                distance_pct = ((current_price - sup) / current_price) * 100
-                                                all_supports.append({
-                                                    'Timeframe': tf_name,
-                                                    'Level': f'S{i}',
-                                                    'Price': sup,
-                                                    'Distance %': distance_pct
-                                                })
-
-                                        # Collect resistances
-                                        for i, res in enumerate([tf_result.resistance_1, tf_result.resistance_2, tf_result.resistance_3], 1):
-                                            if res and res > current_price:
-                                                distance_pct = ((res - current_price) / current_price) * 100
-                                                all_resistances.append({
-                                                    'Timeframe': tf_name,
-                                                    'Level': f'R{i}',
-                                                    'Price': res,
-                                                    'Distance %': distance_pct
-                                                })
-
-                                    # Sort by distance
-                                    all_supports.sort(key=lambda x: x['Distance %'])
-                                    all_resistances.sort(key=lambda x: x['Distance %'])
-
-                                    col1, col2 = st.columns(2)
-
-                                    with col1:
-                                        st.markdown("**📉 Nearest Support Levels**")
-                                        if all_supports:
-                                            sup_display = []
-                                            for sup in all_supports[:5]:
-                                                sup_display.append({
-                                                    'TF': sup['Timeframe'],
-                                                    'Level': sup['Level'],
-                                                    'Price': f"₹{sup['Price']:.2f}",
-                                                    'Distance': f"-{sup['Distance %']:.2f}%"
-                                                })
-                                            st.dataframe(pd.DataFrame(sup_display), use_container_width=True, hide_index=True)
-                                        else:
-                                            st.info("No support levels detected")
-
-                                    with col2:
-                                        st.markdown("**📈 Nearest Resistance Levels**")
-                                        if all_resistances:
-                                            res_display = []
-                                            for res in all_resistances[:5]:
-                                                res_display.append({
-                                                    'TF': res['Timeframe'],
-                                                    'Level': res['Level'],
-                                                    'Price': f"₹{res['Price']:.2f}",
-                                                    'Distance': f"+{res['Distance %']:.2f}%"
-                                                })
-                                            st.dataframe(pd.DataFrame(res_display), use_container_width=True, hide_index=True)
-                                        else:
-                                            st.info("No resistance levels detected")
-
-                                    st.divider()
-
-                                    # CONFLUENCE DETECTION - Find levels where multiple timeframes agree
-                                    st.markdown("#### 🎯 Confluence Analysis")
-                                    st.caption("Levels where multiple timeframes align (within 0.5% threshold)")
-
-                                    confluence_supports = []
-                                    confluence_resistances = []
-
-                                    # Group supports by price proximity (0.5% threshold)
-                                    for sup in all_supports:
-                                        # Find matching supports within 0.5%
-                                        matches = [s for s in all_supports if abs((sup['Price'] - s['Price']) / sup['Price'] * 100) <= 0.5]
-                                        if len(matches) >= 2:  # At least 2 timeframes
-                                            avg_price = sum(m['Price'] for m in matches) / len(matches)
-                                            timeframes = ', '.join([m['Timeframe'] for m in matches])
-                                            # Check if not already added
-                                            if not any(abs(c['price'] - avg_price) < 1 for c in confluence_supports):
-                                                confluence_supports.append({
-                                                    'price': avg_price,
-                                                    'count': len(matches),
-                                                    'timeframes': timeframes,
-                                                    'strength': min(95, 60 + len(matches) * 10)  # More TFs = higher strength
-                                                })
-
-                                    # Group resistances by price proximity
-                                    for res in all_resistances:
-                                        matches = [r for r in all_resistances if abs((res['Price'] - r['Price']) / res['Price'] * 100) <= 0.5]
-                                        if len(matches) >= 2:
-                                            avg_price = sum(m['Price'] for m in matches) / len(matches)
-                                            timeframes = ', '.join([m['Timeframe'] for m in matches])
-                                            if not any(abs(c['price'] - avg_price) < 1 for c in confluence_resistances):
-                                                confluence_resistances.append({
-                                                    'price': avg_price,
-                                                    'count': len(matches),
-                                                    'timeframes': timeframes,
-                                                    'strength': min(95, 60 + len(matches) * 10)
-                                                })
-
-                                    # Sort by strength
-                                    confluence_supports.sort(key=lambda x: (-x['count'], x['price']))
-                                    confluence_resistances.sort(key=lambda x: (-x['count'], -x['price']))
-
-                                    col1, col2 = st.columns(2)
-
-                                    with col1:
-                                        st.markdown("**📉 Support Confluence**")
-                                        if confluence_supports:
-                                            conf_sup_data = []
-                                            for conf_sup in confluence_supports[:3]:
-                                                distance_pct = ((current_price - conf_sup['price']) / current_price) * 100
-                                                conf_sup_data.append({
-                                                    'Price': f"₹{conf_sup['price']:.2f}",
-                                                    'Strength': f"{conf_sup['strength']:.0f}%",
-                                                    'Sources': f"{conf_sup['count']} TFs",
-                                                    'Distance': f"-{distance_pct:.2f}%"
-                                                })
-                                            st.dataframe(pd.DataFrame(conf_sup_data), use_container_width=True, hide_index=True)
-                                        else:
-                                            st.info("No confluence detected")
-
-                                    with col2:
-                                        st.markdown("**📈 Resistance Confluence**")
-                                        if confluence_resistances:
-                                            conf_res_data = []
-                                            for conf_res in confluence_resistances[:3]:
-                                                distance_pct = ((conf_res['price'] - current_price) / current_price) * 100
-                                                conf_res_data.append({
-                                                    'Price': f"₹{conf_res['price']:.2f}",
-                                                    'Strength': f"{conf_res['strength']:.0f}%",
-                                                    'Sources': f"{conf_res['count']} TFs",
-                                                    'Distance': f"+{distance_pct:.2f}%"
-                                                })
-                                            st.dataframe(pd.DataFrame(conf_res_data), use_container_width=True, hide_index=True)
-                                        else:
-                                            st.info("No confluence detected")
-
-                                    st.divider()
-
-                                    # STRENGTH ANALYSIS - Determine level status based on price action
-                                    st.markdown("#### 💪 Strength Analysis")
-
-                                    nearest_support = all_supports[0] if all_supports else None
-                                    nearest_resistance = all_resistances[0] if all_resistances else None
-
-                                    # Determine support status
-                                    support_status = "NEUTRAL"
-                                    support_strength = 50
-
-                                    if nearest_support:
-                                        distance = nearest_support['Distance %']
-                                        if distance > 0.5:
-                                            support_status = "BUILDING"
-                                            support_strength = min(90, 60 + (distance * 5))
-                                        elif 0.1 <= distance <= 0.5:
-                                            support_status = "TESTING"
-                                            support_strength = 75
-                                            # Check volume for confirmation
-                                            if volume_ratio >= 1.3:
-                                                support_strength = 85
-                                        elif distance < 0.1:
-                                            # Check if breaking or bouncing
-                                            if macd_signal == "BEARISH":
-                                                support_status = "BREAKING"
-                                                support_strength = 40
-                                            else:
-                                                support_status = "TESTING"
-                                                support_strength = 70
-
-                                    # Determine resistance status
-                                    resistance_status = "NEUTRAL"
-                                    resistance_strength = 50
-
-                                    if nearest_resistance:
-                                        distance = nearest_resistance['Distance %']
-                                        if distance > 0.5:
-                                            resistance_status = "BUILDING"
-                                            resistance_strength = min(90, 60 + (distance * 5))
-                                        elif 0.1 <= distance <= 0.5:
-                                            resistance_status = "TESTING"
-                                            resistance_strength = 75
-                                            if volume_ratio >= 1.3:
-                                                resistance_strength = 85
-                                        elif distance < 0.1:
-                                            if macd_signal == "BULLISH":
-                                                resistance_status = "BREAKING"
-                                                resistance_strength = 40
-                                            else:
-                                                resistance_status = "TESTING"
-                                                resistance_strength = 70
-
-                                    # Overall confidence based on confirmations
-                                    confirmation_count = 0
-                                    if macd_signal in ['BULLISH', 'BEARISH']:
-                                        confirmation_count += 1
-                                    if rsi_signal in ['OVERSOLD', 'OVERBOUGHT']:
-                                        confirmation_count += 1
-                                    if volume_ratio >= 1.3:
-                                        confirmation_count += 1
-
-                                    confidence = 70 + (confirmation_count * 5)
-
-                                    col1, col2 = st.columns(2)
-
-                                    with col1:
-                                        status_emoji = {
-                                            'BUILDING': '🟢',
-                                            'TESTING': '🟡',
-                                            'BREAKING': '🔴',
-                                            'NEUTRAL': '⚪'
-                                        }.get(support_status, '⚪')
-                                        st.metric(
-                                            "Support Status",
-                                            f"{status_emoji} {support_status}",
-                                            delta=f"{support_strength:.0f}% strength"
-                                        )
-
-                                    with col2:
-                                        status_emoji = {
-                                            'BUILDING': '🟢',
-                                            'TESTING': '🟡',
-                                            'BREAKING': '🔴',
-                                            'NEUTRAL': '⚪'
-                                        }.get(resistance_status, '⚪')
-                                        st.metric(
-                                            "Resistance Status",
-                                            f"{status_emoji} {resistance_status}",
-                                            delta=f"{resistance_strength:.0f}% strength"
-                                        )
-
-                                    confidence_emoji = "🟢" if confidence >= 80 else "🟡" if confidence >= 70 else "🔴"
-                                    st.metric("Overall Confidence", f"{confidence_emoji} {confidence:.0f}%")
-
-                                    st.divider()
-
-                                    # Store HTF results in session state for Telegram alerts
-                                    st.session_state['htf_analysis_result'] = {
-                                        'htf_results': htf_results,
-                                        'all_supports': all_supports[:5],
-                                        'all_resistances': all_resistances[:5],
-                                        'confluence_supports': confluence_supports[:3],
-                                        'confluence_resistances': confluence_resistances[:3],
-                                        'support_status': support_status,
-                                        'support_strength': support_strength,
-                                        'resistance_status': resistance_status,
-                                        'resistance_strength': resistance_strength,
-                                        'confidence': confidence,
-                                        'current_price': current_price,
-                                        'macd_signal': macd_signal,
-                                        'rsi': current_rsi,
-                                        'rsi_signal': rsi_signal,
-                                        'volume_ratio': volume_ratio,
-                                        'vol_signal': vol_signal,
-                                        'timestamp': datetime.now().isoformat()
-                                    }
-
-                                    # AUTOMATIC TELEGRAM ALERTS - Check for significant HTF conditions
-                                    try:
-                                        # Check if we should send HTF alert (cooldown: 15 minutes)
-                                        last_htf_alert_time = st.session_state.get('last_htf_alert_time')
-                                        current_time_for_alert = datetime.now()
-
-                                        should_send_alert = False
-                                        alert_reason = ""
-
-                                        # Cooldown check (15 minutes = 900 seconds)
-                                        if last_htf_alert_time is None or (current_time_for_alert - last_htf_alert_time).total_seconds() >= 900:
-
-                                            # Alert Condition 1: Price near HTF level (within 0.3%) with volume confirmation
-                                            if volume_ratio >= 1.3:  # Above average volume
-                                                for sup in all_supports[:3]:
-                                                    if sup['Distance %'] <= 0.3:
-                                                        should_send_alert = True
-                                                        alert_reason = f"Price near {sup['Timeframe']} support with high volume"
-                                                        break
-
-                                                if not should_send_alert:
-                                                    for res in all_resistances[:3]:
-                                                        if res['Distance %'] <= 0.3:
-                                                            should_send_alert = True
-                                                            alert_reason = f"Price near {res['Timeframe']} resistance with high volume"
-                                                            break
-
-                                            # Alert Condition 2: All timeframes aligned with MACD+RSI confirmation
-                                            if not should_send_alert:
-                                                trends = [tf.trend_direction for tf in htf_results.values()]
-                                                if trends.count('UPTREND') >= 3 or trends.count('DOWNTREND') >= 3:
-                                                    trend_direction = 'UPTREND' if trends.count('UPTREND') >= 3 else 'DOWNTREND'
-
-                                                    # Check MACD and RSI confirm the trend
-                                                    macd_confirms = (trend_direction == 'UPTREND' and macd_signal == 'BULLISH') or \
-                                                                   (trend_direction == 'DOWNTREND' and macd_signal == 'BEARISH')
-
-                                                    rsi_confirms = (trend_direction == 'UPTREND' and current_rsi < 70) or \
-                                                                  (trend_direction == 'DOWNTREND' and current_rsi > 30)
-
-                                                    if macd_confirms and rsi_confirms:
-                                                        should_send_alert = True
-                                                        alert_reason = f"3+ timeframes {trend_direction} with MACD+RSI confirmation"
-
-                                            # Alert Condition 3: RSI extreme with volume spike
-                                            if not should_send_alert:
-                                                if volume_ratio >= 2.0:
-                                                    if current_rsi <= 25:
-                                                        should_send_alert = True
-                                                        alert_reason = "RSI oversold (<25) with volume spike"
-                                                    elif current_rsi >= 75:
-                                                        should_send_alert = True
-                                                        alert_reason = "RSI overbought (>75) with volume spike"
-
-                                        # Send alert if conditions met
-                                        if should_send_alert:
-                                            from telegram_alerts import TelegramBot
-
-                                            telegram = TelegramBot()
-
-                                            # Build HTF alert message
-                                            alert_msg = f"⚠️ *HTF ALERT* ⚠️\n\n"
-                                            alert_msg += f"🎯 *Trigger:* {alert_reason}\n\n"
-
-                                            # Add timeframe trends
-                                            alert_msg += "📊 *Multi-Timeframe Trends:*\n"
-                                            for tf_name, tf_result in htf_results.items():
-                                                trend_emoji = "🟢" if tf_result.trend_direction == "UPTREND" else "🔴" if tf_result.trend_direction == "DOWNTREND" else "⚪"
-                                                alert_msg += f"• {tf_name}: {trend_emoji} {tf_result.trend_direction} ({tf_result.trend_strength:.0f}%)\n"
-
-                                            alert_msg += f"\n💰 *Current Price:* ₹{current_price:.2f}\n\n"
-
-                                            # Add confluence support/resistance (higher priority)
-                                            if confluence_supports:
-                                                alert_msg += "📉 *Top Support (Confluence):*\n"
-                                                for conf_sup in confluence_supports[:3]:
-                                                    distance_pct = ((current_price - conf_sup['price']) / current_price) * 100
-                                                    alert_msg += f"• ₹{conf_sup['price']:.2f} ({conf_sup['strength']:.0f}% | {conf_sup['count']} src | -{distance_pct:.2f}%)\n"
-                                                alert_msg += "\n"
-
-                                            if confluence_resistances:
-                                                alert_msg += "📈 *Top Resistance (Confluence):*\n"
-                                                for conf_res in confluence_resistances[:3]:
-                                                    distance_pct = ((conf_res['price'] - current_price) / current_price) * 100
-                                                    alert_msg += f"• ₹{conf_res['price']:.2f} ({conf_res['strength']:.0f}% | {conf_res['count']} src | +{distance_pct:.2f}%)\n"
-                                                alert_msg += "\n"
-
-                                            # Add strength analysis
-                                            alert_msg += "💪 *Strength Analysis:*\n"
-                                            alert_msg += f"• Support: {support_status} ({support_strength:.0f}%)\n"
-                                            alert_msg += f"• Resistance: {resistance_status} ({resistance_strength:.0f}%)\n"
-                                            alert_msg += f"• Confidence: {confidence:.0f}%"
-
-                                            # Send alert
-                                            success = telegram.send_message(alert_msg, parse_mode='Markdown')
-
-                                            if success:
-                                                st.session_state['last_htf_alert_time'] = current_time_for_alert
-                                                st.success(f"✅ HTF alert sent automatically: {alert_reason}")
-                                            else:
-                                                logger.warning("Failed to send automatic HTF alert")
-
-                                    except Exception as e:
-                                        logger.error(f"Automatic HTF alert error: {e}", exc_info=True)
-
-                                else:
-                                    st.warning("⚠️ No multi-timeframe data available")
-                                    st.info("💡 HTF Analysis requires sufficient historical data. Try selecting a longer period (1d or 5d) in the chart settings above.")
-
-                            except Exception as e:
-                                st.error(f"❌ Error in HTF analysis: {e}")
-                                logger.error(f"HTF analysis error: {e}", exc_info=True)
-
 
                     tab_idx += 1
 
@@ -4704,25 +4051,29 @@ with tab8:
     try:
         st.caption("Comprehensive market data from Dhan API + Yahoo Finance | India VIX, Sector Rotation, Global Markets, Intermarket Data, Gamma Squeeze, Intraday Timing")
 
-        # LAZY LOAD - Fetch enhanced market data on button click
+        # DISABLED AUTO-FETCH - Only fetch when user clicks Refresh
         # This prevents tab from hanging when Dhan API is down (holidays, weekends)
+        # Auto-fetch code commented out to prevent blank tabs
 
-        st.info("⚡ Enhanced market data requires API calls. Click below to fetch live data, or use the 'REFRESH NOW' button at the top.")
+        # Control buttons
+        col1, col2 = st.columns([1, 1])
 
-        if st.button("📊 Fetch Enhanced Market Data", type="primary", use_container_width=True, key="fetch_enhanced_data_btn"):
-            with st.spinner("Fetching market data..."):
-                try:
-                    from enhanced_market_data import get_enhanced_market_data
-                    enhanced_data = get_enhanced_market_data()
-                    st.session_state.enhanced_market_data = enhanced_data
-                    st.success("✅ Data fetched successfully!")
-                except Exception as e:
-                    st.error(f"❌ Failed to fetch data: {e}")
+        with col1:
+            if st.button("🔄 Refresh Data", type="primary", use_container_width=True, key="refresh_enhanced_data_btn"):
+                with st.spinner("Refreshing market data..."):
+                    try:
+                        from enhanced_market_data import get_enhanced_market_data
+                        enhanced_data = get_enhanced_market_data()
+                        st.session_state.enhanced_market_data = enhanced_data
+                        st.success("✅ Data refreshed successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed to refresh data: {e}")
 
-        # Display last updated time if data exists
-        if 'enhanced_market_data' in st.session_state:
-            data = st.session_state.enhanced_market_data
-            st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
+        with col2:
+            if 'enhanced_market_data' in st.session_state:
+                data = st.session_state.enhanced_market_data
+                st.caption(f"📅 Last Updated: {data['timestamp'].strftime('%Y-%m-%d %H:%M:%S IST')}")
 
         # Display enhanced market data if available
         if 'enhanced_market_data' in st.session_state:
@@ -4874,5 +4225,5 @@ with tab11:
 # ═══════════════════════════════════════════════════════════════════════
 
 st.divider()
-st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: Every 5 minutes ({AUTO_REFRESH_INTERVAL}s)")
+st.caption(f"Last Updated (IST): {get_current_time_ist().strftime('%Y-%m-%d %H:%M:%S %Z')} | Auto-refresh: {AUTO_REFRESH_INTERVAL}s")
 st.caption(f"🤖 AI Market Analysis: Runs every 30 minutes during market hours | Last AI analysis: {datetime.fromtimestamp(st.session_state.last_ai_analysis_time).strftime('%H:%M:%S') if st.session_state.last_ai_analysis_time > 0 else 'Never'}")
