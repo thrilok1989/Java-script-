@@ -2146,6 +2146,9 @@ with tab6:
     with col1:
         show_reversal_zones = st.checkbox("🎯 Reversal Probability Zones (LuxAlgo)", value=True, key="show_reversal_zones", help="Statistical reversal prediction with probability targets")
 
+    with col2:
+        show_vob_indicator = st.checkbox("📦 Volume Order Blocks (BigBeluga)", value=True, key="show_vob_indicator", help="Detects bullish/bearish VOB with volume distribution")
+
     st.divider()
 
     # Indicator Configuration Section
@@ -2500,6 +2503,42 @@ with tab6:
             with col4:
                 rpz_show_90 = st.checkbox("90th Percentile", value=True, key="rpz_show_90")
 
+    # Volume Order Blocks Settings (BigBeluga)
+    if show_vob_indicator:
+        with st.expander("📦 Volume Order Blocks Settings (BigBeluga)", expanded=False):
+            st.markdown("**VOB Detection Configuration**")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                vob_sensitivity = st.slider(
+                    "Sensitivity",
+                    min_value=3,
+                    max_value=15,
+                    value=5,
+                    step=1,
+                    help="EMA sensitivity for crossover detection (lower = more sensitive)",
+                    key="vob_sensitivity"
+                )
+
+            with col2:
+                vob_max_blocks = st.slider(
+                    "Max Blocks",
+                    min_value=5,
+                    max_value=25,
+                    value=15,
+                    step=1,
+                    help="Maximum number of blocks to display per side",
+                    key="vob_max_blocks"
+                )
+
+            with col3:
+                vob_show_mid_line = st.checkbox(
+                    "Show Mid Line",
+                    value=True,
+                    help="Display the mid-line for each VOB",
+                    key="vob_show_mid_line"
+                )
+
     st.divider()
 
     # Display chart if data is available
@@ -2572,6 +2611,12 @@ with tab6:
                     'percentile_90': rpz_show_90 if show_reversal_zones else True
                 } if show_reversal_zones else None
 
+                vob_params = {
+                    'sensitivity': vob_sensitivity if show_vob_indicator else 5,
+                    'max_blocks': vob_max_blocks if show_vob_indicator else 15,
+                    'show_mid_line': vob_show_mid_line if show_vob_indicator else True
+                } if show_vob_indicator else None
+
                 # Create chart with selected indicators
                 chart_analyzer = get_advanced_chart_analyzer()
                 fig = chart_analyzer.create_advanced_chart(
@@ -2643,6 +2688,8 @@ with tab6:
                     indicator_tabs.append("📈 Ultimate RSI")
                 if show_om:
                     indicator_tabs.append("🎯 OM Indicator")
+                if show_vob_indicator:
+                    indicator_tabs.append("📦 Volume Order Blocks")
                 if show_liquidity_profile:
                     indicator_tabs.append("💧 Liquidity Profile")
                 if show_money_flow_profile:
@@ -3138,6 +3185,237 @@ with tab6:
                                         'Volume': f"{pivot['volume']:,.0f}"
                                     })
                                 st.dataframe(pd.DataFrame(hvp_data), use_container_width=True, hide_index=True)
+
+                        tab_idx += 1
+
+                    # Volume Order Blocks (BigBeluga) - HTF Level Tabulation
+                    if show_vob_indicator:
+                        with tabs[tab_idx]:
+                            from indicators.volume_order_blocks import VolumeOrderBlocks
+
+                            vob_indicator = VolumeOrderBlocks(
+                                sensitivity=vob_params.get('sensitivity', 5) if vob_params else 5,
+                                max_blocks=vob_params.get('max_blocks', 15) if vob_params else 15,
+                                show_mid_line=vob_params.get('show_mid_line', True) if vob_params else True
+                            )
+
+                            current_price = df_stats['close'].iloc[-1]
+                            vob_table_data = vob_indicator.get_htf_vob_table(df_stats, current_price)
+
+                            st.markdown("### 📦 Volume Order Blocks [BigBeluga]")
+                            st.caption("Bullish & Bearish VOB with Volume Collection & Percentage Distribution")
+
+                            # Summary metrics
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Bullish VOBs", f"{vob_table_data['bullish_count']}")
+                            with col2:
+                                st.metric("Bearish VOBs", f"{vob_table_data['bearish_count']}")
+                            with col3:
+                                total_bull_vol = vob_table_data['total_bullish_volume']
+                                st.metric("Total Bull Volume", f"{total_bull_vol:,.0f}")
+                            with col4:
+                                total_bear_vol = vob_table_data['total_bearish_volume']
+                                st.metric("Total Bear Volume", f"{total_bear_vol:,.0f}")
+
+                            st.divider()
+
+                            # Bullish and Bearish VOB Tables side by side
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                st.markdown("#### 🟢 Bullish VOB (Support Zones)")
+                                if vob_table_data['bullish']:
+                                    bull_display = []
+                                    for block in vob_table_data['bullish'][:10]:
+                                        bull_display.append({
+                                            'Upper': f"₹{block['Upper']:.2f}",
+                                            'Lower': f"₹{block['Lower']:.2f}",
+                                            'Mid': f"₹{block['Mid']:.2f}",
+                                            'Volume': f"{block['Volume']:,.0f}",
+                                            'Vol %': f"{block['Volume %']:.1f}%",
+                                            'Distance': f"{block['Distance']:.2f}",
+                                            'Dist %': f"{block['Distance %']:.2f}%",
+                                            'Status': '✅ ACTIVE' if block['Status'] == 'ACTIVE' else '❌ MITIGATED',
+                                            'Near': '🎯' if block['Proximity'] == 'NEAR' else ''
+                                        })
+                                    st.dataframe(pd.DataFrame(bull_display), use_container_width=True, hide_index=True)
+
+                                    # Volume Distribution Chart
+                                    st.markdown("**📊 Volume Distribution**")
+                                    vol_chart_data = []
+                                    for i, block in enumerate(vob_table_data['bullish'][:10]):
+                                        if block['Status'] == 'ACTIVE':
+                                            vol_chart_data.append({
+                                                'Level': f"₹{block['Mid']:.0f}",
+                                                'Volume %': block['Volume %']
+                                            })
+                                    if vol_chart_data:
+                                        vol_df = pd.DataFrame(vol_chart_data)
+                                        st.bar_chart(vol_df.set_index('Level')['Volume %'], color='#26ba9f')
+                                else:
+                                    st.info("No bullish VOB detected")
+
+                            with col2:
+                                st.markdown("#### 🔴 Bearish VOB (Resistance Zones)")
+                                if vob_table_data['bearish']:
+                                    bear_display = []
+                                    for block in vob_table_data['bearish'][:10]:
+                                        bear_display.append({
+                                            'Upper': f"₹{block['Upper']:.2f}",
+                                            'Lower': f"₹{block['Lower']:.2f}",
+                                            'Mid': f"₹{block['Mid']:.2f}",
+                                            'Volume': f"{block['Volume']:,.0f}",
+                                            'Vol %': f"{block['Volume %']:.1f}%",
+                                            'Distance': f"{block['Distance']:.2f}",
+                                            'Dist %': f"{block['Distance %']:.2f}%",
+                                            'Status': '✅ ACTIVE' if block['Status'] == 'ACTIVE' else '❌ MITIGATED',
+                                            'Near': '🎯' if block['Proximity'] == 'NEAR' else ''
+                                        })
+                                    st.dataframe(pd.DataFrame(bear_display), use_container_width=True, hide_index=True)
+
+                                    # Volume Distribution Chart
+                                    st.markdown("**📊 Volume Distribution**")
+                                    vol_chart_data = []
+                                    for i, block in enumerate(vob_table_data['bearish'][:10]):
+                                        if block['Status'] == 'ACTIVE':
+                                            vol_chart_data.append({
+                                                'Level': f"₹{block['Mid']:.0f}",
+                                                'Volume %': block['Volume %']
+                                            })
+                                    if vol_chart_data:
+                                        vol_df = pd.DataFrame(vol_chart_data)
+                                        st.bar_chart(vol_df.set_index('Level')['Volume %'], color='#6626ba')
+                                else:
+                                    st.info("No bearish VOB detected")
+
+                            st.divider()
+
+                            # VOB Signals & Analysis
+                            st.markdown("### 📈 VOB Signal Analysis")
+                            vob_result = vob_indicator.calculate(df_stats)
+                            vob_signals = vob_indicator.get_signals(df_stats)
+
+                            col1, col2, col3 = st.columns(3)
+
+                            with col1:
+                                signal_emoji = {
+                                    'NEAR_SUPPORT': '🟢',
+                                    'NEAR_RESISTANCE': '🔴',
+                                    'ABOVE_SUPPORT': '🟢',
+                                    'BELOW_RESISTANCE': '🔴',
+                                    'NEUTRAL': '⚪'
+                                }
+                                st.metric("Signal", f"{signal_emoji.get(vob_signals['signal'], '⚪')} {vob_signals['signal']}")
+
+                            with col2:
+                                bias_emoji = {'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '🟡'}
+                                st.metric("Volume Bias", f"{bias_emoji.get(vob_signals['volume_bias'], '🟡')} {vob_signals['volume_bias']}")
+
+                            with col3:
+                                st.metric("Signal Strength", f"{vob_signals['strength']}%")
+
+                            # Nearest levels
+                            st.divider()
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                if vob_signals['nearest_support']:
+                                    sup = vob_signals['nearest_support']
+                                    st.markdown("**🟢 Nearest Support (Bullish VOB)**")
+                                    st.markdown(f"- Upper: ₹{sup['upper']:.2f}")
+                                    st.markdown(f"- Lower: ₹{sup['lower']:.2f}")
+                                    st.markdown(f"- Volume: {sup['volume']:,.0f} ({sup['volume_pct']:.1f}%)")
+                                else:
+                                    st.info("No active bullish VOB as support")
+
+                            with col2:
+                                if vob_signals['nearest_resistance']:
+                                    res = vob_signals['nearest_resistance']
+                                    st.markdown("**🔴 Nearest Resistance (Bearish VOB)**")
+                                    st.markdown(f"- Upper: ₹{res['upper']:.2f}")
+                                    st.markdown(f"- Lower: ₹{res['lower']:.2f}")
+                                    st.markdown(f"- Volume: {res['volume']:,.0f} ({res['volume_pct']:.1f}%)")
+                                else:
+                                    st.info("No active bearish VOB as resistance")
+
+                            # HTF VOB Analysis (Multi-Timeframe)
+                            st.divider()
+                            st.markdown("### 🕐 HTF Volume Order Blocks Analysis")
+                            st.caption("Volume Order Blocks across multiple timeframes")
+
+                            htf_tabs = st.tabs(["5 Min", "15 Min", "1 Hour"])
+
+                            htf_configs = [
+                                ('5T', '5 Min'),
+                                ('15T', '15 Min'),
+                                ('60T', '1 Hour')
+                            ]
+
+                            for htf_idx, (tf_code, tf_name) in enumerate(htf_configs):
+                                with htf_tabs[htf_idx]:
+                                    try:
+                                        # Resample to HTF
+                                        df_htf = df_stats.resample(tf_code).agg({
+                                            'open': 'first',
+                                            'high': 'max',
+                                            'low': 'min',
+                                            'close': 'last',
+                                            'volume': 'sum'
+                                        }).dropna()
+
+                                        if len(df_htf) >= 30:
+                                            htf_vob = VolumeOrderBlocks(
+                                                sensitivity=vob_params.get('sensitivity', 5) if vob_params else 5,
+                                                max_blocks=vob_params.get('max_blocks', 15) if vob_params else 15
+                                            )
+                                            htf_vob_data = htf_vob.get_htf_vob_table(df_htf, current_price)
+
+                                            st.markdown(f"#### {tf_name} VOB Levels")
+
+                                            # Summary
+                                            col1, col2 = st.columns(2)
+                                            with col1:
+                                                st.metric(f"Bullish VOBs ({tf_name})", f"{htf_vob_data['bullish_count']}")
+                                            with col2:
+                                                st.metric(f"Bearish VOBs ({tf_name})", f"{htf_vob_data['bearish_count']}")
+
+                                            # HTF Tables
+                                            col1, col2 = st.columns(2)
+
+                                            with col1:
+                                                st.markdown(f"**🟢 Bullish VOB ({tf_name})**")
+                                                if htf_vob_data['bullish']:
+                                                    htf_bull = []
+                                                    for block in htf_vob_data['bullish'][:5]:
+                                                        htf_bull.append({
+                                                            'Upper': f"₹{block['Upper']:.2f}",
+                                                            'Lower': f"₹{block['Lower']:.2f}",
+                                                            'Vol %': f"{block['Volume %']:.1f}%",
+                                                            'Status': '✅' if block['Status'] == 'ACTIVE' else '❌'
+                                                        })
+                                                    st.dataframe(pd.DataFrame(htf_bull), use_container_width=True, hide_index=True)
+                                                else:
+                                                    st.info(f"No bullish VOB on {tf_name}")
+
+                                            with col2:
+                                                st.markdown(f"**🔴 Bearish VOB ({tf_name})**")
+                                                if htf_vob_data['bearish']:
+                                                    htf_bear = []
+                                                    for block in htf_vob_data['bearish'][:5]:
+                                                        htf_bear.append({
+                                                            'Upper': f"₹{block['Upper']:.2f}",
+                                                            'Lower': f"₹{block['Lower']:.2f}",
+                                                            'Vol %': f"{block['Volume %']:.1f}%",
+                                                            'Status': '✅' if block['Status'] == 'ACTIVE' else '❌'
+                                                        })
+                                                    st.dataframe(pd.DataFrame(htf_bear), use_container_width=True, hide_index=True)
+                                                else:
+                                                    st.info(f"No bearish VOB on {tf_name}")
+                                        else:
+                                            st.warning(f"Insufficient data for {tf_name} analysis (need at least 30 candles)")
+                                    except Exception as e:
+                                        st.error(f"Error calculating {tf_name} VOB: {str(e)}")
 
                         tab_idx += 1
 
