@@ -5775,7 +5775,10 @@ def parse_dhan_option_chain(chain_data):
                 "Vol_CE": safe_int(ce.get("volume",0)),
                 "LTP_CE": safe_float(ce.get("last_price",0.0)),
                 "IV_CE": safe_float(ce.get("implied_volatility", np.nan)),
-                "SecurityId_CE": safe_int(ce.get("SEM_EXM_EXCH_ID", 0))  # For market depth
+                "SecurityId_CE": safe_int(ce.get("SEM_EXM_EXCH_ID", 0)),  # For market depth
+                # Add Bid/Ask quantities for bias analysis
+                "BidQty_CE": safe_int(ce.get("top_bid_quantity", 0) or ce.get("bid_qty", 0)),
+                "AskQty_CE": safe_int(ce.get("top_ask_quantity", 0) or ce.get("ask_qty", 0)),
             }
             ce_rows.append(ci)
         if pe:
@@ -5786,7 +5789,10 @@ def parse_dhan_option_chain(chain_data):
                 "Vol_PE": safe_int(pe.get("volume",0)),
                 "LTP_PE": safe_float(pe.get("last_price",0.0)),
                 "IV_PE": safe_float(pe.get("implied_volatility", np.nan)),
-                "SecurityId_PE": safe_int(pe.get("SEM_EXM_EXCH_ID", 0))  # For market depth
+                "SecurityId_PE": safe_int(pe.get("SEM_EXM_EXCH_ID", 0)),  # For market depth
+                # Add Bid/Ask quantities for bias analysis
+                "BidQty_PE": safe_int(pe.get("top_bid_quantity", 0) or pe.get("bid_qty", 0)),
+                "AskQty_PE": safe_int(pe.get("top_ask_quantity", 0) or pe.get("ask_qty", 0)),
             }
             pe_rows.append(pi)
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
