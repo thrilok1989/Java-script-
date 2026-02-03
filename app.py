@@ -13,6 +13,8 @@ from streamlit_autorefresh import st_autorefresh
 import os
 import asyncio
 import logging
+import importlib
+import sys
 
 # Import modules
 from config import *
@@ -25,6 +27,17 @@ from telegram_alerts import TelegramBot, send_test_message
 from dhan_api import check_dhan_connection
 from bias_analysis import BiasAnalysisPro
 from advanced_chart_analysis import AdvancedChartAnalysis
+
+# Force reload critical modules to pick up ICT indicator changes
+if 'modules_reloaded' not in st.session_state:
+    try:
+        if 'advanced_chart_analysis' in sys.modules:
+            importlib.reload(sys.modules['advanced_chart_analysis'])
+        if 'telegram_alerts' in sys.modules:
+            importlib.reload(sys.modules['telegram_alerts'])
+        st.session_state.modules_reloaded = True
+    except Exception as e:
+        st.warning(f"Module reload warning: {e}")
 from overall_market_sentiment import render_overall_market_sentiment, calculate_overall_sentiment, run_ai_analysis, shutdown_ai_engine
 from advanced_proximity_alerts import get_proximity_alert_system
 from data_cache_manager import (
@@ -35,7 +48,6 @@ from data_cache_manager import (
     get_cached_bias_analysis_results
 )
 from ai_tab_integration import render_master_ai_analysis_tab, render_advanced_analytics_tab
-from src.market_structure_ui import render_market_structure_section, render_structure_widget
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -359,8 +371,12 @@ def get_bias_analyzer():
 
 def get_advanced_chart_analyzer():
     """Lazy load advanced chart analyzer"""
-    if 'advanced_chart_analyzer' not in st.session_state:
-        st.session_state.advanced_chart_analyzer = AdvancedChartAnalysis()
+    # Force reload to pick up new ICT indicator
+    # Remove this check after first successful load with ICT indicator
+    if 'advanced_chart_analyzer' not in st.session_state or not hasattr(st.session_state.advanced_chart_analyzer, '_ict_indicator_loaded'):
+        analyzer = AdvancedChartAnalysis()
+        analyzer._ict_indicator_loaded = True  # Mark as new version
+        st.session_state.advanced_chart_analyzer = analyzer
     return st.session_state.advanced_chart_analyzer
 
 if 'bias_analysis_results' not in st.session_state:
@@ -911,6 +927,116 @@ if st.session_state.get('merged_df') is None:
         pass  # Silently fail - will retry in tab
 
 # ═══════════════════════════════════════════════════════════════════════
+# UNIFIED ML TRADING SIGNAL (Above all tabs - heavily cached for performance)
+# ═══════════════════════════════════════════════════════════════════════
+# Initialize cache variables once
+if 'unified_ml_cache_time' not in st.session_state:
+    st.session_state.unified_ml_cache_time = 0
+if 'unified_ml_generator' not in st.session_state:
+    st.session_state.unified_ml_generator = None
+
+with st.expander("🤖 **UNIFIED ML TRADING SIGNAL**", expanded=True):
+    try:
+        current_time = time.time()
+        cache_duration = 120  # Only regenerate every 120 seconds (2 minutes)
+
+        # Check if we have cached signal and it's still valid
+        cached_signal = st.session_state.get('unified_ml_signal')
+        time_since_cache = current_time - st.session_state.unified_ml_cache_time
+
+        if cached_signal is not None and time_since_cache < cache_duration:
+            # Use cached signal - no computation needed
+            from src.unified_ml_signal import render_unified_signal
+            spot_price = nifty_data.get('spot_price') if nifty_data else None
+            render_unified_signal(cached_signal, spot_price=spot_price)
+            st.caption(f"🔄 Signal updates in {int(cache_duration - time_since_cache)}s")
+        else:
+            # Need to regenerate signal - but use cached generator
+            from src.unified_ml_signal import UnifiedMLSignalGenerator, render_unified_signal
+
+            # Create generator once and reuse (major performance fix)
+            if st.session_state.unified_ml_generator is None:
+                st.session_state.unified_ml_generator = UnifiedMLSignalGenerator()
+
+            # Try multiple sources for chart data
+            df_for_signal = None
+
+            # 1. First try session_state chart_data (from tabs)
+            try:
+                cached_chart = st.session_state.get('chart_data')
+                if cached_chart is not None and hasattr(cached_chart, '__len__') and len(cached_chart) > 0:
+                    df_for_signal = cached_chart
+            except:
+                pass
+
+            # 2. Try nifty_data chart_data (from initial load)
+            if df_for_signal is None:
+                try:
+                    if nifty_data and nifty_data.get('chart_data') is not None:
+                        chart_data_raw = nifty_data.get('chart_data')
+                        if hasattr(chart_data_raw, '__len__') and len(chart_data_raw) > 0:
+                            df_for_signal = chart_data_raw
+                            st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            # 3. Try to fetch from API
+            if df_for_signal is None:
+                try:
+                    df_for_signal = get_cached_chart_data('^NSEI', '1d', '5m')
+                    if df_for_signal is not None and len(df_for_signal) > 0:
+                        st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            # 4. Last resort - create minimal DataFrame from nifty_data OHLC
+            if df_for_signal is None and nifty_data and nifty_data.get('spot_price'):
+                try:
+                    import pandas as pd
+                    from datetime import datetime
+                    # Create minimal DataFrame with current OHLC
+                    df_for_signal = pd.DataFrame({
+                        'open': [nifty_data.get('open', nifty_data['spot_price'])],
+                        'high': [nifty_data.get('high', nifty_data['spot_price'])],
+                        'low': [nifty_data.get('low', nifty_data['spot_price'])],
+                        'close': [nifty_data.get('spot_price')],
+                        'volume': [0]
+                    }, index=[datetime.now()])
+                    st.session_state.chart_data = df_for_signal
+                except:
+                    pass
+
+            if df_for_signal is not None and len(df_for_signal) > 0:
+
+                option_chain = st.session_state.get('option_chain_data')
+                vix_current = st.session_state.get('vix_current', 15.0)
+                spot_price = nifty_data.get('spot_price') if nifty_data else None
+                # Safely get bias_results - handle None case
+                bias_analysis = st.session_state.get('bias_analysis_results')
+                bias_results = bias_analysis.get('bias_results') if isinstance(bias_analysis, dict) else None
+
+                # Use cached generator instead of creating new one
+                unified_signal = st.session_state.unified_ml_generator.generate_signal(
+                    df=df_for_signal,
+                    option_chain=option_chain,
+                    vix_current=vix_current,
+                    spot_price=spot_price,
+                    bias_results=bias_results
+                )
+
+                # Cache the signal
+                st.session_state.unified_ml_signal = unified_signal
+                st.session_state.unified_ml_cache_time = current_time
+
+                render_unified_signal(unified_signal, spot_price=spot_price)
+            else:
+                st.info("⏳ Loading market data... Unified signal will appear once data is available.")
+    except Exception as e:
+        st.warning(f"⚠️ ML Signal temporarily unavailable: {str(e)}")
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════════════════
 # TABS - USING NATIVE STREAMLIT TABS FOR BETTER UX
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -918,7 +1044,7 @@ if st.session_state.get('merged_df') is None:
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🌟 Overall Market Sentiment",
     "🎯 Trade Setup",
-    "📊 Active Signals & Structure",
+    "📊 Active Signals",
     "📈 Positions",
     "🎲 Bias Analysis Pro",
     "📉 Advanced Chart Analysis",
@@ -1226,96 +1352,6 @@ with tab3:
                                         st.error(f"Error: {result['error']}")
 
                 st.divider()
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # MARKET STRUCTURE ANALYSIS SECTION (Inside Active Signals Tab)
-    # ═══════════════════════════════════════════════════════════════════════
-
-    st.markdown("---")
-    st.markdown("## 🧠 Market Structure Analysis")
-    st.caption("Structure-based detection BEFORE price moves | Probability Engine | Expiry Patterns")
-
-    # Load Market Structure Analysis
-    try:
-        # Get OHLC data from multiple sources (prioritize freshest)
-        ohlc_df = None
-        option_data = None
-        spot_price = None
-        is_expiry = False
-        nifty_data_struct = None  # Initialize to avoid reference errors
-
-        # SOURCE 1: PRIMARY - st.session_state.chart_data (used by Unified ML - MOST RELIABLE)
-        if 'chart_data' in st.session_state:
-            chart_data = st.session_state.get('chart_data')
-            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                ohlc_df = chart_data.copy()
-
-        # SOURCE 2: data_df from Option Screener
-        if ohlc_df is None and 'data_df' in st.session_state:
-            chart_data = st.session_state.get('data_df')
-            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                ohlc_df = chart_data.copy()
-
-        # SOURCE 3: nifty_df alternative
-        if ohlc_df is None and 'nifty_df' in st.session_state:
-            chart_data = st.session_state.get('nifty_df')
-            if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                ohlc_df = chart_data.copy()
-
-        # SOURCE 4: Try data cache manager
-        if ohlc_df is None:
-            nifty_data_struct = get_cached_nifty_data()
-            if nifty_data_struct and 'chart_data' in nifty_data_struct:
-                chart_data = nifty_data_struct['chart_data']
-                if isinstance(chart_data, pd.DataFrame) and len(chart_data) > 0:
-                    ohlc_df = chart_data
-
-        # Get spot price from multiple sources
-        if 'nifty_spot' in st.session_state and st.session_state['nifty_spot']:
-            spot_price = st.session_state['nifty_spot']
-        elif 'last_spot_price' in st.session_state and st.session_state.get('last_spot_price'):
-            spot_price = st.session_state.last_spot_price
-        elif nifty_data_struct and 'spot_price' in nifty_data_struct:
-            spot_price = nifty_data_struct['spot_price']
-        elif ohlc_df is not None and len(ohlc_df) > 0 and 'close' in ohlc_df.columns:
-            spot_price = float(ohlc_df['close'].iloc[-1])
-
-        # Get option data from multiple sources
-        if 'merged_df' in st.session_state:
-            merged = st.session_state.get('merged_df')
-            if isinstance(merged, pd.DataFrame) and len(merged) > 0:
-                option_data = {'merged_df': merged, 'source': 'option_screener'}
-
-        if option_data is None and 'overall_option_data' in st.session_state:
-            screener_data = st.session_state.get('overall_option_data', {}).get('NIFTY', {})
-            if screener_data:
-                option_data = screener_data
-
-        if option_data is None:
-            option_data = {}
-
-        # Add extras
-        if 'atm_strike' in st.session_state:
-            option_data['atm_strike'] = st.session_state['atm_strike']
-        if 'market_depth_data' in st.session_state:
-            option_data['market_depth'] = st.session_state['market_depth_data']
-
-        # Check expiry day
-        today = datetime.now()
-        is_expiry = today.weekday() == 3  # Thursday
-
-        if ohlc_df is not None and len(ohlc_df) > 20:
-            render_market_structure_section(
-                ohlc_df=ohlc_df,
-                option_data=option_data,
-                is_expiry=is_expiry,
-                spot_price=spot_price
-            )
-        else:
-            st.info("📊 Load chart data from **Overall Market Sentiment** or **NIFTY Option Screener** tab to see Market Structure Analysis.")
-
-    except Exception as e:
-        st.warning(f"Market Structure module loading: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════
 # TAB 4: POSITIONS
@@ -2146,6 +2182,9 @@ with tab6:
     with col1:
         show_reversal_zones = st.checkbox("🎯 Reversal Probability Zones (LuxAlgo)", value=True, key="show_reversal_zones", help="Statistical reversal prediction with probability targets")
 
+    with col2:
+        show_ict_indicator = st.checkbox("🎯 ICT Comprehensive Indicator", value=True, key="show_ict_indicator", help="Order Blocks, Fair Value Gaps, Supply/Demand Zones, Volume Profile with POC")
+
     st.divider()
 
     # Indicator Configuration Section
@@ -2591,6 +2630,7 @@ with tab6:
                     show_fibonacci=show_fibonacci,
                     show_patterns=show_patterns,
                     show_reversal_zones=show_reversal_zones,
+                    show_ict_indicator=show_ict_indicator,
                     vob_params=None,
                     htf_params=None,
                     footprint_params=None,
@@ -2599,8 +2639,53 @@ with tab6:
                     liquidity_params=liquidity_params,
                     money_flow_params=money_flow_params,
                     deltaflow_params=deltaflow_params,
-                    reversal_zones_params=reversal_zones_params
+                    reversal_zones_params=reversal_zones_params,
+                    ict_params=None
                 )
+
+                # Send Telegram alerts for ICT indicator signals
+                if show_ict_indicator:
+                    try:
+                        from indicators.comprehensive_ict_indicator import ComprehensiveICTIndicator
+                        ict_indicator = ComprehensiveICTIndicator()
+                        ict_data = ict_indicator.calculate(st.session_state.chart_data)
+
+                        if ict_data and ict_data.get('signals'):
+                            signals = ict_data['signals']
+                            overall_bias = signals.get('overall_bias', 'NEUTRAL')
+
+                            # Only send alert if there are significant signals
+                            if signals.get('bullish_count', 0) > 0 or signals.get('bearish_count', 0) > 0:
+                                # Check if we should send alert (don't spam)
+                                # Only send if bias changed or significant new signals
+                                if 'last_ict_alert' not in st.session_state or \
+                                   st.session_state.get('last_ict_bias') != overall_bias:
+                                    # Force reload telegram_alerts to get new method
+                                    import telegram_alerts
+                                    import importlib
+                                    importlib.reload(telegram_alerts)
+                                    from telegram_alerts import TelegramBot
+
+                                    telegram = TelegramBot()
+                                    current_price = st.session_state.chart_data['close'].iloc[-1]
+
+                                    # Check if method exists
+                                    if hasattr(telegram, 'send_ict_indicator_alert'):
+                                        alert_sent = telegram.send_ict_indicator_alert(
+                                            symbol=symbol_code.split()[0],
+                                            ict_signals=signals,
+                                            current_price=current_price
+                                        )
+                                    else:
+                                        st.error("🔄 Please restart the app to enable Telegram alerts for ICT indicator")
+                                        alert_sent = False
+
+                                    if alert_sent:
+                                        st.session_state.last_ict_alert = get_current_time_ist()
+                                        st.session_state.last_ict_bias = overall_bias
+                                        st.success("✅ ICT Indicator alert sent to Telegram!")
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not send ICT indicator alert: {str(e)}")
 
                 # Display chart
                 st.plotly_chart(fig, use_container_width=True)
