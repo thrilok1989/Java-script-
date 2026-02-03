@@ -1194,6 +1194,8 @@ class UnifiedMLSignalGenerator:
                         'activity_level': block_result.activity_level,
                         'bullish_blocks': block_result.bullish_blocks,
                         'bearish_blocks': block_result.bearish_blocks,
+                        'call_blocks': block_result.call_blocks,
+                        'put_blocks': block_result.put_blocks,
                         'total_volume': block_result.total_block_volume,
                         'description': block_result.description
                     }
