@@ -160,24 +160,6 @@ try:
 except ImportError:
     OPTION_CHAIN_TABLE_AVAILABLE = False
 
-# Import 2026 Regime Update modules
-try:
-    from src.regime_2026_integration import (
-        analyze_market_2026,
-        get_trading_decision,
-        should_i_trade,
-        get_market_summary,
-        render_2026_dashboard,
-        render_quick_status,
-        TimeBasedLogic2026,
-        get_atr_based_stops_targets
-    )
-    from src.option_chain_2026 import analyze_option_chain_2026
-    REGIME_2026_AVAILABLE = True
-except ImportError as e:
-    REGIME_2026_AVAILABLE = False
-    REGIME_2026_ERROR = str(e)
-
 # -----------------------
 #  IST TIMEZONE SETUP
 # -----------------------
@@ -272,7 +254,7 @@ def compute_greeks(spot, strike, tau, risk_free_rate, ltp, option_type):
 # -----------------------
 #  CONFIG
 # -----------------------
-AUTO_REFRESH_SEC = 300  # 5 minutes for app-wide refresh
+AUTO_REFRESH_SEC = 30  # 30 seconds for responsive auto-refresh
 LOT_SIZE = 50
 RISK_FREE_RATE = 0.06
 ATM_STRIKE_WINDOW = 8
@@ -1052,24 +1034,8 @@ def display_bias_dashboard(atm_bias, support_bias, resistance_bias):
 
 def analyze_individual_strike_bias(strike_data, strike_price, atm_strike, expiry=""):
     """
-    Calculate 14 bias metrics for a single strike based on Option Chain Bias Analysis
-
-    Bias Logic (from Option Chain Theory):
-    1. LTP_Bias: Higher CE LTP = Bullish (CE demand higher)
-    2. OI_Bias: Higher CE OI = Bearish (more call writing = resistance)
-    3. ChgOI_Bias: Higher CE ChgOI = Bearish (new call writing)
-    4. Volume_Bias: Higher CE Volume = Bullish (more CE buying activity)
-    5. Delta_Bias: Higher CE Delta = Bullish
-    6. Gamma_Bias: Higher CE Gamma = Bullish
-    7. AskQty_Bias: Higher PE Ask = Bullish (more PE sellers)
-    8. BidQty_Bias: Higher PE Bid = Bearish (more PE buyers)
-    9. AskBid_Bias: More bids than asks on CE = Bullish
-    10. IV_Bias: Higher CE IV = Bullish (more CE demand driving IV up)
-    11. DeltaExp: delta_exp_ce > abs(delta_exp_pe) = Bullish
-    12. GammaExp: gamma_exp_ce > gamma_exp_pe = Bullish
-    13. DVP_Bias: Delta-Volume-Price bias
-    14. PressureBias: Bid-Ask pressure calculation
-
+    Calculate 14 bias metrics for a single strike (Seller's Perspective)
+    Includes: OI, ChgOI, Vol, Delta, Gamma, Premium, IV, DeltaExp, GammaExp, IVSkew, OIChgRate, PCR, MarketDepth, BidAskDepth
     Returns: dict with bias scores, emojis, and interpretations for one strike
     """
     bias_scores = {}
@@ -1077,275 +1043,306 @@ def analyze_individual_strike_bias(strike_data, strike_price, atm_strike, expiry
     bias_interpretations = {}
 
     # Extract data for this strike
-    ce_oi = strike_data.get("OI_CE", 0) or 0
-    pe_oi = strike_data.get("OI_PE", 0) or 0
-    ce_chg = strike_data.get("Chg_OI_CE", 0) or 0
-    pe_chg = strike_data.get("Chg_OI_PE", 0) or 0
-    ce_vol = strike_data.get("Vol_CE", 0) or 0
-    pe_vol = strike_data.get("Vol_PE", 0) or 0
-    ce_ltp = strike_data.get("LTP_CE", 0) or 0
-    pe_ltp = strike_data.get("LTP_PE", 0) or 0
-    ce_iv = strike_data.get("IV_CE", 0) or 0
-    pe_iv = strike_data.get("IV_PE", 0) or 0
+    ce_oi = strike_data.get("OI_CE", 0)
+    pe_oi = strike_data.get("OI_PE", 0)
+    ce_chg = strike_data.get("Chg_OI_CE", 0)
+    pe_chg = strike_data.get("Chg_OI_PE", 0)
+    ce_vol = strike_data.get("Vol_CE", 0)
+    pe_vol = strike_data.get("Vol_PE", 0)
+    ce_ltp = strike_data.get("LTP_CE", 0)
+    pe_ltp = strike_data.get("LTP_PE", 0)
+    ce_iv = strike_data.get("IV_CE", 0)
+    pe_iv = strike_data.get("IV_PE", 0)
+    security_id_ce = strike_data.get("SecurityId_CE", 0)
+    security_id_pe = strike_data.get("SecurityId_PE", 0)
 
-    # Get Delta and Gamma values (if available from Greeks calculation)
-    ce_delta = strike_data.get("Delta_CE", 0.5) or 0.5  # Default delta for CE
-    pe_delta = strike_data.get("Delta_PE", -0.5) or -0.5  # Default delta for PE
-    ce_gamma = strike_data.get("Gamma_CE", 0.01) or 0.01
-    pe_gamma = strike_data.get("Gamma_PE", 0.01) or 0.01
+    # Fetch market depth for this strike
+    # Try strike/expiry based approach first, then fall back to security IDs
+    depth_data = None
+    depth_error = None
 
-    # Get bid/ask quantities
-    ce_bid_qty = strike_data.get("BidQty_CE", 0) or 0
-    pe_bid_qty = strike_data.get("BidQty_PE", 0) or 0
-    ce_ask_qty = strike_data.get("AskQty_CE", 0) or 0
-    pe_ask_qty = strike_data.get("AskQty_PE", 0) or 0
+    # Call with strike and expiry parameters
+    depth_data = get_option_contract_depth(
+        security_id_ce=security_id_ce,
+        security_id_pe=security_id_pe,
+        strike_price=strike_price,
+        expiry=expiry
+    )
 
-    # ===== 1. LTP BIAS =====
-    # Higher CE LTP = Bullish (CE demand higher)
-    if ce_ltp > pe_ltp:
-        bias_scores["LTP"] = 1
-        bias_emojis["LTP"] = "🐂"
-        bias_interpretations["LTP"] = f"CE LTP ({ce_ltp:.1f}) > PE LTP ({pe_ltp:.1f}) → Bullish"
-    elif pe_ltp > ce_ltp:
-        bias_scores["LTP"] = -1
-        bias_emojis["LTP"] = "🐻"
-        bias_interpretations["LTP"] = f"PE LTP ({pe_ltp:.1f}) > CE LTP ({ce_ltp:.1f}) → Bearish"
-    else:
-        bias_scores["LTP"] = 0
-        bias_emojis["LTP"] = "⚖️"
-        bias_interpretations["LTP"] = f"CE LTP ≈ PE LTP → Neutral"
+    if not depth_data.get("available") and "error" in depth_data:
+        depth_error = depth_data.get("error")
 
-    # ===== 2. OI BIAS =====
-    # Higher CE OI = Bearish (more call writing = resistance)
-    if ce_oi > pe_oi:
-        bias_scores["OI"] = -1
-        bias_emojis["OI"] = "🐻"
-        bias_interpretations["OI"] = f"CE OI ({ce_oi/1000:.0f}K) > PE OI → Bearish (Resistance)"
-    elif pe_oi > ce_oi:
+    # 1. OI BIAS
+    oi_ratio = pe_oi / max(ce_oi, 1)
+    if oi_ratio > 1.3:
         bias_scores["OI"] = 1
         bias_emojis["OI"] = "🐂"
-        bias_interpretations["OI"] = f"PE OI ({pe_oi/1000:.0f}K) > CE OI → Bullish (Support)"
+    elif oi_ratio < 0.77:
+        bias_scores["OI"] = -1
+        bias_emojis["OI"] = "🐻"
     else:
         bias_scores["OI"] = 0
         bias_emojis["OI"] = "⚖️"
-        bias_interpretations["OI"] = f"Balanced OI → Neutral"
+    bias_interpretations["OI"] = f"PE/CE OI: {oi_ratio:.2f}"
 
-    # ===== 3. CHANGE IN OI BIAS =====
-    # Higher CE ChgOI = Bearish (new call writing)
-    if ce_chg > pe_chg:
-        bias_scores["ChgOI"] = -1
-        bias_emojis["ChgOI"] = "🐻"
-        bias_interpretations["ChgOI"] = f"CE ChgOI ({ce_chg/1000:.0f}K) > PE → Bearish buildup"
-    elif pe_chg > ce_chg:
+    # 2. CHANGE IN OI BIAS
+    if ce_chg > 0 and pe_chg > 0:
+        chg_ratio = pe_chg / max(ce_chg, 1)
+        if chg_ratio > 1.2:
+            bias_scores["ChgOI"] = 1
+            bias_emojis["ChgOI"] = "🐂"
+        elif chg_ratio < 0.83:
+            bias_scores["ChgOI"] = -1
+            bias_emojis["ChgOI"] = "🐻"
+        else:
+            bias_scores["ChgOI"] = 0
+            bias_emojis["ChgOI"] = "⚖️"
+    elif pe_chg > 0:
         bias_scores["ChgOI"] = 1
         bias_emojis["ChgOI"] = "🐂"
-        bias_interpretations["ChgOI"] = f"PE ChgOI ({pe_chg/1000:.0f}K) > CE → Bullish buildup"
+    elif ce_chg > 0:
+        bias_scores["ChgOI"] = -1
+        bias_emojis["ChgOI"] = "🐻"
     else:
         bias_scores["ChgOI"] = 0
         bias_emojis["ChgOI"] = "⚖️"
-        bias_interpretations["ChgOI"] = f"Mixed activity → Neutral"
+    bias_interpretations["ChgOI"] = f"CE:{ce_chg:,.0f} PE:{pe_chg:,.0f}"
 
-    # ===== 4. VOLUME BIAS =====
-    # Higher CE Volume = Bullish (more CE buying activity)
-    if ce_vol > pe_vol:
+    # 3. VOLUME BIAS
+    vol_ratio = pe_vol / max(ce_vol, 1)
+    if vol_ratio > 1.2:
         bias_scores["Volume"] = 1
         bias_emojis["Volume"] = "🐂"
-        bias_interpretations["Volume"] = f"CE Vol ({ce_vol/1000:.0f}K) > PE → Bullish activity"
-    elif pe_vol > ce_vol:
+    elif vol_ratio < 0.83:
         bias_scores["Volume"] = -1
         bias_emojis["Volume"] = "🐻"
-        bias_interpretations["Volume"] = f"PE Vol ({pe_vol/1000:.0f}K) > CE → Bearish activity"
     else:
         bias_scores["Volume"] = 0
         bias_emojis["Volume"] = "⚖️"
-        bias_interpretations["Volume"] = f"Balanced volume → Neutral"
+    bias_interpretations["Volume"] = f"PE/CE Vol: {vol_ratio:.2f}"
 
-    # ===== 5. DELTA BIAS =====
-    # Higher CE Delta = Bullish
-    if ce_delta > abs(pe_delta):
-        bias_scores["Delta"] = 1
-        bias_emojis["Delta"] = "🐂"
-        bias_interpretations["Delta"] = f"CE Δ ({ce_delta:.3f}) > |PE Δ| → Bullish"
-    elif abs(pe_delta) > ce_delta:
-        bias_scores["Delta"] = -1
-        bias_emojis["Delta"] = "🐻"
-        bias_interpretations["Delta"] = f"|PE Δ| ({abs(pe_delta):.3f}) > CE Δ → Bearish"
+    # 4. DELTA BIAS (simplified - based on position relative to ATM)
+    if strike_price < atm_strike:
+        # ITM Call, OTM Put - bullish if PE OI > CE OI
+        delta_bias = 1 if pe_oi > ce_oi else -0.5
+    elif strike_price > atm_strike:
+        # OTM Call, ITM Put - bearish if CE OI > PE OI
+        delta_bias = -1 if ce_oi > pe_oi else 0.5
     else:
-        bias_scores["Delta"] = 0
-        bias_emojis["Delta"] = "⚖️"
-        bias_interpretations["Delta"] = f"Balanced Delta → Neutral"
+        # ATM
+        delta_bias = 1 if pe_oi > ce_oi * 1.2 else (-1 if ce_oi > pe_oi * 1.2 else 0)
 
-    # ===== 6. GAMMA BIAS =====
-    # Higher CE Gamma = Bullish
-    if ce_gamma > pe_gamma:
-        bias_scores["Gamma"] = 1
-        bias_emojis["Gamma"] = "🐂"
-        bias_interpretations["Gamma"] = f"CE γ ({ce_gamma:.4f}) > PE γ → Bullish"
-    elif pe_gamma > ce_gamma:
-        bias_scores["Gamma"] = -1
-        bias_emojis["Gamma"] = "🐻"
-        bias_interpretations["Gamma"] = f"PE γ ({pe_gamma:.4f}) > CE γ → Bearish"
+    bias_scores["Delta"] = delta_bias
+    bias_emojis["Delta"] = "🐂" if delta_bias > 0 else ("🐻" if delta_bias < 0 else "⚖️")
+    bias_interpretations["Delta"] = f"Position: {'ITM' if abs(strike_price - atm_strike) < 50 else 'OTM'}"
+
+    # 5. GAMMA BIAS (highest at ATM)
+    distance_from_atm = abs(strike_price - atm_strike)
+    if distance_from_atm == 0:
+        gamma_score = 1 if pe_oi > ce_oi else -1
     else:
-        bias_scores["Gamma"] = 0
-        bias_emojis["Gamma"] = "⚖️"
-        bias_interpretations["Gamma"] = f"Balanced Gamma → Neutral"
+        gamma_score = 0.5 if pe_oi > ce_oi else -0.5
 
-    # ===== 7. ASK QTY BIAS =====
-    # Higher PE Ask = Bullish (more PE sellers)
-    if pe_ask_qty > ce_ask_qty:
-        bias_scores["AskQty"] = 1
-        bias_emojis["AskQty"] = "🐂"
-        bias_interpretations["AskQty"] = f"PE Ask ({pe_ask_qty:,}) > CE Ask → Bullish"
-    elif ce_ask_qty > pe_ask_qty:
-        bias_scores["AskQty"] = -1
-        bias_emojis["AskQty"] = "🐻"
-        bias_interpretations["AskQty"] = f"CE Ask ({ce_ask_qty:,}) > PE Ask → Bearish"
+    bias_scores["Gamma"] = gamma_score
+    bias_emojis["Gamma"] = "🐂" if gamma_score > 0 else ("🐻" if gamma_score < 0 else "⚖️")
+    bias_interpretations["Gamma"] = f"ATM Distance: {distance_from_atm}"
+
+    # 6. PREMIUM BIAS
+    premium_ratio = pe_ltp / max(ce_ltp, 0.01)
+    if premium_ratio > 1.5:
+        bias_scores["Premium"] = 1
+        bias_emojis["Premium"] = "🐂"
+    elif premium_ratio < 0.67:
+        bias_scores["Premium"] = -1
+        bias_emojis["Premium"] = "🐻"
     else:
-        bias_scores["AskQty"] = 0
-        bias_emojis["AskQty"] = "⚖️"
-        bias_interpretations["AskQty"] = f"Balanced Ask → Neutral"
+        bias_scores["Premium"] = 0
+        bias_emojis["Premium"] = "⚖️"
+    bias_interpretations["Premium"] = f"PE/CE Premium: {premium_ratio:.2f}"
 
-    # ===== 8. BID QTY BIAS =====
-    # Higher PE Bid = Bearish (more PE buyers)
-    if pe_bid_qty > ce_bid_qty:
-        bias_scores["BidQty"] = -1
-        bias_emojis["BidQty"] = "🐻"
-        bias_interpretations["BidQty"] = f"PE Bid ({pe_bid_qty:,}) > CE Bid → Bearish"
-    elif ce_bid_qty > pe_bid_qty:
-        bias_scores["BidQty"] = 1
-        bias_emojis["BidQty"] = "🐂"
-        bias_interpretations["BidQty"] = f"CE Bid ({ce_bid_qty:,}) > PE Bid → Bullish"
-    else:
-        bias_scores["BidQty"] = 0
-        bias_emojis["BidQty"] = "⚖️"
-        bias_interpretations["BidQty"] = f"Balanced Bid → Neutral"
-
-    # ===== 9. ASK-BID BIAS (CE side) =====
-    # More bids than asks on CE = Bullish
-    if ce_bid_qty > ce_ask_qty:
-        bias_scores["AskBid"] = 1
-        bias_emojis["AskBid"] = "🐂"
-        bias_interpretations["AskBid"] = f"CE Bid ({ce_bid_qty:,}) > CE Ask → Bullish"
-    elif ce_ask_qty > ce_bid_qty:
-        bias_scores["AskBid"] = -1
-        bias_emojis["AskBid"] = "🐻"
-        bias_interpretations["AskBid"] = f"CE Ask ({ce_ask_qty:,}) > CE Bid → Bearish"
-    else:
-        bias_scores["AskBid"] = 0
-        bias_emojis["AskBid"] = "⚖️"
-        bias_interpretations["AskBid"] = f"Balanced CE Bid/Ask → Neutral"
-
-    # ===== 10. IV BIAS =====
-    # Higher CE IV = Bullish (more CE demand driving IV up)
-    if ce_iv > pe_iv:
+    # 7. IV BIAS
+    iv_diff = pe_iv - ce_iv
+    if iv_diff > 2:
         bias_scores["IV"] = 1
         bias_emojis["IV"] = "🐂"
-        bias_interpretations["IV"] = f"CE IV ({ce_iv:.1f}%) > PE IV → Bullish demand"
-    elif pe_iv > ce_iv:
+    elif iv_diff < -2:
         bias_scores["IV"] = -1
         bias_emojis["IV"] = "🐻"
-        bias_interpretations["IV"] = f"PE IV ({pe_iv:.1f}%) > CE IV → Bearish fear"
     else:
         bias_scores["IV"] = 0
         bias_emojis["IV"] = "⚖️"
-        bias_interpretations["IV"] = f"Balanced IV → Neutral"
+    bias_interpretations["IV"] = f"PE-CE IV: {iv_diff:.2f}%"
 
-    # ===== 11. DELTA EXPOSURE =====
-    # delta_exp_ce > abs(delta_exp_pe) = Bullish
-    delta_exp_ce = ce_delta * ce_oi
-    delta_exp_pe = pe_delta * pe_oi
+    # 8. DELTA EXPOSURE (OI-weighted delta)
+    ce_delta_exp = ce_oi * 0.5  # Simplified delta
+    pe_delta_exp = pe_oi * (-0.5)
+    net_delta_exp = ce_delta_exp + pe_delta_exp
 
-    if delta_exp_ce > abs(delta_exp_pe):
+    if net_delta_exp > 0:
         bias_scores["DeltaExp"] = 1
         bias_emojis["DeltaExp"] = "🐂"
-        bias_interpretations["DeltaExp"] = f"CE ΔExp ({delta_exp_ce/1000:.0f}K) > |PE| → Bullish"
-    elif abs(delta_exp_pe) > delta_exp_ce:
+    elif net_delta_exp < 0:
         bias_scores["DeltaExp"] = -1
         bias_emojis["DeltaExp"] = "🐻"
-        bias_interpretations["DeltaExp"] = f"|PE ΔExp| ({abs(delta_exp_pe)/1000:.0f}K) > CE → Bearish"
     else:
         bias_scores["DeltaExp"] = 0
         bias_emojis["DeltaExp"] = "⚖️"
-        bias_interpretations["DeltaExp"] = f"Balanced Delta Exposure → Neutral"
+    bias_interpretations["DeltaExp"] = f"Net ΔExp: {net_delta_exp:,.0f}"
 
-    # ===== 12. GAMMA EXPOSURE =====
-    # gamma_exp_ce > gamma_exp_pe = Bullish
-    gamma_exp_ce = ce_gamma * ce_oi
-    gamma_exp_pe = pe_gamma * pe_oi
+    # 9. GAMMA EXPOSURE (OI-weighted gamma)
+    gamma = 0.01  # Simplified
+    ce_gamma_exp = ce_oi * gamma
+    pe_gamma_exp = pe_oi * gamma
+    net_gamma_exp = ce_gamma_exp - pe_gamma_exp
 
-    if gamma_exp_ce > gamma_exp_pe:
-        bias_scores["GammaExp"] = 1
-        bias_emojis["GammaExp"] = "🐂"
-        bias_interpretations["GammaExp"] = f"CE γExp ({gamma_exp_ce/1000:.0f}K) > PE → Bullish"
-    elif gamma_exp_pe > gamma_exp_ce:
+    if net_gamma_exp > 0:
         bias_scores["GammaExp"] = -1
         bias_emojis["GammaExp"] = "🐻"
-        bias_interpretations["GammaExp"] = f"PE γExp ({gamma_exp_pe/1000:.0f}K) > CE → Bearish"
+    elif net_gamma_exp < 0:
+        bias_scores["GammaExp"] = 1
+        bias_emojis["GammaExp"] = "🐂"
     else:
         bias_scores["GammaExp"] = 0
         bias_emojis["GammaExp"] = "⚖️"
-        bias_interpretations["GammaExp"] = f"Balanced Gamma Exposure → Neutral"
+    bias_interpretations["GammaExp"] = f"Net γExp: {net_gamma_exp:,.0f}"
 
-    # ===== 13. DVP (Delta-Volume-Price) BIAS =====
-    # Combined analysis of price change, volume, and OI change
-    price_diff = ce_ltp - pe_ltp
-    vol_diff = ce_vol - pe_vol
-    chg_oi_diff = ce_chg - pe_chg
-
-    if price_diff > 0 and vol_diff > 0 and chg_oi_diff > 0:
-        bias_scores["DVP"] = 1
-        bias_emojis["DVP"] = "🐂"
-        bias_interpretations["DVP"] = "Price+Vol+OI aligned → Bullish"
-    elif price_diff < 0 and vol_diff > 0 and chg_oi_diff > 0:
-        bias_scores["DVP"] = -1
-        bias_emojis["DVP"] = "🐻"
-        bias_interpretations["DVP"] = "Price down with activity → Bearish"
-    elif price_diff > 0 and vol_diff > 0 and chg_oi_diff < 0:
-        bias_scores["DVP"] = 1
-        bias_emojis["DVP"] = "🐂"
-        bias_interpretations["DVP"] = "Price up, OI unwind → Bullish"
-    elif price_diff < 0 and vol_diff > 0 and chg_oi_diff < 0:
-        bias_scores["DVP"] = -1
-        bias_emojis["DVP"] = "🐻"
-        bias_interpretations["DVP"] = "Price down, OI unwind → Bearish"
+    # 10. IV SKEW BIAS
+    avg_iv = (ce_iv + pe_iv) / 2
+    if avg_iv > 18:
+        bias_scores["IVSkew"] = -0.5
+        bias_emojis["IVSkew"] = "🐻"
+    elif avg_iv < 12:
+        bias_scores["IVSkew"] = 0.5
+        bias_emojis["IVSkew"] = "🐂"
     else:
-        bias_scores["DVP"] = 0
-        bias_emojis["DVP"] = "⚖️"
-        bias_interpretations["DVP"] = "Mixed DVP signals → Neutral"
+        bias_scores["IVSkew"] = 0
+        bias_emojis["IVSkew"] = "⚖️"
+    bias_interpretations["IVSkew"] = f"Avg IV: {avg_iv:.2f}%"
 
-    # ===== 14. PRESSURE BIAS (Bid-Ask Pressure) =====
-    # pressure = (call_bid_qty - call_ask_qty) + (put_ask_qty - put_bid_qty)
-    # Positive pressure > 500 = Bullish, Negative pressure < -500 = Bearish
-    bid_ask_pressure = (ce_bid_qty - ce_ask_qty) + (pe_ask_qty - pe_bid_qty)
+    # 11. OI CHANGE RATE (acceleration)
+    total_oi = ce_oi + pe_oi
+    total_chg = abs(ce_chg) + abs(pe_chg)
+    chg_rate = total_chg / max(total_oi, 1) * 100
 
-    if bid_ask_pressure > 500:
-        bias_scores["Pressure"] = 1
-        bias_emojis["Pressure"] = "🐂"
-        bias_interpretations["Pressure"] = f"Pressure ({bid_ask_pressure:+,}) → Bullish"
-    elif bid_ask_pressure < -500:
-        bias_scores["Pressure"] = -1
-        bias_emojis["Pressure"] = "🐻"
-        bias_interpretations["Pressure"] = f"Pressure ({bid_ask_pressure:+,}) → Bearish"
+    if chg_rate > 5:
+        if pe_chg > ce_chg:
+            bias_scores["OIChgRate"] = 1
+            bias_emojis["OIChgRate"] = "🐂"
+        else:
+            bias_scores["OIChgRate"] = -1
+            bias_emojis["OIChgRate"] = "🐻"
     else:
-        bias_scores["Pressure"] = 0
-        bias_emojis["Pressure"] = "⚖️"
-        bias_interpretations["Pressure"] = f"Pressure ({bid_ask_pressure:+,}) → Neutral"
+        bias_scores["OIChgRate"] = 0
+        bias_emojis["OIChgRate"] = "⚖️"
+    bias_interpretations["OIChgRate"] = f"Chg Rate: {chg_rate:.2f}%"
 
-    # ===== Calculate overall verdict for this strike =====
+    # 12. PCR AT STRIKE (Put-Call Ratio)
+    pcr_strike = pe_oi / max(ce_oi, 1)
+    if pcr_strike > 1.5:
+        bias_scores["PCR"] = 1
+        bias_emojis["PCR"] = "🐂"
+    elif pcr_strike < 0.67:
+        bias_scores["PCR"] = -1
+        bias_emojis["PCR"] = "🐻"
+    else:
+        bias_scores["PCR"] = 0
+        bias_emojis["PCR"] = "⚖️"
+    bias_interpretations["PCR"] = f"Strike PCR: {pcr_strike:.2f}"
+
+    # 13. MARKET DEPTH BIAS (CE vs PE Orderbook from 20-level API)
+    if depth_data and depth_data.get("available"):
+        # Calculate depth imbalance for CE and PE separately
+        ce_depth_imbalance = (depth_data["ce_bid_qty"] - depth_data["ce_ask_qty"]) / max(depth_data["ce_total"], 1)
+        pe_depth_imbalance = (depth_data["pe_bid_qty"] - depth_data["pe_ask_qty"]) / max(depth_data["pe_total"], 1)
+
+        # Net depth bias: Positive PE depth imbalance = Bullish, Positive CE depth imbalance = Bearish
+        depth_bias_score = pe_depth_imbalance - ce_depth_imbalance
+
+        if depth_bias_score > 0.3:
+            bias_scores["MktDepth"] = 1
+            bias_emojis["MktDepth"] = "🐂"
+        elif depth_bias_score > 0.1:
+            bias_scores["MktDepth"] = 0.5
+            bias_emojis["MktDepth"] = "🐂"
+        elif depth_bias_score < -0.3:
+            bias_scores["MktDepth"] = -1
+            bias_emojis["MktDepth"] = "🐻"
+        elif depth_bias_score < -0.1:
+            bias_scores["MktDepth"] = -0.5
+            bias_emojis["MktDepth"] = "🐻"
+        else:
+            bias_scores["MktDepth"] = 0
+            bias_emojis["MktDepth"] = "⚖️"
+
+        bias_interpretations["MktDepth"] = f"CE:{depth_data['ce_total']:,} PE:{depth_data['pe_total']:,}"
+    else:
+        # No depth data available
+        bias_scores["MktDepth"] = 0
+        bias_emojis["MktDepth"] = "⚪"
+        # Show error for debugging if available
+        if depth_error:
+            bias_interpretations["MktDepth"] = f"Error: {depth_error[:50]}"
+        else:
+            bias_interpretations["MktDepth"] = "N/A"
+
+    # 14. BID/ASK DEPTH BIAS (Simple Bid/Ask Ratio - Seller's Perspective)
+    # Extract bid/ask quantities from basic option chain data
+    ce_bid_qty = strike_data.get("BidQty_CE", 0)
+    pe_bid_qty = strike_data.get("BidQty_PE", 0)
+    ce_ask_qty = strike_data.get("AskQty_CE", 0)
+    pe_ask_qty = strike_data.get("AskQty_PE", 0)
+
+    # Seller's View:
+    # BID side = Buyers (people buying from sellers)
+    # ASK side = Sellers (people selling)
+
+    # If Call Bid > Put Bid → More buyers want calls → Bearish (expecting up move)
+    # If Put Bid > Call Bid → More buyers want puts → Bullish (expecting down move protection)
+    # If Call Ask > Put Ask → More sellers offering calls → Bullish (sellers betting price won't go up)
+    # If Put Ask > Call Ask → More sellers offering puts → Bearish (sellers betting price won't go down)
+
+    ba_depth_score = 0
+
+    # Analyze BID depth (buying pressure)
+    if pe_bid_qty > 0 or ce_bid_qty > 0:
+        bid_ratio = pe_bid_qty / max(ce_bid_qty, 1)
+        if bid_ratio > 1.3:  # More PUT buyers (bearish protection = bullish sellers)
+            ba_depth_score += 0.5
+        elif bid_ratio < 0.77:  # More CALL buyers (bullish bets = bearish sellers)
+            ba_depth_score -= 0.5
+
+    # Analyze ASK depth (selling pressure)
+    if pe_ask_qty > 0 or ce_ask_qty > 0:
+        ask_ratio = ce_ask_qty / max(pe_ask_qty, 1)
+        if ask_ratio > 1.3:  # More CALL sellers (bearish view = bullish)
+            ba_depth_score += 0.5
+        elif ask_ratio < 0.77:  # More PUT sellers (bullish view = bearish)
+            ba_depth_score -= 0.5
+
+    # Final bid/ask depth bias
+    if ba_depth_score > 0.5:
+        bias_scores["BA"] = 1
+        bias_emojis["BA"] = "🐂"
+    elif ba_depth_score < -0.5:
+        bias_scores["BA"] = -1
+        bias_emojis["BA"] = "🐻"
+    else:
+        bias_scores["BA"] = 0
+        bias_emojis["BA"] = "⚪"  # White circle for neutral
+    bias_interpretations["BA"] = f"Bid: PE/CE {pe_bid_qty/max(ce_bid_qty,1):.2f} | Ask: CE/PE {ce_ask_qty/max(pe_ask_qty,1):.2f}"
+
+    # Calculate overall verdict for this strike
     total_bias = sum(bias_scores.values())
-    total_metrics = len(bias_scores)
-
-    # Determine verdict based on score thresholds
-    if total_bias >= 4:
+    if total_bias >= 3:
         verdict = "🐂 STRONG BULLISH"
         verdict_color = "#00FF00"
-    elif total_bias >= 2:
+    elif total_bias >= 1:
         verdict = "🐂 Bullish"
         verdict_color = "#90EE90"
-    elif total_bias <= -4:
+    elif total_bias <= -3:
         verdict = "🐻 STRONG BEARISH"
         verdict_color = "#FF0000"
-    elif total_bias <= -2:
+    elif total_bias <= -1:
         verdict = "🐻 Bearish"
         verdict_color = "#FFA07A"
     else:
@@ -1358,7 +1355,6 @@ def analyze_individual_strike_bias(strike_data, strike_price, atm_strike, expiry
         "bias_emojis": bias_emojis,
         "bias_interpretations": bias_interpretations,
         "total_bias": total_bias,
-        "total_metrics": total_metrics,
         "verdict": verdict,
         "verdict_color": verdict_color
     }
@@ -1492,8 +1488,8 @@ def display_atm_strikes_tabulation(strike_analyses, atm_strike):
 
     st.markdown("<br/>", unsafe_allow_html=True)
 
-    # Create header row - 14 bias metrics based on Option Chain Theory
-    metrics = ["Strike", "LTP", "OI", "ChgOI", "Vol", "Δ", "γ", "AskQ", "BidQ", "A/B", "IV", "ΔExp", "γExp", "DVP", "Press", "Verdict"]
+    # Create header row
+    metrics = ["Strike", "OI", "ChgOI", "Vol", "Δ", "γ", "Prem", "IV", "ΔExp", "γExp", "IVSkew", "OIRate", "PCR", "MktDepth", "BA", "Verdict"]
 
     # Build HTML table
     html = '<div style="overflow-x: auto;"><table style="width:100%; border-collapse: collapse; font-size: 12px;">'
@@ -1520,8 +1516,8 @@ def display_atm_strikes_tabulation(strike_analyses, atm_strike):
         # Strike price
         html += f'<td style="padding: 8px; border: 1px solid #444; text-align: center; font-weight: bold;">{strike}</td>'
 
-        # 14 bias metrics based on Option Chain Theory
-        for metric in ["LTP", "OI", "ChgOI", "Volume", "Delta", "Gamma", "AskQty", "BidQty", "AskBid", "IV", "DeltaExp", "GammaExp", "DVP", "Pressure"]:
+        # 14 bias metrics
+        for metric in ["OI", "ChgOI", "Volume", "Delta", "Gamma", "Premium", "IV", "DeltaExp", "GammaExp", "IVSkew", "OIChgRate", "PCR", "MktDepth", "BA"]:
             emoji = analysis["bias_emojis"].get(metric, "⚖️")
             score = analysis["bias_scores"].get(metric, 0)
             html += f'<td style="padding: 8px; border: 1px solid #444; text-align: center;">{emoji}<br/><small>{score:+.1f}</small></td>'
@@ -4050,7 +4046,7 @@ def bs_theta(S,K,r,sigma,tau,option_type="call"):
 # -----------------------
 # 🔥 NEW: ORDERBOOK PRESSURE FUNCTIONS
 # -----------------------
-@st.cache_data(ttl=60)  # 60 seconds - orderbook depth aligned with 5-min refresh
+@st.cache_data(ttl=60)
 def get_nifty_orderbook_depth():
     """
     Best-effort depth fetch from Dhan API
@@ -5749,7 +5745,7 @@ def rank_support_resistance_seller(pcr_df):
 # -----------------------
 # DHAN API
 # -----------------------
-@st.cache_data(ttl=60)  # 60 seconds - live spot price updates aligned with 5-min refresh
+@st.cache_data(ttl=2)  # 2 seconds - real-time spot price updates
 def get_nifty_spot_price():
     """Fetch NIFTY spot price with retry logic and rate limiting"""
     max_retries = 3
@@ -5801,7 +5797,7 @@ def get_nifty_spot_price():
 
     return 0.0
 
-@st.cache_data(ttl=300)  # 5 minutes - expiry list doesn't change frequently
+@st.cache_data(ttl=60)
 def get_expiry_list():
     try:
         url = f"{DHAN_BASE_URL}/v2/optionchain/expirylist"
@@ -5822,7 +5818,7 @@ def get_expiry_list():
         st.warning(f"Expiry list failed: {e}")
         return []
 
-@st.cache_data(ttl=60)  # 60 seconds - option chain live data aligned with 5-min refresh
+@st.cache_data(ttl=45)  # 45 seconds - faster refresh for option chain data
 def fetch_dhan_option_chain(expiry_date):
     """Fetch option chain with retry logic and rate limiting"""
     max_retries = 3
@@ -5893,10 +5889,7 @@ def parse_dhan_option_chain(chain_data):
                 "Vol_CE": safe_int(ce.get("volume",0)),
                 "LTP_CE": safe_float(ce.get("last_price",0.0)),
                 "IV_CE": safe_float(ce.get("implied_volatility", np.nan)),
-                "SecurityId_CE": safe_int(ce.get("SEM_EXM_EXCH_ID", 0)),  # For market depth
-                # Add Bid/Ask quantities for bias analysis
-                "BidQty_CE": safe_int(ce.get("top_bid_quantity", 0) or ce.get("bid_qty", 0)),
-                "AskQty_CE": safe_int(ce.get("top_ask_quantity", 0) or ce.get("ask_qty", 0)),
+                "SecurityId_CE": safe_int(ce.get("SEM_EXM_EXCH_ID", 0))  # For market depth
             }
             ce_rows.append(ci)
         if pe:
@@ -5907,10 +5900,7 @@ def parse_dhan_option_chain(chain_data):
                 "Vol_PE": safe_int(pe.get("volume",0)),
                 "LTP_PE": safe_float(pe.get("last_price",0.0)),
                 "IV_PE": safe_float(pe.get("implied_volatility", np.nan)),
-                "SecurityId_PE": safe_int(pe.get("SEM_EXM_EXCH_ID", 0)),  # For market depth
-                # Add Bid/Ask quantities for bias analysis
-                "BidQty_PE": safe_int(pe.get("top_bid_quantity", 0) or pe.get("bid_qty", 0)),
-                "AskQty_PE": safe_int(pe.get("top_ask_quantity", 0) or pe.get("ask_qty", 0)),
+                "SecurityId_PE": safe_int(pe.get("SEM_EXM_EXCH_ID", 0))  # For market depth
             }
             pe_rows.append(pi)
     return pd.DataFrame(ce_rows), pd.DataFrame(pe_rows)
@@ -6220,6 +6210,10 @@ def render_nifty_option_screener():
         st.markdown("### 🤖 TELEGRAM SETTINGS")
         auto_send = st.checkbox("Auto-send signals to Telegram", value=True, key="nifty_screener_auto_send_telegram")
         show_signal_preview = st.checkbox("Show signal preview", value=True, key="nifty_screener_show_signal_preview")
+        
+        if st.button("Clear Caches"):
+            st.cache_data.clear()
+            st.rerun()
     
     # Fetch data - Use shared spot price from session state if available (avoids redundant API calls)
     col1, col2 = st.columns([1, 2])
@@ -6234,7 +6228,8 @@ def render_nifty_option_screener():
 
         if spot == 0.0:
             st.error("❌ Unable to fetch NIFTY spot price")
-            st.info("Please check your Dhan API credentials and use the 'REFRESH NOW' button at the top to retry.")
+            st.info("Please check your Dhan API credentials and try refreshing the page.")
+            st.button("🔄 Retry", key="retry_spot", on_click=lambda: st.rerun())
             return  # Exit gracefully
 
         # Get expiries - use session state if available to avoid redundant API calls
@@ -6245,7 +6240,8 @@ def render_nifty_option_screener():
                 st.session_state['expiry_list'] = expiries
         if not expiries:
             st.error("❌ Unable to fetch expiry list")
-            st.info("The Dhan API may be temporarily unavailable. Use the 'REFRESH NOW' button at the top to retry.")
+            st.info("The Dhan API may be temporarily unavailable. Please try again in a moment.")
+            st.button("🔄 Retry", key="retry_expiry", on_click=lambda: st.rerun())
             return  # Exit gracefully
 
         expiry = st.selectbox("Select expiry", expiries, index=0, key="nifty_screener_expiry_selector")
@@ -6279,21 +6275,6 @@ def render_nifty_option_screener():
         st.markdown("---")
         st.markdown(f"**Current IST:** {get_ist_time_str()}")
         st.markdown(f"**Date:** {get_ist_date_str()}")
-
-        # 2026 Regime Quick Status in Sidebar
-        if REGIME_2026_AVAILABLE:
-            st.markdown("---")
-            st.markdown("### 🎯 2026 REGIME")
-            try:
-                should_trade_now, reason, tz = should_i_trade()
-                if not should_trade_now:
-                    st.error(f"🚫 {tz.get('behavior', 'NO TRADE')}")
-                    st.caption(reason)
-                else:
-                    st.success(f"✅ {tz.get('behavior', 'ACTIVE')}")
-                    st.caption(tz.get('warning', 'OK to trade'))
-            except:
-                pass
     
     # Fetch option chain - use session state if available for same expiry
     chain_cache_key = f'option_chain_{expiry}'
@@ -6306,7 +6287,10 @@ def render_nifty_option_screener():
     if chain is None:
         st.error("❌ Failed to fetch option chain")
         st.warning("**Possible reasons:**\n- Dhan API rate limit exceeded\n- Network timeout\n- Invalid expiry date\n- Market closed")
-        st.info("Please wait a moment and use the 'REFRESH NOW' button at the top to retry.")
+        st.info("Please wait a moment and click the button below to retry.")
+        if st.button("🔄 Retry Fetch", key="retry_chain"):
+            st.session_state.pop(chain_cache_key, None)  # Clear cache
+            st.rerun()
         return  # Exit gracefully
 
     df_ce, df_pe = parse_dhan_option_chain(chain)
@@ -6329,103 +6313,6 @@ def render_nifty_option_screener():
     merged = pd.merge(df_ce, df_pe, on="strikePrice", how="outer").sort_values("strikePrice").reset_index(drop=True)
     merged["strikePrice"] = merged["strikePrice"].astype(int)
     st.session_state['merged_df'] = merged  # Store for ML signal
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # 2026 REGIME DASHBOARD - MAIN DECISION PANEL
-    # ═══════════════════════════════════════════════════════════════════════
-    if REGIME_2026_AVAILABLE:
-        st.markdown("---")
-        st.markdown("## 🎯 2026 REGIME ANALYSIS")
-
-        # Quick time zone status
-        try:
-            should_trade, trade_reason, time_zone = should_i_trade()
-
-            # NO TRADE WARNING (most prominent)
-            if not should_trade:
-                st.error(f"🚫 **NO TRADE ZONE** - {time_zone.get('behavior', 'WAIT')}")
-                st.warning(f"**Reason:** {trade_reason}")
-            else:
-                st.success(f"✅ **{time_zone.get('behavior', 'ACTIVE')}** - {trade_reason}")
-
-            # Main regime metrics row
-            regime_col1, regime_col2, regime_col3, regime_col4, regime_col5 = st.columns(5)
-
-            # Get 2026 option chain analysis
-            option_analysis_2026 = analyze_option_chain_2026(merged, spot, atm_strike, strike_gap)
-
-            with regime_col1:
-                mood = option_analysis_2026.get('market_mood', {})
-                mood_name = mood.get('mood', 'CALM')
-                mood_emoji = mood.get('emoji', '😌')
-                st.metric(f"{mood_emoji} Mood", mood_name)
-
-            with regime_col2:
-                writer = option_analysis_2026.get('writer_control', {})
-                control = writer.get('control', 'MIXED')
-                control_emoji = '🛡️' if control == 'STRONG' else '⚔️' if control == 'WEAK' else '⚖️'
-                st.metric(f"{control_emoji} Writers", control)
-
-            with regime_col3:
-                action = option_analysis_2026.get('action', {})
-                action_name = action.get('action', 'WAIT')
-                st.metric("📋 Action", action_name)
-
-            with regime_col4:
-                gamma = option_analysis_2026.get('gamma_zone', {})
-                in_gamma = gamma.get('in_gamma_zone', True)
-                gamma_status = 'IN ZONE' if in_gamma else 'ESCAPED'
-                gamma_emoji = '⚠️' if in_gamma else '🚀'
-                st.metric(f"{gamma_emoji} Gamma", gamma_status)
-
-            with regime_col5:
-                pcr = option_analysis_2026.get('tw_pcr', {})
-                tw_pcr_val = pcr.get('tw_pcr', 1.0)
-                pcr_bias = pcr.get('bias', 'NEUTRAL')
-                st.metric("📊 TW-PCR", f"{tw_pcr_val:.2f}", delta=pcr_bias)
-
-            # Playbook recommendation
-            playbook = option_analysis_2026.get('action', {})
-            if playbook.get('action') != 'WAIT':
-                st.info(f"**Recommended Play:** {playbook.get('action', 'WAIT')} - {playbook.get('reason', '')}")
-
-            # Collapsible detailed analysis
-            with st.expander("📊 Detailed 2026 Analysis (OI Velocity, Stress Zones, Traps)", expanded=False):
-                detail_col1, detail_col2, detail_col3 = st.columns(3)
-
-                with detail_col1:
-                    st.markdown("**OI Velocity**")
-                    oi_vel = option_analysis_2026.get('oi_velocity', {})
-                    st.write(f"CE: {oi_vel.get('ce_velocity_1min', 0):,.0f}/min")
-                    st.write(f"PE: {oi_vel.get('pe_velocity_1min', 0):,.0f}/min")
-                    st.caption(oi_vel.get('interpretation', 'N/A'))
-
-                with detail_col2:
-                    st.markdown("**Premium Decay**")
-                    decay = option_analysis_2026.get('premium_decay', {})
-                    st.write(f"CE: {decay.get('ce_decay_pct', 0):.2f}%")
-                    st.write(f"PE: {decay.get('pe_decay_pct', 0):.2f}%")
-                    st.caption(decay.get('signal', 'N/A'))
-
-                with detail_col3:
-                    st.markdown("**Stress Zones**")
-                    stress = option_analysis_2026.get('stress_zones', {})
-                    ce_stress = stress.get('highest_ce_stress', {})
-                    pe_stress = stress.get('highest_pe_stress', {})
-                    if ce_stress:
-                        st.write(f"CE: {ce_stress.get('strike', 'N/A')} ({ce_stress.get('stress_level', '')})")
-                    if pe_stress:
-                        st.write(f"PE: {pe_stress.get('strike', 'N/A')} ({pe_stress.get('stress_level', '')})")
-
-                # Trap Detection Warning
-                trap = option_analysis_2026.get('trap_detection', {})
-                if trap.get('trap_detected'):
-                    st.error(f"⚠️ **TRAP DETECTED:** {trap.get('trap_type', '')} - {trap.get('warning', '')}")
-
-        except Exception as e:
-            st.warning(f"2026 Analysis unavailable: {str(e)}")
-
-        st.markdown("---")
 
     # Session storage for prev LTP/IV
     if "prev_ltps_seller" not in st.session_state:
@@ -7112,71 +6999,66 @@ def render_nifty_option_screener():
         # Display Basic Market Depth Dashboard
         display_market_depth_dashboard(spot, depth_analysis, depth_signals, depth_enhanced_pressure)
 
-        # Display Comprehensive Advanced Depth Analysis - LAZY LOAD WITH BUTTON
+        # Display Comprehensive Advanced Depth Analysis
         if ADVANCED_DEPTH_AVAILABLE:
             st.markdown("---")
             st.markdown("## 🎯 ADVANCED DEPTH ANALYSIS (ATM ±2 Strikes)")
 
-            # Add button to trigger advanced depth analysis
-            st.info("⚡ Advanced depth analysis requires API calls (~12 seconds). Click below to fetch live depth data.")
+            # Prepare Dhan config
+            dhan_config = {
+                "base_url": DHAN_BASE_URL,
+                "access_token": DHAN_ACCESS_TOKEN,
+                "client_id": DHAN_CLIENT_ID
+            }
 
-            if st.button("📊 Fetch Advanced Depth Analysis", type="primary", use_container_width=True, key="fetch_advanced_depth"):
-                # Prepare Dhan config
-                dhan_config = {
-                    "base_url": DHAN_BASE_URL,
-                    "access_token": DHAN_ACCESS_TOKEN,
-                    "client_id": DHAN_CLIENT_ID
-                }
+            # Run comprehensive analysis for ATM ±2 strikes
+            atm_strikes_to_analyze = [atm_strike + (i * strike_gap) for i in range(-2, 3)]
 
-                # Run comprehensive analysis for ATM ±2 strikes
-                atm_strikes_to_analyze = [atm_strike + (i * strike_gap) for i in range(-2, 3)]
+            # Rate limiting info
+            st.info("⏱️ Fetching depth data with rate limiting (1 req/sec) - This may take ~10 seconds...")
 
-                # Rate limiting info
-                with st.spinner("⏱️ Fetching depth data with rate limiting (1 req/sec) - This may take ~10 seconds..."):
-                    for idx, strike in enumerate(atm_strikes_to_analyze):
-                        with st.expander(f"📊 Strike {strike} - Comprehensive Depth Analysis", expanded=(idx == 2)):  # Expand ATM by default
-                            st.markdown(f"### Analyzing {strike} CE & PE")
+            for idx, strike in enumerate(atm_strikes_to_analyze):
+                with st.expander(f"📊 Strike {strike} - Comprehensive Depth Analysis", expanded=(idx == 2)):  # Expand ATM by default
+                    st.markdown(f"### Analyzing {strike} CE & PE")
 
-                            # Rate limiting: 1.2 seconds between strikes
-                            if idx > 0:
-                                time.sleep(1.2)
+                    # Rate limiting: 1.2 seconds between strikes
+                    if idx > 0:
+                        time.sleep(1.2)
 
-                            # Analyze CE
-                            st.markdown("#### 📈 CALL Option (CE)")
-                            ce_analysis = run_comprehensive_depth_analysis(
-                                strike=strike,
-                                expiry=expiry,
-                                option_type="CE",
-                                dhan_config=dhan_config,
-                                depth_history=None  # TODO: Implement depth history tracking
-                            )
+                    # Analyze CE
+                    st.markdown("#### 📈 CALL Option (CE)")
+                    ce_analysis = run_comprehensive_depth_analysis(
+                        strike=strike,
+                        expiry=expiry,
+                        option_type="CE",
+                        dhan_config=dhan_config,
+                        depth_history=None  # TODO: Implement depth history tracking
+                    )
 
-                            if ce_analysis.get("available"):
-                                display_comprehensive_depth_analysis(ce_analysis)
-                            else:
-                                st.warning(f"CE analysis unavailable: {ce_analysis.get('error', 'Unknown error')}")
+                    if ce_analysis.get("available"):
+                        display_comprehensive_depth_analysis(ce_analysis)
+                    else:
+                        st.warning(f"CE analysis unavailable: {ce_analysis.get('error', 'Unknown error')}")
 
-                            st.markdown("---")
+                    st.markdown("---")
 
-                            # Rate limiting before PE call
-                            time.sleep(1.2)
+                    # Rate limiting before PE call
+                    time.sleep(1.2)
 
-                            # Analyze PE
-                            st.markdown("#### 📉 PUT Option (PE)")
-                            pe_analysis = run_comprehensive_depth_analysis(
-                                strike=strike,
-                                expiry=expiry,
-                                option_type="PE",
-                                dhan_config=dhan_config,
-                                depth_history=None
-                            )
+                    # Analyze PE
+                    st.markdown("#### 📉 PUT Option (PE)")
+                    pe_analysis = run_comprehensive_depth_analysis(
+                        strike=strike,
+                        expiry=expiry,
+                        option_type="PE",
+                        dhan_config=dhan_config,
+                        depth_history=None
+                    )
 
-                            if pe_analysis.get("available"):
-                                display_comprehensive_depth_analysis(pe_analysis)
-                            else:
-                                st.warning(f"PE analysis unavailable: {pe_analysis.get('error', 'Unknown error')}")
-
-                st.success("✅ Advanced depth analysis completed!")
+                    if pe_analysis.get("available"):
+                        display_comprehensive_depth_analysis(pe_analysis)
+                    else:
+                        st.warning(f"PE analysis unavailable: {pe_analysis.get('error', 'Unknown error')}")
         else:
             st.info("ℹ️ Advanced depth analysis module not available. Install `market_depth_advanced.py` for full functionality.")
 
@@ -7976,17 +7858,21 @@ def render_nifty_option_screener():
         
         # Action buttons
         st.markdown("<br>", unsafe_allow_html=True)
-        action_col1, action_col2 = st.columns([2, 1])
-
+        action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
+        
         with action_col1:
-            if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}",
+            if st.button(f"📊 PLACE {entry_signal['position_type']} ORDER AT ₹{entry_signal['optimal_entry_price']:,.0f}", 
                         use_container_width=True, type="primary", key="place_order"):
                 st.success(f"✅ {entry_signal['position_type']} order queued at ₹{entry_signal['optimal_entry_price']:,.2f}")
                 st.balloons()
-
+        
         with action_col2:
             if st.button("🔔 SET PRICE ALERT", use_container_width=True, key="set_alert"):
                 st.info(f"📢 Alert set for {entry_signal['optimal_entry_price']:,.2f}")
+        
+        with action_col3:
+            if st.button("🔄 REFRESH", use_container_width=True, key="refresh"):
+                st.rerun()
         
         # Signal Reasons
         with st.expander("📋 View Detailed Signal Reasoning", expanded=False):
@@ -9155,7 +9041,7 @@ def render_nifty_option_screener():
     
     # Footer
     st.markdown("---")
-    st.caption(f"🔄 Auto-refresh: Every 5 minutes | ⏰ {get_ist_datetime_str()}")
+    st.caption(f"🔄 Auto-refresh: {AUTO_REFRESH_SEC}s | ⏰ {get_ist_datetime_str()}")
     st.caption("🎯 **NIFTY Option Screener v7.0 — SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR + ENHANCED OI/PCR ANALYTICS** | All features enabled")
     
     # Requirements note
@@ -9168,13 +9054,57 @@ def render_nifty_option_screener():
     """, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.markdown("**🔄 Last update:** Auto-refreshing every 5 minutes")
+    st.markdown("**🔄 Last update:** Auto-refreshing every 30 seconds")
 
 # ═══════════════════════════════════════════════════════════════════════
-#  AUTO-REFRESH SYSTEM - SINGLE 5-MINUTE REFRESH FOR ENTIRE APP
+#  AUTO-REFRESH SYSTEM - DYNAMIC INTERVALS BASED ON MARKET HOURS
 # ═══════════════════════════════════════════════════════════════════════
-# Auto-refresh is handled by the auto_refresh() function at line 3905
-# Refresh interval: 5 minutes (300 seconds)
+
+def get_auto_refresh_interval():
+    """
+    Determines auto-refresh interval based on market hours:
+    - During trading hours (9:15 AM - 3:30 PM IST): 10 seconds
+    - Outside trading hours: 60 seconds
+    - Late night (11 PM - 6 AM IST): 300 seconds (5 minutes)
+    """
+    try:
+        now = get_ist_now()
+        hour = now.hour
+        minute = now.minute
+
+        # Trading hours: 9:15 AM - 3:30 PM IST
+        if (hour == 9 and minute >= 15) or (10 <= hour < 15) or (hour == 15 and minute <= 30):
+            return 10000  # 10 seconds during market hours
+
+        # Late night: 11 PM - 6 AM IST
+        elif hour >= 23 or hour < 6:
+            return 300000  # 5 minutes late night
+
+        # Outside trading hours
+        else:
+            return 60000  # 1 minute
+
+    except Exception as e:
+        return 60000  # Default to 1 minute
+
+# Try to import auto-refresh, but make it optional
+try:
+    from streamlit_autorefresh import st_autorefresh
+    AUTO_REFRESH_AVAILABLE = True
+except ImportError:
+    AUTO_REFRESH_AVAILABLE = False
+    st.warning("⚠️ streamlit-autorefresh not installed. Install it for auto-refresh: `pip install streamlit-autorefresh`")
+
+# Initialize auto-refresh if available
+if AUTO_REFRESH_AVAILABLE:
+    refresh_interval = get_auto_refresh_interval()
+    count = st_autorefresh(interval=refresh_interval, limit=None, key="nifty_screener_refresh")
+
+    # Display refresh status
+    refresh_status = "🟢 Live (10s refresh)" if refresh_interval == 10000 else "🟡 Monitoring (60s refresh)" if refresh_interval == 60000 else "🔵 Low Activity (5m refresh)"
+    st.caption(f"{refresh_status} | Auto-refresh enabled | Count: {count}")
+else:
+    st.caption("🔴 Manual refresh only - Install streamlit-autorefresh for auto-updates")
 
 # ═══════════════════════════════════════════════════════════════════════
 # HEADER AND TITLE
@@ -9186,20 +9116,6 @@ st.markdown("""
     <h4 style='color: #667eea;'>100% SELLER'S PERSPECTIVE + ATM BIAS ANALYZER + MOMENT DETECTOR + EXPIRY SPIKE DETECTOR</h4>
 </div>
 """, unsafe_allow_html=True)
-
-# ═══════════════════════════════════════════════════════════════════════
-#  MANUAL REFRESH BUTTON
-# ═══════════════════════════════════════════════════════════════════════
-
-col_refresh1, col_refresh2, col_refresh3 = st.columns([1, 1, 1])
-with col_refresh2:
-    if st.button("🔄 REFRESH NOW", type="primary", use_container_width=True, key="manual_refresh_button"):
-        st.cache_data.clear()
-        st.session_state.clear()
-        st.rerun()
-
-st.markdown(f"<div style='text-align: center; margin: 10px 0;'><small>⏱️ Auto-refresh: Every 5 minutes | ⏰ Last refresh: {get_ist_datetime_str()}</small></div>", unsafe_allow_html=True)
-st.markdown("---")
 
 # ═══════════════════════════════════════════════════════════════════════
 #  MAIN EXECUTION

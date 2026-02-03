@@ -29,18 +29,6 @@ try:
 except ImportError:
     display_overall_market_sentiment_summary = None
 
-# Import 2026 Regime Update modules
-try:
-    from src.regime_2026_integration import (
-        should_i_trade,
-        get_market_summary,
-        TimeBasedLogic2026
-    )
-    from src.option_chain_2026 import analyze_option_chain_2026
-    REGIME_2026_AVAILABLE = True
-except ImportError as e:
-    REGIME_2026_AVAILABLE = False
-
 
 def calculate_stock_performance_sentiment(stock_data):
     """
@@ -964,118 +952,6 @@ def render_overall_market_sentiment(NSE_INSTRUMENTS=None):
         st.caption("⏸️ Auto-refresh paused (market closed). Using cached data.")
 
     st.markdown("---")
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 🎯 2026 REGIME ANALYSIS - TOP PRIORITY DECISION PANEL
-    # ═══════════════════════════════════════════════════════════════════
-    if REGIME_2026_AVAILABLE:
-        st.markdown("## 🎯 2026 REGIME ANALYSIS")
-
-        try:
-            # Time zone and trading permission
-            should_trade, trade_reason, time_zone = should_i_trade()
-
-            # NO TRADE WARNING (most prominent)
-            if not should_trade:
-                st.error(f"🚫 **NO TRADE ZONE** - {time_zone.get('behavior', 'WAIT')}")
-                st.warning(f"**Reason:** {trade_reason}")
-            else:
-                st.success(f"✅ **{time_zone.get('behavior', 'ACTIVE')}** - {trade_reason}")
-
-            # Main regime metrics row
-            regime_col1, regime_col2, regime_col3, regime_col4, regime_col5 = st.columns(5)
-
-            # Get option chain data from session state
-            merged_df = st.session_state.get('merged_df')
-            spot = st.session_state.get('nifty_spot', 0) or st.session_state.get('last_spot_price', 0)
-            atm_strike = st.session_state.get('atm_strike', 0)
-            strike_gap = 50  # Default NIFTY strike gap
-
-            if merged_df is not None and spot > 0 and atm_strike > 0:
-                # Get 2026 option chain analysis
-                option_analysis_2026 = analyze_option_chain_2026(merged_df, spot, atm_strike, strike_gap)
-
-                with regime_col1:
-                    mood = option_analysis_2026.get('market_mood', {})
-                    mood_name = mood.get('mood', 'CALM')
-                    mood_emoji = mood.get('emoji', '😌')
-                    st.metric(f"{mood_emoji} Mood", mood_name)
-
-                with regime_col2:
-                    writer = option_analysis_2026.get('writer_control', {})
-                    control = writer.get('control', 'MIXED')
-                    control_emoji = '🛡️' if control == 'STRONG' else '⚔️' if control == 'WEAK' else '⚖️'
-                    st.metric(f"{control_emoji} Writers", control)
-
-                with regime_col3:
-                    action = option_analysis_2026.get('action', {})
-                    action_name = action.get('action', 'WAIT')
-                    st.metric("📋 Action", action_name)
-
-                with regime_col4:
-                    gamma = option_analysis_2026.get('gamma_zone', {})
-                    in_gamma = gamma.get('in_gamma_zone', True)
-                    gamma_status = 'IN ZONE' if in_gamma else 'ESCAPED'
-                    gamma_emoji = '⚠️' if in_gamma else '🚀'
-                    st.metric(f"{gamma_emoji} Gamma", gamma_status)
-
-                with regime_col5:
-                    pcr = option_analysis_2026.get('tw_pcr', {})
-                    tw_pcr_val = pcr.get('tw_pcr', 1.0)
-                    pcr_bias = pcr.get('bias', 'NEUTRAL')
-                    st.metric("📊 TW-PCR", f"{tw_pcr_val:.2f}", delta=pcr_bias)
-
-                # Playbook recommendation
-                playbook = option_analysis_2026.get('action', {})
-                if playbook.get('action') != 'WAIT':
-                    st.info(f"**Recommended Play:** {playbook.get('action', 'WAIT')} - {playbook.get('reason', '')}")
-
-                # Collapsible detailed analysis
-                with st.expander("📊 Detailed 2026 Analysis (OI Velocity, Stress Zones, Traps)", expanded=False):
-                    detail_col1, detail_col2, detail_col3 = st.columns(3)
-
-                    with detail_col1:
-                        st.markdown("**OI Velocity**")
-                        oi_vel = option_analysis_2026.get('oi_velocity', {})
-                        st.write(f"CE: {oi_vel.get('ce_velocity_1min', 0):,.0f}/min")
-                        st.write(f"PE: {oi_vel.get('pe_velocity_1min', 0):,.0f}/min")
-                        st.caption(oi_vel.get('interpretation', 'N/A'))
-
-                    with detail_col2:
-                        st.markdown("**Premium Decay**")
-                        decay = option_analysis_2026.get('premium_decay', {})
-                        st.write(f"CE: {decay.get('ce_decay_pct', 0):.2f}%")
-                        st.write(f"PE: {decay.get('pe_decay_pct', 0):.2f}%")
-                        st.caption(decay.get('signal', 'N/A'))
-
-                    with detail_col3:
-                        st.markdown("**Stress Zones**")
-                        stress = option_analysis_2026.get('stress_zones', {})
-                        ce_stress = stress.get('highest_ce_stress', {})
-                        pe_stress = stress.get('highest_pe_stress', {})
-                        if ce_stress:
-                            st.write(f"CE: {ce_stress.get('strike', 'N/A')} ({ce_stress.get('stress_level', '')})")
-                        if pe_stress:
-                            st.write(f"PE: {pe_stress.get('strike', 'N/A')} ({pe_stress.get('stress_level', '')})")
-
-                    # Trap Detection Warning
-                    trap = option_analysis_2026.get('trap_detection', {})
-                    if trap.get('trap_detected'):
-                        st.error(f"⚠️ **TRAP DETECTED:** {trap.get('trap_type', '')} - {trap.get('warning', '')}")
-
-            else:
-                st.info("📊 Load option chain data from NIFTY Option Screener tab to see full 2026 analysis")
-
-                # Show time zone info anyway
-                with regime_col1:
-                    st.metric("⏰ Zone", time_zone.get('behavior', 'N/A'))
-                with regime_col2:
-                    st.metric("📋 Action", time_zone.get('action', 'WAIT'))
-
-        except Exception as e:
-            st.warning(f"2026 Analysis unavailable: {str(e)}")
-
-        st.markdown("---")
 
     # ═══════════════════════════════════════════════════════════════════
     # 🎯 CURRENT POSITION & ACTION - MOST IMPORTANT INFO AT TOP!
