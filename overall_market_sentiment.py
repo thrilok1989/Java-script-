@@ -683,6 +683,78 @@ def calculate_ml_regime_sentiment():
         return None
 
 
+def calculate_triple_poc_swing_sentiment():
+    """
+    Calculate sentiment from Triple POC + Future Swing Indicator
+    Uses pre-calculated results from Bias Analysis Pro tab (stored in session state)
+    Returns: dict with sentiment, score, and details
+    """
+    if 'triple_poc_swing_results' not in st.session_state:
+        # Try to calculate on-the-fly if bias analysis data is available
+        try:
+            if 'bias_analysis_results' in st.session_state and st.session_state.bias_analysis_results:
+                analysis = st.session_state.bias_analysis_results
+                df = analysis.get('df')
+                if df is not None and len(df) > 100:
+                    from indicators.triple_poc_swing import analyze_triple_poc_swing
+                    tps_results = analyze_triple_poc_swing(df)
+                    if tps_results.get('success'):
+                        st.session_state['triple_poc_swing_results'] = tps_results
+                    else:
+                        return None
+                else:
+                    return None
+            else:
+                return None
+        except Exception:
+            return None
+
+    tps_results = st.session_state.get('triple_poc_swing_results')
+    if not tps_results or not tps_results.get('success'):
+        return None
+
+    # Extract bias info
+    overall_bias = tps_results.get('overall_bias', 'NEUTRAL')
+    overall_score = tps_results.get('overall_score', 0)
+    confidence = tps_results.get('confidence', 0)
+
+    # Build details
+    details = []
+    poc1 = tps_results.get('poc1', {})
+    poc2 = tps_results.get('poc2', {})
+    poc3 = tps_results.get('poc3', {})
+    swing = tps_results.get('swing', {})
+
+    if poc1.get('poc') is not None:
+        details.append(f"POC 1 (25): {poc1['poc']:.2f}")
+    if poc2.get('poc') is not None:
+        details.append(f"POC 2 (40): {poc2['poc']:.2f}")
+    if poc3.get('poc') is not None:
+        details.append(f"POC 3 (100): {poc3['poc']:.2f}")
+    if swing.get('projected_price') is not None:
+        details.append(f"Swing Target: {swing['projected_price']:.2f}")
+    if swing.get('projected_swing_pct') is not None:
+        details.append(f"Swing AVG: {swing['projected_swing_pct']:.2f}%")
+
+    return {
+        'bias': overall_bias,
+        'score': overall_score,
+        'confidence': confidence,
+        'poc1_bias': tps_results.get('poc1_bias', 'NEUTRAL'),
+        'poc_alignment_bias': tps_results.get('poc_alignment_bias', 'NEUTRAL'),
+        'swing_bias': tps_results.get('swing_bias', 'NEUTRAL'),
+        'volume_bias': tps_results.get('volume_bias', 'NEUTRAL'),
+        'bullish_count': tps_results.get('bullish_count', 0),
+        'bearish_count': tps_results.get('bearish_count', 0),
+        'neutral_count': tps_results.get('neutral_count', 0),
+        'total_count': tps_results.get('total_indicators', 0),
+        'details': details,
+        'indicator_details': tps_results.get('bias_results', []),
+        'swing_data': swing,
+        'poc_data': {'poc1': poc1, 'poc2': poc2, 'poc3': poc3},
+    }
+
+
 def calculate_overall_sentiment():
     """
     Calculate overall market sentiment by combining all data sources
@@ -719,6 +791,11 @@ def calculate_overall_sentiment():
     if ml_regime_sentiment:
         sentiment_sources['ML Regime'] = ml_regime_sentiment
 
+    # 7. Triple POC + Future Swing Indicator
+    tps_sentiment = calculate_triple_poc_swing_sentiment()
+    if tps_sentiment:
+        sentiment_sources['Triple POC + Swing'] = tps_sentiment
+
     # If no data available
     if not sentiment_sources:
         return {
@@ -739,7 +816,8 @@ def calculate_overall_sentiment():
         'ATM Strike Verdict': 3.5,      # ATM ±2 strikes analysis
         'PCR/OI Analysis': 2.5,          # PCR sentiment from Tab 0
         'Sector Rotation': 3.0,          # Sector rotation bias from Tab 0
-        'ML Regime': 4.0                 # ML-based regime detection (highest weight)
+        'ML Regime': 4.0,                # ML-based regime detection (highest weight)
+        'Triple POC + Swing': 3.0        # Triple POC + Future Swing (volume profile + swing)
     }
 
     total_weighted_score = 0
@@ -1851,9 +1929,9 @@ Loading current price and entry zones. Please wait...
         st.info("""
         **🎲 Bias Analysis Pro** (Tab 5)
         - 13 Technical Indicators
+        - Triple POC + Future Swing
         - Stock Performance Details
         - Weighted Scoring
-        - Historical Analysis
         """)
 
     with col3:
@@ -1951,6 +2029,132 @@ Loading current price and entry zones. Please wait...
                 })
 
                 st.dataframe(tech_df, use_container_width=True, hide_index=True)
+
+    # ─────────────────────────────────────────────────────────────────
+    # 2. TRIPLE POC + FUTURE SWING INDICATOR
+    # ─────────────────────────────────────────────────────────────────
+    if 'Triple POC + Swing' in sources:
+        source_data = sources['Triple POC + Swing']
+        with st.expander("**📐 Triple POC + Future Swing (Volume Profile + Swing Projection)**", expanded=True):
+            bias = source_data.get('bias', 'NEUTRAL')
+            score = source_data.get('score', 0)
+            confidence = source_data.get('confidence', 0)
+
+            # Color based on bias
+            if bias == 'BULLISH':
+                bg_color = '#00ff88'
+                text_color = 'black'
+                icon = '🐂'
+            elif bias == 'BEARISH':
+                bg_color = '#ff4444'
+                text_color = 'white'
+                icon = '🐻'
+            else:
+                bg_color = '#ffa500'
+                text_color = 'white'
+                icon = '⚖️'
+
+            # Display source card
+            col1, col2, col3 = st.columns([2, 1, 1])
+
+            with col1:
+                st.markdown(f"""
+                <div style='background: {bg_color}; padding: 15px; border-radius: 10px;'>
+                    <h3 style='margin: 0; color: {text_color};'>{icon} {bias}</h3>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col2:
+                st.metric("Score", f"{score:+.1f}")
+
+            with col3:
+                st.metric("Confidence", f"{confidence:.1f}%")
+
+            # Sub-indicator breakdown
+            st.markdown(f"""
+            **POC 1 Bias:** {source_data.get('poc1_bias', 'N/A')} | **POC Alignment:** {source_data.get('poc_alignment_bias', 'N/A')} | **Swing:** {source_data.get('swing_bias', 'N/A')} | **Volume Delta:** {source_data.get('volume_bias', 'N/A')}
+            **Bullish:** {source_data.get('bullish_count', 0)} | **Bearish:** {source_data.get('bearish_count', 0)} | **Neutral:** {source_data.get('neutral_count', 0)} | **Total:** {source_data.get('total_count', 0)}
+            """)
+
+            # POC Levels
+            poc_data = source_data.get('poc_data', {})
+            poc1 = poc_data.get('poc1', {})
+            poc2 = poc_data.get('poc2', {})
+            poc3 = poc_data.get('poc3', {})
+
+            poc_col1, poc_col2, poc_col3 = st.columns(3)
+            with poc_col1:
+                if poc1.get('poc') is not None:
+                    st.metric("POC 1 (25-period)", f"₹{poc1['poc']:,.2f}")
+            with poc_col2:
+                if poc2.get('poc') is not None:
+                    st.metric("POC 2 (40-period)", f"₹{poc2['poc']:,.2f}")
+            with poc_col3:
+                if poc3.get('poc') is not None:
+                    st.metric("POC 3 (100-period)", f"₹{poc3['poc']:,.2f}")
+
+            # Swing Projection
+            swing_data = source_data.get('swing_data', {})
+            if swing_data.get('projected_price') is not None:
+                sw_col1, sw_col2, sw_col3 = st.columns(3)
+                with sw_col1:
+                    direction_text = "Bullish (Up)" if swing_data.get('direction') else "Bearish (Down)"
+                    st.metric("Swing Direction", direction_text)
+                with sw_col2:
+                    st.metric("Projected Target", f"₹{swing_data['projected_price']:,.2f}")
+                with sw_col3:
+                    st.metric("Swing AVG", f"{swing_data.get('projected_swing_pct', 0):.2f}%")
+
+                # Volume Analysis
+                vol_col1, vol_col2, vol_col3 = st.columns(3)
+                with vol_col1:
+                    st.metric("Buy Volume", f"{swing_data.get('buy_volume', 0):,.0f}")
+                with vol_col2:
+                    st.metric("Sell Volume", f"{swing_data.get('sell_volume', 0):,.0f}")
+                with vol_col3:
+                    delta = swing_data.get('delta_volume', 0)
+                    st.metric("Delta Volume", f"{delta:,.0f}", delta=f"{delta:+,.0f}")
+
+            # Detailed indicator table
+            indicator_details = source_data.get('indicator_details', [])
+            if indicator_details:
+                tps_df = pd.DataFrame(indicator_details)
+
+                # Add emoji to bias
+                def get_tps_bias_emoji(bias_val):
+                    bias_upper = str(bias_val).upper()
+                    if 'BULLISH' in bias_upper:
+                        return f"🐂 {bias_val}"
+                    elif 'BEARISH' in bias_upper:
+                        return f"🐻 {bias_val}"
+                    else:
+                        return f"⚖️ {bias_val}"
+
+                tps_df['bias'] = tps_df['bias'].apply(get_tps_bias_emoji)
+                tps_df['score'] = tps_df['score'].apply(lambda x: f"{x:.2f}")
+                tps_df['weight'] = tps_df['weight'].apply(lambda x: f"{x:.1f}")
+
+                tps_df = tps_df.rename(columns={
+                    'indicator': 'Indicator',
+                    'value': 'Value',
+                    'bias': 'Bias',
+                    'score': 'Score',
+                    'weight': 'Weight',
+                    'category': 'Category',
+                    'details': 'Details'
+                })
+
+                st.dataframe(tps_df, use_container_width=True, hide_index=True)
+
+            # Swing Percentages
+            swing_pcts = swing_data.get('swing_percentages', [])
+            if swing_pcts:
+                with st.expander("📈 Historical Swing Percentages"):
+                    swing_pct_df = pd.DataFrame({
+                        'Swing #': [f"Swing {i+1}" for i in range(len(swing_pcts))],
+                        'Percentage': [f"{p:+.2f}%" for p in swing_pcts]
+                    })
+                    st.dataframe(swing_pct_df, use_container_width=True, hide_index=True)
 
     # ─────────────────────────────────────────────────────────────────
     # 3. NIFTY OPTION SCREENER v7.0 - OVERALL MARKET SENTIMENT SUMMARY

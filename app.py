@@ -1814,6 +1814,164 @@ with tab5:
         st.divider()
 
         # =====================================================================
+        # TRIPLE POC + FUTURE SWING ANALYSIS
+        # =====================================================================
+        st.subheader("📐 Triple POC + Future Swing Analysis")
+        st.caption("Triple Point of Control (25/40/100) with Swing Projection | BigBeluga")
+
+        try:
+            from indicators.triple_poc_swing import analyze_triple_poc_swing
+
+            # Get the DataFrame from bias analysis results
+            bias_df = results.get('df')
+            if bias_df is not None and len(bias_df) > 100:
+                tps_results = analyze_triple_poc_swing(bias_df)
+
+                if tps_results.get('success'):
+                    # --- POC Summary ---
+                    st.markdown("**📊 Triple POC Levels**")
+                    poc_col1, poc_col2, poc_col3, poc_col4 = st.columns(4)
+
+                    with poc_col1:
+                        st.metric("Current Price", f"₹{tps_results['current_price']:,.2f}")
+
+                    with poc_col2:
+                        poc1_val = tps_results['poc1']['poc']
+                        poc1_color = "green" if tps_results['current_price'] > poc1_val else "red" if poc1_val else "gray"
+                        st.markdown(f"<h4 style='color:{poc1_color};'>POC 1 (25): ₹{poc1_val:,.2f}</h4>" if poc1_val else "<h4>POC 1: N/A</h4>", unsafe_allow_html=True)
+                        st.caption("Short-term")
+
+                    with poc_col3:
+                        poc2_val = tps_results['poc2']['poc']
+                        poc2_color = "green" if tps_results['current_price'] > poc2_val else "red" if poc2_val else "gray"
+                        st.markdown(f"<h4 style='color:{poc2_color};'>POC 2 (40): ₹{poc2_val:,.2f}</h4>" if poc2_val else "<h4>POC 2: N/A</h4>", unsafe_allow_html=True)
+                        st.caption("Medium-term")
+
+                    with poc_col4:
+                        poc3_val = tps_results['poc3']['poc']
+                        poc3_color = "green" if tps_results['current_price'] > poc3_val else "red" if poc3_val else "gray"
+                        st.markdown(f"<h4 style='color:{poc3_color};'>POC 3 (100): ₹{poc3_val:,.2f}</h4>" if poc3_val else "<h4>POC 3: N/A</h4>", unsafe_allow_html=True)
+                        st.caption("Long-term")
+
+                    st.divider()
+
+                    # --- Swing Projection Summary ---
+                    st.markdown("**🔮 Future Swing Projection**")
+                    swing_data = tps_results['swing']
+
+                    sw_col1, sw_col2, sw_col3, sw_col4 = st.columns(4)
+
+                    with sw_col1:
+                        swing_dir = "BULLISH (Up)" if swing_data['direction'] else "BEARISH (Down)" if swing_data['direction'] is not None else "N/A"
+                        dir_emoji = "🟢" if swing_data['direction'] else "🔴" if swing_data['direction'] is not None else "⚪"
+                        st.markdown(f"**{dir_emoji} Direction:** {swing_dir}")
+
+                    with sw_col2:
+                        if swing_data['projected_price'] is not None:
+                            proj_color = "green" if swing_data['projected_price'] > tps_results['current_price'] else "red"
+                            st.markdown(f"<h4 style='color:{proj_color};'>Target: ₹{swing_data['projected_price']:,.2f}</h4>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("**Target:** N/A")
+                        st.caption(f"Method: {swing_data['projection_method']}")
+
+                    with sw_col3:
+                        st.markdown(f"**Swing AVG:** {swing_data['projected_swing_pct']:.2f}%")
+                        st.caption(f"{len(swing_data['swing_percentages'])} swings sampled")
+
+                    with sw_col4:
+                        delta = swing_data['delta_volume']
+                        delta_color = "green" if delta > 0 else "red" if delta < 0 else "gray"
+                        st.markdown(f"<h4 style='color:{delta_color};'>Delta Vol: {delta:,.0f}</h4>", unsafe_allow_html=True)
+                        st.caption(f"Buy: {swing_data['buy_volume']:,.0f} | Sell: {swing_data['sell_volume']:,.0f}")
+
+                    st.divider()
+
+                    # --- Swing Percentages Dashboard ---
+                    if swing_data['swing_percentages']:
+                        st.markdown("**📈 Historical Swing Percentages**")
+                        swing_pct_df = pd.DataFrame({
+                            'Swing #': [f"Swing {i+1}" for i in range(len(swing_data['swing_percentages']))],
+                            'Percentage': [f"{p:+.2f}%" for p in swing_data['swing_percentages']]
+                        })
+                        st.dataframe(swing_pct_df, use_container_width=True, hide_index=True)
+
+                    st.divider()
+
+                    # --- Detailed Bias Breakdown Table ---
+                    st.markdown("**📋 Triple POC + Swing Bias Breakdown**")
+
+                    tps_bias_df = pd.DataFrame(tps_results['bias_results'])
+
+                    # Style the DataFrame
+                    def color_tps_bias(val):
+                        if 'BULLISH' in str(val):
+                            return 'background-color: #26a69a; color: white;'
+                        elif 'BEARISH' in str(val):
+                            return 'background-color: #ef5350; color: white;'
+                        else:
+                            return 'background-color: #78909c; color: white;'
+
+                    def color_tps_score(val):
+                        try:
+                            score = float(val)
+                            if score > 30:
+                                return 'background-color: #1b5e20; color: white; font-weight: bold;'
+                            elif score > 0:
+                                return 'background-color: #4caf50; color: white;'
+                            elif score < -30:
+                                return 'background-color: #b71c1c; color: white; font-weight: bold;'
+                            elif score < 0:
+                                return 'background-color: #f44336; color: white;'
+                            else:
+                                return 'background-color: #616161; color: white;'
+                        except:
+                            return ''
+
+                    styled_tps_df = tps_bias_df[['indicator', 'value', 'bias', 'score', 'weight', 'category', 'details']].style \
+                        .applymap(color_tps_bias, subset=['bias']) \
+                        .applymap(color_tps_score, subset=['score']) \
+                        .format({'score': '{:.2f}', 'weight': '{:.1f}'})
+
+                    st.dataframe(styled_tps_df, use_container_width=True, hide_index=True, height=400)
+
+                    # --- Overall Triple POC + Swing Verdict ---
+                    tps_overall = tps_results['overall_bias']
+                    tps_score = tps_results['overall_score']
+                    tps_conf = tps_results['confidence']
+
+                    verdict_col1, verdict_col2, verdict_col3 = st.columns(3)
+
+                    with verdict_col1:
+                        tps_emoji = "🐂" if tps_overall == "BULLISH" else "🐻" if tps_overall == "BEARISH" else "⚖️"
+                        tps_color = "green" if tps_overall == "BULLISH" else "red" if tps_overall == "BEARISH" else "gray"
+                        st.markdown(f"<h3 style='color:{tps_color};'>{tps_emoji} {tps_overall}</h3>", unsafe_allow_html=True)
+                        st.caption("Triple POC + Swing Bias")
+
+                    with verdict_col2:
+                        score_color = "green" if tps_score > 0 else "red" if tps_score < 0 else "gray"
+                        st.markdown(f"<h3 style='color:{score_color};'>{tps_score:+.1f}</h3>", unsafe_allow_html=True)
+                        st.caption("Overall Score")
+
+                    with verdict_col3:
+                        conf_color = "green" if tps_conf > 60 else "orange" if tps_conf > 40 else "red"
+                        st.markdown(f"<h3 style='color:{conf_color};'>{tps_conf:.1f}%</h3>", unsafe_allow_html=True)
+                        st.caption("Confidence")
+
+                    # Store in session state for use by Overall Sentiment tab
+                    st.session_state['triple_poc_swing_results'] = tps_results
+                else:
+                    st.warning("⚠️ Triple POC + Swing analysis could not complete. Insufficient data.")
+            else:
+                st.info("ℹ️ Triple POC + Swing analysis requires price data from bias analysis. Run bias analysis first.")
+
+        except ImportError as e:
+            st.error(f"❌ Triple POC + Swing module not available: {e}")
+        except Exception as e:
+            st.error(f"❌ Triple POC + Swing analysis error: {e}")
+
+        st.divider()
+
+        # =====================================================================
         # TRADING RECOMMENDATION
         # =====================================================================
         st.subheader("💡 Trading Recommendation")
